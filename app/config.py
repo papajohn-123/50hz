@@ -1,5 +1,6 @@
 from functools import lru_cache
 
+from pydantic import Field
 from pydantic_settings import BaseSettings, SettingsConfigDict
 
 
@@ -16,6 +17,14 @@ class Settings(BaseSettings):
     openrouter_timeout_seconds: float = 20.0
     public_base_url: str = "https://50hz-api-production.up.railway.app"
     worker_poll_seconds: int = 60
+    # Keep raw documents beyond the 48-hour reconciliation window so routine
+    # backfills do not continually reinsert payloads that were just pruned.
+    raw_payload_retention_hours: int = Field(default=72, ge=49, le=720)
+    raw_payload_cleanup_interval_seconds: int = Field(
+        default=3_600,
+        ge=300,
+        le=86_400,
+    )
 
     model_config = SettingsConfigDict(
         env_file=".env",

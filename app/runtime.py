@@ -8,8 +8,10 @@ from fastapi import FastAPI
 from app.config import get_settings
 from app.db import dispose_engine, get_session_factory
 from app.persistence import PostgresAdvisoryLockProvider, PostgresIngestionRepository
+from app.persistence.retention import RawPayloadRetentionRepository
 from app.sources import AsyncJSONClient
 from app.worker.production import build_production_schedules
+from app.worker.retention import RawPayloadRetentionWorker
 from app.worker.scheduler import IngestionWorker
 
 
@@ -17,6 +19,7 @@ from app.worker.scheduler import IngestionWorker
 class WorkerRuntime:
     stop_event: asyncio.Event
     task: asyncio.Task[None]
+    retention_task: asyncio.Task[None]
     clients: tuple[AsyncJSONClient, ...]
     started_at: datetime
 
@@ -51,9 +54,21 @@ async def lifespan(app: FastAPI):
             ),
             name="50hz-ingestion-worker",
         )
+        retention_worker = RawPayloadRetentionWorker(
+            RawPayloadRetentionRepository(session_factory),
+            retention=timedelta(hours=settings.raw_payload_retention_hours),
+            interval=timedelta(
+                seconds=settings.raw_payload_cleanup_interval_seconds
+            ),
+        )
+        retention_task = asyncio.create_task(
+            retention_worker.run_forever(stop_event),
+            name="50hz-raw-payload-retention",
+        )
         runtime = WorkerRuntime(
             stop_event=stop_event,
             task=task,
+            retention_task=retention_task,
             clients=(elexon_client, carbon_client),
             started_at=datetime.now(UTC),
         )
@@ -63,7 +78,7 @@ async def lifespan(app: FastAPI):
     finally:
         if runtime:
             runtime.stop_event.set()
-            await runtime.task
+            await asyncio.gather(runtime.task, runtime.retention_task)
             for client in runtime.clients:
                 await client.aclose()
         if settings.database_url:

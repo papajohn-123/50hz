@@ -11,6 +11,7 @@ from app.config import get_settings
 from app.db import database_session, get_session_factory
 from app.http_cache import ConditionalJSONMiddleware
 from app.intelligence.api import router as intelligence_router
+from app.legal import router as legal_router
 from app.rate_limit import RateLimitMiddleware
 from app.runtime import lifespan
 from app.persistence import GridReadRepository
@@ -24,6 +25,7 @@ app = FastAPI(
 )
 app.include_router(api_router)
 app.include_router(intelligence_router)
+app.include_router(legal_router)
 app.add_middleware(ConditionalJSONMiddleware)
 app.add_middleware(GZipMiddleware, minimum_size=1_000)
 app.add_middleware(RateLimitMiddleware)
