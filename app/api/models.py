@@ -46,7 +46,7 @@ class GridMetric(MobileModel):
     value: float
     unit: str
     fact_class: FactClass
-    source_id: str
+    source_id: str = Field(alias="sourceID")
 
 
 class FuelReading(MobileModel):
@@ -80,7 +80,7 @@ class GridEvent(MobileModel):
     severity: str
     evidence_class: str
     started_at: AwareDatetime
-    source_ids: list[str]
+    source_ids: list[str] = Field(alias="sourceIDs")
     is_authoritatively_reported: bool
 
 
@@ -111,9 +111,9 @@ class GridSnapshotResponse(MobileModel):
 class GridTimelineSample(MobileModel):
     timestamp: AwareDatetime
     fact_class: FactClass
-    demand_mw: float
+    demand_mw: float = Field(alias="demandMW")
     carbon_intensity: float
-    frequency_hz: float | None = None
+    frequency_hz: float | None = Field(default=None, alias="frequencyHz")
     generation: list[FuelReading]
 
     @model_validator(mode="after")
