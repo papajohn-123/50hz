@@ -65,6 +65,29 @@ def test_validation_rejects_unsupported_causation() -> None:
         validate_explanation(explanation, packet())
 
 
+def test_validation_allows_time_tokens_present_in_string_evidence() -> None:
+    value = packet().model_copy(
+        update={
+            "facts": [
+                EvidenceFact(
+                    fact_id="start",
+                    metric="reported_event_start",
+                    label="reported event starts",
+                    value="2026-07-11T13:30:00+00:00",
+                    observed_at=NOW,
+                    source_record_ids=["src_1"],
+                )
+            ]
+        }
+    )
+    explanation = GroundedExplanation(
+        headline="Event timing",
+        plain_language="The notice reports a start time of 13:30.",
+        evidence_refs=["src_1"],
+    )
+    validate_explanation(explanation, value)
+
+
 @pytest.mark.asyncio
 async def test_client_falls_back_on_invalid_model_output() -> None:
     def handler(request: httpx.Request) -> httpx.Response:
@@ -90,4 +113,3 @@ async def test_client_falls_back_on_invalid_model_output() -> None:
     await client.close()
     assert result.used_fallback is True
     assert result.model == "deterministic"
-

@@ -2,10 +2,13 @@ from datetime import UTC, datetime
 
 from fastapi import FastAPI
 from sqlalchemy import text
+from starlette.middleware.gzip import GZipMiddleware
 
 from app.api.routes import router as api_router
 from app.config import get_settings
 from app.db import database_session
+from app.http_cache import ConditionalJSONMiddleware
+from app.intelligence.api import router as intelligence_router
 from app.runtime import lifespan
 
 
@@ -16,6 +19,9 @@ app = FastAPI(
     lifespan=lifespan,
 )
 app.include_router(api_router)
+app.include_router(intelligence_router)
+app.add_middleware(ConditionalJSONMiddleware)
+app.add_middleware(GZipMiddleware, minimum_size=1_000)
 
 
 @app.get("/health", tags=["system"])
