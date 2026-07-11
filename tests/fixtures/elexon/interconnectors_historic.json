@@ -1,0 +1,47 @@
+{
+  "metadata": {
+    "datasets": ["INTOUTHH"]
+  },
+  "data": [
+    {
+      "dataset": "INTOUTHH",
+      "publishTime": "2026-07-11T12:00:00Z",
+      "startTime": "2026-07-11T11:30:00Z",
+      "settlementDate": "2026-07-11",
+      "settlementDateTimezone": "Europe/London",
+      "settlementPeriod": 26,
+      "interconnectorName": "Eleclink (INTELEC)",
+      "generation": 980
+    },
+    {
+      "dataset": "INTOUTHH",
+      "publishTime": "2026-07-11T12:00:00Z",
+      "startTime": "2026-07-11T11:30:00Z",
+      "settlementDate": "2026-07-11",
+      "settlementDateTimezone": "Europe/London",
+      "settlementPeriod": 26,
+      "interconnectorName": "Ireland(East-West)",
+      "generation": -274
+    },
+    {
+      "dataset": "INTOUTHH",
+      "publishTime": "2026-07-11T12:00:00Z",
+      "startTime": "2026-07-11T11:30:00Z",
+      "settlementDate": "2026-07-11",
+      "settlementDateTimezone": "Europe/London",
+      "settlementPeriod": 26,
+      "interconnectorName": "France(IFA)",
+      "generation": 1706
+    },
+    {
+      "dataset": "INTOUTHH",
+      "publishTime": "2026-07-11T12:00:00Z",
+      "startTime": "2026-07-11T11:30:00Z",
+      "settlementDate": "2026-07-11",
+      "settlementDateTimezone": "Europe/London",
+      "settlementPeriod": 26,
+      "interconnectorName": "Denmark (Viking link)",
+      "generation": 1426
+    }
+  ]
+}

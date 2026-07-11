@@ -1,0 +1,20 @@
+{
+  "data": [
+    {
+      "dataset": "INDO",
+      "publishTime": "2026-07-11T11:30:00Z",
+      "startTime": "2026-07-11T11:00:00Z",
+      "settlementDate": "2026-07-11",
+      "settlementPeriod": 25,
+      "demand": 16042
+    },
+    {
+      "dataset": "INDO",
+      "publishTime": "2026-07-11T12:00:00Z",
+      "startTime": "2026-07-11T11:30:00Z",
+      "settlementDate": "2026-07-11",
+      "settlementPeriod": 26,
+      "demand": 16177
+    }
+  ]
+}

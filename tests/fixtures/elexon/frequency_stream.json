@@ -1,0 +1,22 @@
+[
+  {
+    "dataset": "FREQ",
+    "measurementTime": "2026-07-11T12:19:00Z",
+    "frequency": 50.012
+  },
+  {
+    "dataset": "FREQ",
+    "measurementTime": "2026-07-11T12:19:15Z",
+    "frequency": 49.998
+  },
+  {
+    "dataset": "FREQ",
+    "measurementTime": "2026-07-11T12:19:30Z",
+    "frequency": 49.987
+  },
+  {
+    "dataset": "FREQ",
+    "measurementTime": "2026-07-11T12:19:45Z",
+    "frequency": 50.004
+  }
+]
