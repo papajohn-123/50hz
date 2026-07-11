@@ -3,6 +3,7 @@ import Combine
 
 @MainActor
 final class AppModel: ObservableObject {
+    private static let maximumForecastAge: TimeInterval = 3_600
     private let repository: any GridRepository
     private var periodicRefreshTask: Task<Void, Never>?
     private var hasBootstrapped = false
@@ -20,6 +21,7 @@ final class AppModel: ObservableObject {
     @Published var selectedEvent: GridEvent?
     @Published var isRefreshing = false
     @Published var lastRefreshError: String?
+    @Published var timelineRefreshError: String?
     @Published var lastSuccessfulRefreshAt: Date?
     @Published var regionLoadPhase: LoadPhase = .loading
     @Published var regionError: String?
@@ -40,7 +42,10 @@ final class AppModel: ObservableObject {
 
         if var snapshot {
             snapshot.freshness = .stale
-            snapshot.freshnessAgeSeconds = max(Int(Date().timeIntervalSince(snapshot.timestamp)), 0)
+            snapshot.freshnessAgeSeconds = max(
+                snapshot.freshnessAgeSeconds,
+                max(Int(Date().timeIntervalSince(snapshot.timestamp)), 0)
+            )
             self.snapshot = snapshot
             self.timeline = timeline
             self.loadPhase = .loaded
@@ -91,7 +96,13 @@ final class AppModel: ObservableObject {
             loadPhase = .loaded
         }
 
-        if let refreshedTimeline { timeline = refreshedTimeline }
+        if let refreshedTimeline {
+            timeline = refreshedTimeline
+            timelineRefreshError = nil
+        } else if let timelineError,
+                  !Self.isCancellation(timelineError) {
+            timelineRefreshError = timelineError.localizedDescription
+        }
 
         let errors = [snapshotError, timelineError].compactMap { error -> String? in
             guard let error else { return nil }
@@ -102,6 +113,13 @@ final class AppModel: ObservableObject {
 
         if snapshot == nil {
             loadPhase = .failed(lastRefreshError ?? "No confirmed grid snapshot is available.")
+        }
+
+        if !isForecastTimelineUsable,
+           let selectedTime,
+           let timeline,
+           selectedTime > timeline.nowBoundary {
+            self.selectedTime = nil
         }
 
         Task { [weak self] in await self?.refreshEvents() }
@@ -198,7 +216,60 @@ final class AppModel: ObservableObject {
 
     var selectedSample: GridTimelineSample? {
         guard let selectedTime, let timeline else { return nil }
-        return GridTimelineSampler(timeline: timeline).sample(at: selectedTime)
+        let sample = GridTimelineSampler(timeline: timeline).sample(at: selectedTime)
+        guard sample?.factClass != .forecast || isForecastTimelineUsable else { return nil }
+        return sample
+    }
+
+    /// Forecast frames are current only while both halves of the product state
+    /// are trustworthy: a fresh/critical live snapshot and a timeline whose
+    /// server "now" boundary is no more than one hour old.
+    var isForecastTimelineUsable: Bool {
+        guard let snapshot, let timeline else { return false }
+        guard snapshot.freshness == .live || snapshot.freshness == .critical else { return false }
+        guard snapshot.freshnessAgeSeconds <= Int(Self.maximumForecastAge) else { return false }
+        let age = Date().timeIntervalSince(timeline.nowBoundary)
+        guard age >= -300, age <= Self.maximumForecastAge else { return false }
+        return timeline.samples.contains {
+            $0.factClass == .forecast && $0.timestamp > Date()
+        }
+    }
+
+    var displayTimeline: GridTimeline? {
+        guard let timeline else { return nil }
+        guard !isForecastTimelineUsable else { return timeline }
+        let observed = timeline.samples.filter { $0.factClass != .forecast }
+        guard !observed.isEmpty else { return nil }
+        return GridTimeline(
+            sourceResolutionSeconds: timeline.sourceResolutionSeconds,
+            materialGapSeconds: timeline.materialGapSeconds,
+            nowBoundary: timeline.nowBoundary,
+            samples: observed
+        )
+    }
+
+    var forecastUnavailableReason: String {
+        guard let snapshot else {
+            return "Today is waiting for a confirmed live snapshot before showing a forecast."
+        }
+        guard snapshot.freshness == .live || snapshot.freshness == .critical else {
+            return "The live snapshot is delayed or offline, so cached forecast values are being withheld."
+        }
+        if snapshot.freshnessAgeSeconds > Int(Self.maximumForecastAge) {
+            return "The live snapshot is more than one hour old, so cached forecast values are being withheld."
+        }
+        guard let timeline else {
+            return "No confirmed forecast timeline is available."
+        }
+        let age = Date().timeIntervalSince(timeline.nowBoundary)
+        if age > Self.maximumForecastAge {
+            let minutes = max(Int(age / 60), 60)
+            return "The last forecast timeline is \(minutes) minutes old, beyond 50Hz’s one-hour display limit."
+        }
+        if age < -300 {
+            return "The forecast timeline clock could not be reconciled with this device, so it is being withheld."
+        }
+        return "No forward-looking forecast samples remain in the current timeline."
     }
 
     var presentedSnapshot: GridSnapshot? {
@@ -252,7 +323,16 @@ final class AppModel: ObservableObject {
     var timelineModeLabel: String {
         guard let selectedTime else { return "LIVE" }
         guard let timeline else { return "REPLAY" }
-        return selectedTime > timeline.nowBoundary ? "FORECAST" : "REPLAY"
+        if selectedTime > timeline.nowBoundary {
+            return isForecastTimelineUsable ? "FORECAST" : "LIVE"
+        }
+        return "REPLAY"
+    }
+
+    private static func isCancellation(_ error: Error) -> Bool {
+        if error is CancellationError { return true }
+        if let apiError = error as? GridAPIError, case .cancelled = apiError { return true }
+        return false
     }
 }
 

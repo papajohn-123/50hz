@@ -60,6 +60,54 @@ final class AppModelCacheTests: XCTestCase {
         XCTAssertEqual(presented?.headline.energyPosition, "Carbon outlook")
     }
 
+    func testForecastTimelineOlderThanOneHourIsWithheldEverywhere() {
+        let model = AppModel(repository: CacheThenFailureRepository(snapshot: makeSnapshot(), timeline: makeTimeline()))
+        model.snapshot = makeSnapshot()
+        model.timeline = makeForecastTimeline(boundary: Date().addingTimeInterval(-3_601))
+        model.selectedTime = Date().addingTimeInterval(3_600)
+
+        XCTAssertFalse(model.isForecastTimelineUsable)
+        XCTAssertFalse(model.displayTimeline?.samples.contains(where: { $0.factClass == .forecast }) == true)
+        XCTAssertNil(model.selectedSample)
+        XCTAssertTrue(model.forecastUnavailableReason.contains("one-hour display limit"))
+    }
+
+    func testForecastTimelineRequiresFreshSnapshot() {
+        var snapshot = makeSnapshot()
+        snapshot.freshness = .offline
+        let model = AppModel(repository: CacheThenFailureRepository(snapshot: snapshot, timeline: makeTimeline()))
+        model.snapshot = snapshot
+        model.timeline = makeForecastTimeline(boundary: Date())
+
+        XCTAssertFalse(model.isForecastTimelineUsable)
+        XCTAssertTrue(model.forecastUnavailableReason.contains("delayed or offline"))
+    }
+
+    func testForecastTimelineRejectsSnapshotWhoseAgeExceedsOneHour() {
+        var snapshot = makeSnapshot()
+        snapshot.freshness = .live
+        snapshot.freshnessAgeSeconds = 3_601
+        let model = AppModel(repository: CacheThenFailureRepository(snapshot: snapshot, timeline: makeTimeline()))
+        model.snapshot = snapshot
+        model.timeline = makeForecastTimeline(boundary: Date())
+
+        XCTAssertFalse(model.isForecastTimelineUsable)
+        XCTAssertTrue(model.forecastUnavailableReason.contains("live snapshot is more than one hour old"))
+    }
+
+    func testRecentHeldForecastCanBeShownWithExplicitRefreshWarning() async {
+        let snapshot = makeSnapshot()
+        let timeline = makeForecastTimeline(boundary: Date().addingTimeInterval(-600))
+        let model = AppModel(repository: TimelineRefreshFailureRepository(snapshot: snapshot, timeline: timeline))
+
+        await model.bootstrap()
+
+        XCTAssertEqual(model.snapshot?.freshness, .live)
+        XCTAssertTrue(model.isForecastTimelineUsable)
+        XCTAssertEqual(model.timelineRefreshError, "The grid service took too long to respond.")
+        XCTAssertTrue(model.displayTimeline?.samples.contains(where: { $0.factClass == .forecast }) == true)
+    }
+
     private func makeSnapshot() -> GridSnapshot {
         let timestamp = Date().addingTimeInterval(-600)
         let source = SourceReference(id: "source", name: "Elexon", dataset: "test", observedAt: timestamp, retrievedAt: timestamp, cadenceSeconds: 60)
@@ -97,6 +145,32 @@ final class AppModelCacheTests: XCTestCase {
             ]
         )
     }
+
+    private func makeForecastTimeline(boundary: Date) -> GridTimeline {
+        GridTimeline(
+            sourceResolutionSeconds: 1_800,
+            materialGapSeconds: 2_700,
+            nowBoundary: boundary,
+            samples: [
+                GridTimelineSample(
+                    timestamp: boundary.addingTimeInterval(-1_800),
+                    factClass: .observed,
+                    demandMW: 20_000,
+                    carbonIntensity: 100,
+                    frequencyHz: 50,
+                    generation: []
+                ),
+                GridTimelineSample(
+                    timestamp: Date().addingTimeInterval(3_600),
+                    factClass: .forecast,
+                    demandMW: 24_000,
+                    carbonIntensity: 78,
+                    frequencyHz: nil,
+                    generation: []
+                )
+            ]
+        )
+    }
 }
 
 private actor CacheThenFailureRepository: GridRepository {
@@ -112,4 +186,19 @@ private actor CacheThenFailureRepository: GridRepository {
     func cachedTimeline() async -> GridTimeline? { cachedGridTimeline }
     func currentSnapshot() async throws -> GridSnapshot { throw GridAPIError.transport(.notConnectedToInternet) }
     func timeline() async throws -> GridTimeline { throw GridAPIError.transport(.notConnectedToInternet) }
+}
+
+private actor TimelineRefreshFailureRepository: GridRepository {
+    let snapshot: GridSnapshot
+    let cachedGridTimeline: GridTimeline
+
+    init(snapshot: GridSnapshot, timeline: GridTimeline) {
+        self.snapshot = snapshot
+        self.cachedGridTimeline = timeline
+    }
+
+    func cachedSnapshot() async -> GridSnapshot? { snapshot }
+    func cachedTimeline() async -> GridTimeline? { cachedGridTimeline }
+    func currentSnapshot() async throws -> GridSnapshot { snapshot }
+    func timeline() async throws -> GridTimeline { throw GridAPIError.transport(.timedOut) }
 }

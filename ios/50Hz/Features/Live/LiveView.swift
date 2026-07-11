@@ -118,7 +118,7 @@ struct LiveView: View {
 
                     if let fuel = model.selectedFuel,
                        let reading = snapshot.reading(for: fuel),
-                       let timeline = model.timeline {
+                       let timeline = model.displayTimeline {
                         FuelFocusView(reading: reading, timeline: timeline)
                     }
                 }
@@ -130,7 +130,7 @@ struct LiveView: View {
         }
         .scrollIndicators(.hidden)
         .safeAreaInset(edge: .bottom, spacing: 0) {
-            if let timeline = model.timeline {
+            if let timeline = model.displayTimeline {
                 GridTimelineView(timeline: timeline, selectedTime: $model.selectedTime)
                     .background(GridTheme.background.opacity(0.95))
             }

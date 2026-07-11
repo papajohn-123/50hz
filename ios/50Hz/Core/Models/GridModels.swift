@@ -177,6 +177,8 @@ struct RegionalGridContext: Codable, Hashable, Sendable {
     let carbonIntensity: Double
     let nationalCarbonIntensity: Double
     let rating: String
+    let regionalPeriodEnd: Date?
+    let regionalIsDelayed: Bool?
     let cleanestWindowStart: Date
     let cleanestWindowEnd: Date
     let chargingWindowStart: Date

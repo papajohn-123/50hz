@@ -64,7 +64,10 @@ struct MineView: View {
 
     private func regionalReading(_ context: RegionalGridContext) -> some View {
         VStack(alignment: .leading, spacing: 7) {
-            SectionLabel("Regional carbon", trailing: "ESTIMATED")
+            SectionLabel(
+                "Regional carbon",
+                trailing: context.regionalIsDelayed == true ? "DELAYED ESTIMATE" : "ESTIMATED"
+            )
             HStack(alignment: .firstTextBaseline, spacing: 8) {
                 Text(Int(context.carbonIntensity.rounded()).formatted())
                     .font(.system(size: 54, weight: .light, design: .rounded))
@@ -78,6 +81,11 @@ struct MineView: View {
             Text(context.rating)
                 .font(.subheadline)
                 .foregroundStyle(GridTheme.textPrimary)
+            if context.regionalIsDelayed == true, let periodEnd = context.regionalPeriodEnd {
+                Text("Latest available regional period ended \(periodEnd.formatted(.dateTime.hour().minute())).")
+                    .font(.caption2)
+                    .foregroundStyle(GridTheme.staleAmber)
+            }
         }
         .accessibilityElement(children: .combine)
         .accessibilityLabel("Estimated regional carbon intensity, \(Int(context.carbonIntensity.rounded())) grams of carbon dioxide per kilowatt hour, \(context.rating)")
@@ -195,7 +203,7 @@ struct MineView: View {
                     .frame(minHeight: 46)
                     .background(GridTheme.liveCyan, in: RoundedRectangle(cornerRadius: 11))
             }
-            Text("Stored only on this device. 50Hz sends the postcode to its backend to resolve a NESO carbon-intensity region; location permission is not used.")
+            Text("Stored only on this device. 50Hz sends only the outward code to its backend to resolve a NESO carbon-intensity region; location permission is not used.")
                 .font(.caption2)
                 .foregroundStyle(GridTheme.textTertiary)
         }

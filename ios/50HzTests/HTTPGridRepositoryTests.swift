@@ -93,6 +93,7 @@ final class HTTPGridRepositoryTests: XCTestCase {
             """
             {
               "name":"London","postcode":"SW1A","carbonIntensity":82,"nationalCarbonIntensity":106,"rating":"low",
+              "regionalPeriodEnd":"2026-07-11T13:30:00Z","regionalIsDelayed":true,
               "cleanestWindowStart":"2026-07-12T01:00:00Z","cleanestWindowEnd":"2026-07-12T02:00:00Z",
               "chargingWindowStart":"2026-07-12T01:00:00Z","chargingWindowEnd":"2026-07-12T02:00:00Z",
               "forecastIssuedAt":"2026-07-11T14:00:00Z",
@@ -119,9 +120,12 @@ final class HTTPGridRepositoryTests: XCTestCase {
         let cached = await repository.cachedRegion(postcode: "SW1A 1AA")
 
         XCTAssertEqual(region.name, "London")
+        XCTAssertEqual(region.regionalIsDelayed, true)
+        XCTAssertNotNil(region.regionalPeriodEnd)
         XCTAssertEqual(cached?.carbonIntensity, 82)
         let absoluteURL = lock.withLock { requestedURL?.absoluteString }
-        XCTAssertTrue(absoluteURL?.contains("/v1/regions/SW1A%201AA") == true)
+        XCTAssertTrue(absoluteURL?.hasSuffix("/v1/regions/SW1A") == true)
+        XCTAssertFalse(absoluteURL?.contains("1AA") == true)
     }
 
     func testAskSendsCamelCaseMapContextAndDecodesResolvedCitations() async throws {

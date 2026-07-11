@@ -273,8 +273,31 @@ actor HTTPGridRepository: GridRepository {
     }
 
     private nonisolated static func normalizedPostcode(_ postcode: String) -> String {
-        let value = postcode.trimmingCharacters(in: .whitespacesAndNewlines).uppercased()
-        return value.isEmpty ? "SW1A 1AA" : value
+        let value = postcode
+            .trimmingCharacters(in: .whitespacesAndNewlines)
+            .uppercased()
+            .filter { $0.isLetter || $0.isNumber }
+        guard !value.isEmpty else { return "SW1A" }
+
+        // Only the outward code is needed by the NESO endpoint. Strip a valid
+        // inward suffix before constructing the URL so a full postcode does not
+        // enter Railway or upstream HTTP logs.
+        if value.count >= 5 {
+            let suffix = value.suffix(3)
+            let suffixCharacters = Array(suffix)
+            if suffixCharacters[0].isNumber,
+               suffixCharacters[1].isLetter,
+               suffixCharacters[2].isLetter {
+                let outward = String(value.dropLast(3))
+                if outward.range(
+                    of: #"^[A-Z]{1,2}[0-9][A-Z0-9]?$"#,
+                    options: .regularExpression
+                ) != nil {
+                    return outward
+                }
+            }
+        }
+        return value
     }
 
     private nonisolated static func regionURL(baseURL: URL, postcode: String) -> URL {

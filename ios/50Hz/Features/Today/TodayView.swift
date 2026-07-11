@@ -34,6 +34,7 @@ struct TodayView: View {
 
     private func content(snapshot: GridSnapshot, timeline: GridTimeline) -> some View {
         let moments = makeMoments(snapshot: snapshot, timeline: timeline)
+        let hasForecast = model.isForecastTimelineUsable
         return ScrollView {
             LazyVStack(alignment: .leading, spacing: 0) {
                 HStack(alignment: .firstTextBaseline) {
@@ -54,9 +55,14 @@ struct TodayView: View {
                     .foregroundStyle(GridTheme.textSecondary)
                     .padding(.bottom, 28)
 
-                if !timeline.samples.contains(where: { $0.factClass == .forecast }) {
-                    ForecastUnavailableNotice()
+                if !hasForecast {
+                    ForecastUnavailableNotice(detail: model.forecastUnavailableReason)
                         .padding(.bottom, 24)
+                } else if model.timelineRefreshError != nil {
+                    TimelineRefreshNotice(confirmedAt: timeline.nowBoundary) {
+                        Task { await model.retry() }
+                    }
+                    .padding(.bottom, 20)
                 }
 
                 if let eventError = model.eventsError, !model.events.isEmpty {
@@ -85,19 +91,21 @@ struct TodayView: View {
 
                 SectionLabel(
                     "Chronology",
-                    trailing: timeline.samples.contains(where: { $0.factClass == .forecast }) ? "Observed + forecast" : "Observed"
+                    trailing: hasForecast ? "Observed + forecast" : "Observed"
                 )
                     .padding(.bottom, 8)
 
                 ForEach(moments.filter { !$0.importance }) { moment in
-                    MomentRow(moment: moment, isNow: abs(moment.time.timeIntervalSince(timeline.nowBoundary)) < 60) {
+                    MomentRow(moment: moment, isNow: moment.id.hasPrefix("now-")) {
                         open(moment)
                     }
                 }
 
                 VStack(alignment: .leading, spacing: 8) {
                     Hairline()
-                    Text("Forecast moments use the latest available issue. Predictions can change as weather and system conditions evolve.")
+                    Text(hasForecast
+                        ? "Forecast moments use a timeline confirmed within the past hour. Predictions can change as weather and system conditions evolve."
+                        : "Only confirmed observations are shown while the forecast freshness gate is closed.")
                         .font(.caption2)
                         .foregroundStyle(GridTheme.textTertiary)
                 }
@@ -127,9 +135,15 @@ struct TodayView: View {
     }
 
     private func makeMoments(snapshot: GridSnapshot, timeline: GridTimeline) -> [TodayMoment] {
-        let now = timeline.nowBoundary
-        let observed = timeline.samples.filter { $0.factClass != .forecast && $0.timestamp <= now }
-        let forecast = timeline.samples.filter { $0.factClass == .forecast && $0.timestamp >= now }
+        let boundary = timeline.nowBoundary
+        let observed = timeline.samples.filter { $0.factClass != .forecast && $0.timestamp <= boundary }
+        let forecast = model.isForecastTimelineUsable
+            ? timeline.samples.filter {
+                $0.factClass == .forecast
+                    && $0.timestamp >= boundary
+                    && $0.timestamp > Date()
+            }
+            : []
         var moments: [TodayMoment] = []
 
         if let cleanest = forecast.min(by: { $0.carbonIntensity < $1.carbonIntensity }) {
@@ -180,8 +194,8 @@ struct TodayView: View {
 
         moments.append(
             TodayMoment(
-                id: "now-\(now.timeIntervalSince1970)",
-                time: now,
+                id: "now-\(snapshot.timestamp.timeIntervalSince1970)",
+                time: snapshot.timestamp,
                 title: [snapshot.headline.balance, snapshot.headline.energyPosition].joined(separator: " · "),
                 detail: snapshot.headline.interpretation,
                 factClass: .observed,
@@ -256,20 +270,50 @@ struct TodayView: View {
     private func gigawatts(_ megawatts: Double) -> String {
         (megawatts / 1_000).formatted(.number.precision(.fractionLength(1)))
     }
+
 }
 
 private struct ForecastUnavailableNotice: View {
+    let detail: String
+
     var body: some View {
         HStack(alignment: .top, spacing: 11) {
             Image(systemName: "cloud.slash")
                 .foregroundStyle(GridTheme.staleAmber)
             VStack(alignment: .leading, spacing: 3) {
-                Text("Forecast not available yet")
+                Text("Current forecast unavailable")
                     .font(.subheadline.weight(.semibold))
-                Text("Today is using confirmed observations only. 50Hz will add forward-looking moments when a current forecast is available.")
+                Text(detail)
                     .font(.caption)
                     .foregroundStyle(GridTheme.textSecondary)
             }
+        }
+        .padding(14)
+        .background(GridTheme.staleAmber.opacity(0.07), in: RoundedRectangle(cornerRadius: 12))
+        .overlay(RoundedRectangle(cornerRadius: 12).stroke(GridTheme.staleAmber.opacity(0.18), lineWidth: 1))
+    }
+}
+
+private struct TimelineRefreshNotice: View {
+    let confirmedAt: Date
+    let retry: () -> Void
+
+    var body: some View {
+        HStack(alignment: .top, spacing: 11) {
+            Image(systemName: "clock.badge.exclamationmark")
+                .foregroundStyle(GridTheme.staleAmber)
+            VStack(alignment: .leading, spacing: 3) {
+                Text("Forecast refresh incomplete")
+                    .font(.subheadline.weight(.semibold))
+                Text("Showing the last timeline confirmed at \(confirmedAt.formatted(.dateTime.hour().minute())). It remains inside 50Hz’s one-hour display limit.")
+                    .font(.caption)
+                    .foregroundStyle(GridTheme.textSecondary)
+            }
+            Spacer(minLength: 4)
+            Button("Retry", action: retry)
+                .font(.caption.weight(.semibold))
+                .foregroundStyle(GridTheme.staleAmber)
+                .frame(minHeight: 44)
         }
         .padding(14)
         .background(GridTheme.staleAmber.opacity(0.07), in: RoundedRectangle(cornerRadius: 12))
