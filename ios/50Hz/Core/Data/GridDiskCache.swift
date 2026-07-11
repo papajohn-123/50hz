@@ -6,6 +6,7 @@ struct GridCacheKey: Hashable, Sendable {
     static let current = GridCacheKey(rawValue: "current")
     static let timeline = GridCacheKey(rawValue: "timeline")
     static let events = GridCacheKey(rawValue: "events")
+    static let dailyGame = GridCacheKey(rawValue: "game-today")
 
     static func region(_ postcode: String) -> GridCacheKey {
         let normalized = postcode.lowercased().filter { $0.isLetter || $0.isNumber }

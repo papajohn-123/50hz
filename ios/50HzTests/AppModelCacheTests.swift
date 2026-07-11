@@ -108,6 +108,24 @@ final class AppModelCacheTests: XCTestCase {
         XCTAssertTrue(model.displayTimeline?.samples.contains(where: { $0.factClass == .forecast }) == true)
     }
 
+    func testDailyGameRefreshRetainsLastConfirmedPlanOffline() async throws {
+        let game = try makeDailyGame()
+        let repository = ToggleDailyGameRepository(game: game)
+        let model = AppModel(repository: repository)
+
+        await model.refreshDailyGame()
+        XCTAssertEqual(model.dailyGame, game)
+        XCTAssertEqual(model.gameLoadPhase, .loaded)
+        XCTAssertNil(model.gameRefreshError)
+
+        await repository.setShouldFail(true)
+        await model.refreshDailyGame()
+
+        XCTAssertEqual(model.dailyGame, game)
+        XCTAssertEqual(model.gameLoadPhase, .loaded)
+        XCTAssertEqual(model.gameRefreshError, "There is no reliable network connection.")
+    }
+
     private func makeSnapshot() -> GridSnapshot {
         let timestamp = Date().addingTimeInterval(-600)
         let source = SourceReference(id: "source", name: "Elexon", dataset: "test", observedAt: timestamp, retrievedAt: timestamp, cadenceSeconds: 60)
@@ -171,6 +189,18 @@ final class AppModelCacheTests: XCTestCase {
             ]
         )
     }
+
+    private func makeDailyGame() throws -> DailyGame {
+        let json = """
+        {
+          "date":"2026-07-11",
+          "missions":[{"mission_id":"mission-1","kind":"identify_largest_source","title":"Identify the largest source","available":true,"completion_payload":{}}],
+          "prediction":null,
+          "source_fresh":true
+        }
+        """
+        return try GridJSON.decoder.decode(DailyGame.self, from: Data(json.utf8))
+    }
 }
 
 private actor CacheThenFailureRepository: GridRepository {
@@ -201,4 +231,30 @@ private actor TimelineRefreshFailureRepository: GridRepository {
     func cachedTimeline() async -> GridTimeline? { cachedGridTimeline }
     func currentSnapshot() async throws -> GridSnapshot { snapshot }
     func timeline() async throws -> GridTimeline { throw GridAPIError.transport(.timedOut) }
+}
+
+private actor ToggleDailyGameRepository: GridRepository {
+    let game: DailyGame
+    var shouldFail = false
+
+    init(game: DailyGame) {
+        self.game = game
+    }
+
+    func setShouldFail(_ value: Bool) {
+        shouldFail = value
+    }
+
+    func currentSnapshot() async throws -> GridSnapshot {
+        throw GridRepositoryError.unsupportedFeature("Snapshot")
+    }
+
+    func timeline() async throws -> GridTimeline {
+        throw GridRepositoryError.unsupportedFeature("Timeline")
+    }
+
+    func dailyGame() async throws -> DailyGame {
+        if shouldFail { throw GridAPIError.transport(.notConnectedToInternet) }
+        return game
+    }
 }

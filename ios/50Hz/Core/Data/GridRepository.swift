@@ -5,10 +5,12 @@ protocol GridRepository: Sendable {
     func cachedTimeline() async -> GridTimeline?
     func cachedRegion(postcode: String) async -> RegionalGridContext?
     func cachedEvents() async -> [GridEvent]?
+    func cachedDailyGame() async -> DailyGame?
     func currentSnapshot() async throws -> GridSnapshot
     func timeline() async throws -> GridTimeline
     func region(postcode: String) async throws -> RegionalGridContext
     func events() async throws -> [GridEvent]
+    func dailyGame() async throws -> DailyGame
     func event(id: String) async throws -> GridEvent
     func eventExplanation(id: String) async throws -> EventExplanationResponse
     func ask(_ request: AskGridRequest) async throws -> AskGridAnswer
@@ -19,12 +21,17 @@ extension GridRepository {
     func cachedTimeline() async -> GridTimeline? { nil }
     func cachedRegion(postcode: String) async -> RegionalGridContext? { nil }
     func cachedEvents() async -> [GridEvent]? { nil }
+    func cachedDailyGame() async -> DailyGame? { nil }
 
     func region(postcode: String) async throws -> RegionalGridContext {
         throw GridRepositoryError.unsupportedFeature("Regional data")
     }
 
     func events() async throws -> [GridEvent] { [] }
+
+    func dailyGame() async throws -> DailyGame {
+        throw GridRepositoryError.unsupportedFeature("Daily game")
+    }
 
     func event(id: String) async throws -> GridEvent {
         throw GridRepositoryError.unsupportedFeature("Event details")

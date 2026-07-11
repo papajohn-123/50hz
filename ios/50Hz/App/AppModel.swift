@@ -8,12 +8,14 @@ final class AppModel: ObservableObject {
     private var periodicRefreshTask: Task<Void, Never>?
     private var hasBootstrapped = false
     private var isRefreshingEvents = false
+    private var isRefreshingDailyGame = false
 
     @Published var loadPhase: LoadPhase = .loading
     @Published var snapshot: GridSnapshot?
     @Published var timeline: GridTimeline?
     @Published var regionalContext: RegionalGridContext?
     @Published var events: [GridEvent] = []
+    @Published var dailyGame: DailyGame?
     @Published var selectedFuel: FuelKind?
     @Published var selectedTime: Date?
     @Published var selectedTab: AppTab = .live
@@ -26,6 +28,8 @@ final class AppModel: ObservableObject {
     @Published var regionLoadPhase: LoadPhase = .loading
     @Published var regionError: String?
     @Published var eventsError: String?
+    @Published var gameLoadPhase: LoadPhase = .loading
+    @Published var gameRefreshError: String?
 
     init(repository: any GridRepository = FixtureGridRepository()) {
         self.repository = repository
@@ -38,7 +42,13 @@ final class AppModel: ObservableObject {
         async let cachedSnapshot = repository.cachedSnapshot()
         async let cachedTimeline = repository.cachedTimeline()
         async let cachedEvents = repository.cachedEvents()
-        let (snapshot, timeline, events) = await (cachedSnapshot, cachedTimeline, cachedEvents)
+        async let cachedDailyGame = repository.cachedDailyGame()
+        let (snapshot, timeline, events, dailyGame) = await (
+            cachedSnapshot,
+            cachedTimeline,
+            cachedEvents,
+            cachedDailyGame
+        )
 
         if var snapshot {
             snapshot.freshness = .stale
@@ -51,6 +61,10 @@ final class AppModel: ObservableObject {
             self.loadPhase = .loaded
         }
         if let events { self.events = events }
+        if let dailyGame {
+            self.dailyGame = dailyGame
+            self.gameLoadPhase = .loaded
+        }
 
         await refresh()
     }
@@ -123,6 +137,7 @@ final class AppModel: ObservableObject {
         }
 
         Task { [weak self] in await self?.refreshEvents() }
+        Task { [weak self] in await self?.refreshDailyGame() }
     }
 
     func retry() async {
@@ -165,6 +180,21 @@ final class AppModel: ObservableObject {
         } catch {
             guard !Task.isCancelled else { return }
             eventsError = error.localizedDescription
+        }
+    }
+
+    func refreshDailyGame() async {
+        guard !isRefreshingDailyGame else { return }
+        isRefreshingDailyGame = true
+        defer { isRefreshingDailyGame = false }
+        do {
+            dailyGame = try await repository.dailyGame()
+            gameLoadPhase = .loaded
+            gameRefreshError = nil
+        } catch {
+            guard !Task.isCancelled else { return }
+            gameRefreshError = error.localizedDescription
+            gameLoadPhase = dailyGame == nil ? .failed(error.localizedDescription) : .loaded
         }
     }
 

@@ -164,6 +164,47 @@ final class HTTPGridRepositoryTests: XCTestCase {
         XCTAssertEqual(answer.suggestedQuestions, ["Which link is largest?"])
     }
 
+    func testDailyGameUsesBackendRouteAndPersistsCache() async throws {
+        let directory = temporaryDirectory()
+        defer { try? FileManager.default.removeItem(at: directory) }
+        let response = Data(
+            """
+            {
+              "date":"2026-07-11",
+              "missions":[{"mission_id":"2026-07-11:largest-source","kind":"identify_largest_source","title":"Identify Britain's largest source","available":true,"unavailable_reason":null,"completion_payload":{}}],
+              "prediction":null,
+              "source_fresh":true
+            }
+            """.utf8
+        )
+        let lock = NSLock()
+        var requestedPath: String?
+        StubURLProtocol.handler = { request in
+            lock.withLock { requestedPath = request.url?.path }
+            return (
+                HTTPURLResponse(
+                    url: request.url!,
+                    statusCode: 200,
+                    httpVersion: "HTTP/1.1",
+                    headerFields: ["ETag": "\"game-v1\""]
+                )!,
+                response
+            )
+        }
+        let repository = HTTPGridRepository(
+            baseURL: URL(string: "https://unit.test")!,
+            session: stubSession(),
+            cache: GridDiskCache(directory: directory)
+        )
+
+        let game = try await repository.dailyGame()
+        let cached = await repository.cachedDailyGame()
+
+        XCTAssertEqual(lock.withLock { requestedPath }, "/v1/game/today")
+        XCTAssertEqual(game.missions.first?.title, "Identify Britain's largest source")
+        XCTAssertEqual(cached, game)
+    }
+
     func testEventExplanationDecodesOptionalGroundedFields() async throws {
         let response = Data(
             """

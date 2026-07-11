@@ -11,6 +11,64 @@ final class GridContractTests: XCTestCase {
         XCTAssertEqual(reading.share, 0.01)
     }
 
+    func testDailyGameDecodesBackendSnakeCaseContract() throws {
+        let json = """
+        {
+          "date":"2026-07-11",
+          "missions":[
+            {
+              "mission_id":"2026-07-11:clean-window",
+              "kind":"find_clean_window",
+              "title":"Find tonight's cleanest half-hour",
+              "available":false,
+              "unavailable_reason":"Carbon forecast unavailable",
+              "completion_payload":{"window_hours":1.5,"sample_count":4,"region":"GB"}
+            }
+          ],
+          "prediction":{
+            "prediction_id":"2026-07-11:energy-position-1800",
+            "question":"Will Britain be importing or exporting at 18:00?",
+            "choices":["importing","exporting"],
+            "locks_at":"2026-07-11T16:45:00Z",
+            "metric":"net_interconnector_flow_mw",
+            "resolves_from":"2026-07-11T16:55:00Z",
+            "resolves_to":"2026-07-11T17:05:00Z",
+            "rule_version":1
+          },
+          "source_fresh":true
+        }
+        """
+
+        let game = try GridJSON.decoder.decode(DailyGame.self, from: Data(json.utf8))
+
+        XCTAssertEqual(game.date, "2026-07-11")
+        XCTAssertTrue(game.sourceFresh)
+        XCTAssertEqual(game.missions.first?.kind, .findCleanWindow)
+        XCTAssertEqual(game.missions.first?.available, false)
+        XCTAssertEqual(game.missions.first?.unavailableReason, "Carbon forecast unavailable")
+        XCTAssertEqual(game.missions.first?.completionPayload["region"], .string("GB"))
+        XCTAssertEqual(game.missions.first?.completionPayload["sample_count"], .integer(4))
+        XCTAssertEqual(game.prediction?.choices, [.importing, .exporting])
+        XCTAssertEqual(game.prediction?.ruleVersion, 1)
+    }
+
+    func testDailyGameToleratesNewMissionKindsAndMissingOptionalPayload() throws {
+        let json = """
+        {
+          "date":"2026-07-11",
+          "missions":[{"mission_id":"future","kind":"future_kind","title":"Explore","available":true}],
+          "prediction":null,
+          "source_fresh":false
+        }
+        """
+
+        let game = try GridJSON.decoder.decode(DailyGame.self, from: Data(json.utf8))
+
+        XCTAssertEqual(game.missions.first?.kind, .other)
+        XCTAssertEqual(game.missions.first?.completionPayload, [:])
+        XCTAssertNil(game.prediction)
+    }
+
     func testSnapshotContractDecodesProvenanceAndSignConvention() throws {
         let json = """
         {

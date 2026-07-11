@@ -54,6 +54,7 @@ actor HTTPGridRepository: GridRepository {
         case current
         case timeline
         case events
+        case dailyGame
         case region(String)
 
         var cacheKey: GridCacheKey {
@@ -61,6 +62,7 @@ actor HTTPGridRepository: GridRepository {
             case .current: .current
             case .timeline: .timeline
             case .events: .events
+            case .dailyGame: .dailyGame
             case .region(let postcode): .region(postcode)
             }
         }
@@ -72,6 +74,7 @@ actor HTTPGridRepository: GridRepository {
     private var currentTask: Task<GridSnapshot, Error>?
     private var timelineTask: Task<GridTimeline, Error>?
     private var eventsTask: Task<[GridEvent], Error>?
+    private var dailyGameTask: Task<DailyGame, Error>?
     private var regionTasks: [String: Task<RegionalGridContext, Error>] = [:]
 
     init(
@@ -135,6 +138,16 @@ actor HTTPGridRepository: GridRepository {
             return try GridJSON.decoder.decode([GridEvent].self, from: entry.data)
         } catch {
             await cache.remove(.events)
+            return nil
+        }
+    }
+
+    func cachedDailyGame() async -> DailyGame? {
+        guard let entry = await cache.entry(for: .dailyGame) else { return nil }
+        do {
+            return try GridJSON.decoder.decode(DailyGame.self, from: entry.data)
+        } catch {
+            await cache.remove(.dailyGame)
             return nil
         }
     }
@@ -228,6 +241,28 @@ actor HTTPGridRepository: GridRepository {
         }
     }
 
+    func dailyGame() async throws -> DailyGame {
+        if let dailyGameTask { return try await dailyGameTask.value }
+
+        let task = Task<DailyGame, Error> {
+            try await Self.fetch(
+                endpoint: .dailyGame,
+                requestURL: Self.dailyGameURL(baseURL: baseURL),
+                session: session,
+                cache: cache,
+                as: DailyGame.self
+            )
+        }
+        dailyGameTask = task
+        defer { dailyGameTask = nil }
+
+        return try await withTaskCancellationHandler {
+            try await task.value
+        } onCancel: {
+            task.cancel()
+        }
+    }
+
     func event(id: String) async throws -> GridEvent {
         try await Self.send(
             request: URLRequest(url: Self.eventURL(baseURL: baseURL, id: id)),
@@ -306,6 +341,10 @@ actor HTTPGridRepository: GridRepository {
 
     private nonisolated static func eventsURL(baseURL: URL) -> URL {
         baseURL.appendingPathComponent("v1/events")
+    }
+
+    private nonisolated static func dailyGameURL(baseURL: URL) -> URL {
+        baseURL.appendingPathComponent("v1/game/today")
     }
 
     private nonisolated static func eventURL(baseURL: URL, id: String) -> URL {
