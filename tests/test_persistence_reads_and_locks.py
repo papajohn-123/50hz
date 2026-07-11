@@ -207,6 +207,7 @@ def test_timeline_downsamples_each_series_without_inventing_bucket_timestamps() 
             FakeResult(),
             FakeResult(),
             FakeResult(),
+            FakeResult(),
             FakeResult([source()]),
         ]
     )
@@ -251,4 +252,3 @@ def test_advisory_lock_is_released_on_context_exit() -> None:
     assert "pg_try_advisory_lock" in str(session.executed[0][0])
     assert "pg_advisory_unlock" in str(session.executed[1][0])
     assert session.executed[0][1] == session.executed[1][1]
-

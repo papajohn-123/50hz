@@ -4,12 +4,14 @@ from app.persistence.reads import (
     CarbonRead,
     CurrentGridRead,
     DemandRead,
+    ForecastRead,
     FrequencyRead,
     GenerationRead,
     GridReadRepository,
     GridTimelineRead,
     InterconnectorRead,
     ReadProvenance,
+    ReportedNoticeRead,
     SourceMetadataRead,
 )
 
@@ -17,6 +19,7 @@ __all__ = [
     "CarbonRead",
     "CurrentGridRead",
     "DemandRead",
+    "ForecastRead",
     "FrequencyRead",
     "GenerationRead",
     "GridReadRepository",
@@ -25,7 +28,7 @@ __all__ = [
     "PostgresAdvisoryLockProvider",
     "PostgresIngestionRepository",
     "ReadProvenance",
+    "ReportedNoticeRead",
     "SourceMetadataRead",
     "advisory_lock_key",
 ]
-

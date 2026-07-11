@@ -15,30 +15,45 @@ from sqlalchemy.dialects.postgresql import insert as pg_insert
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.db.models import (
+    CarbonObservation,
     DemandObservation,
+    ForecastObservation,
     FrequencyObservation,
     GenerationObservation,
     IngestionRun,
     InterconnectorObservation,
     RawPayload,
+    ReportedNotice,
     SourceMetadata,
 )
 from app.domain.enums import IngestionRunStatus
 from app.persistence.records import (
     job_source_metadata_values,
+    map_carbon_actual_record,
+    map_carbon_forecast_record,
+    map_demand_forecast_record,
     map_demand_record,
     map_frequency_record,
     map_generation_record,
     map_interconnector_record,
+    map_remit_notice_record,
+    map_system_warning_record,
+    map_wind_forecast_record,
     source_metadata_values,
 )
 from app.sources.types import (
     AdapterResult,
+    CarbonIntensityRecord,
+    DataClassification as SourceDataClassification,
+    DemandForecastRecord,
     DemandRecord,
     FrequencyRecord,
     GenerationRecord,
     InterconnectorFlowRecord,
     ObservationWindow,
+    RemitUnavailabilityRecord,
+    SystemWarningRecord,
+    WindForecastRecord,
     as_utc,
 )
 from app.worker.contracts import IngestionCheckpoint, PersistOutcome
@@ -121,6 +136,83 @@ _INTERCONNECTOR_SPEC = _UpsertSpec(
         "retrieved_at",
         "quality",
         "attributes",
+    ),
+)
+_CARBON_ACTUAL_SPEC = _UpsertSpec(
+    model=CarbonObservation,
+    conflict_columns=("source_id", "region_code", "observed_at", "revision"),
+    update_columns=(
+        "raw_payload_id",
+        "source_record_id",
+        "intensity_gco2_kwh",
+        "index_label",
+        "generation_mix",
+        "published_at",
+        "retrieved_at",
+        "quality",
+        "attributes",
+    ),
+)
+_FORECAST_SPEC = _UpsertSpec(
+    model=ForecastObservation,
+    conflict_columns=(
+        "source_id",
+        "metric_type",
+        "series_key",
+        "variant",
+        "valid_from",
+        "issued_at",
+    ),
+    update_columns=(
+        "raw_payload_id",
+        "source_record_id",
+        "value",
+        "unit",
+        "value_low",
+        "value_high",
+        "valid_to",
+        "published_at",
+        "retrieved_at",
+        "model_name",
+        "settlement_date",
+        "settlement_period",
+        "attributes",
+    ),
+)
+_REPORTED_NOTICE_SPEC = _UpsertSpec(
+    model=ReportedNotice,
+    conflict_columns=("source_id", "notice_kind", "external_id", "revision_key"),
+    update_columns=(
+        "raw_payload_id",
+        "source_record_id",
+        "content_sha256",
+        "revision_number",
+        "published_at",
+        "source_created_at",
+        "retrieved_at",
+        "event_start",
+        "event_end",
+        "heading",
+        "event_type",
+        "unavailability_type",
+        "event_status",
+        "participant_id",
+        "asset_id",
+        "asset_type",
+        "affected_unit",
+        "affected_unit_eic",
+        "affected_area",
+        "bidding_zone",
+        "fuel_type",
+        "normal_capacity_mw",
+        "available_capacity_mw",
+        "unavailable_capacity_mw",
+        "duration_uncertainty",
+        "reported_cause",
+        "reported_related_information",
+        "warning_type",
+        "warning_text",
+        "evidence",
     ),
 )
 
@@ -450,6 +542,45 @@ def _map_record_batches(
                     record, source_id=source_id, raw_payload_id=raw_payload_id
                 )
             )
+        elif isinstance(record, CarbonIntensityRecord):
+            if record.classification is SourceDataClassification.OBSERVED:
+                grouped[_CARBON_ACTUAL_SPEC].append(
+                    map_carbon_actual_record(
+                        record, source_id=source_id, raw_payload_id=raw_payload_id
+                    )
+                )
+            elif record.classification is SourceDataClassification.FORECAST:
+                grouped[_FORECAST_SPEC].append(
+                    map_carbon_forecast_record(
+                        record, source_id=source_id, raw_payload_id=raw_payload_id
+                    )
+                )
+            else:
+                raise ValueError("carbon intensity records must be observed or forecast")
+        elif isinstance(record, DemandForecastRecord):
+            grouped[_FORECAST_SPEC].append(
+                map_demand_forecast_record(
+                    record, source_id=source_id, raw_payload_id=raw_payload_id
+                )
+            )
+        elif isinstance(record, WindForecastRecord):
+            grouped[_FORECAST_SPEC].append(
+                map_wind_forecast_record(
+                    record, source_id=source_id, raw_payload_id=raw_payload_id
+                )
+            )
+        elif isinstance(record, RemitUnavailabilityRecord):
+            grouped[_REPORTED_NOTICE_SPEC].append(
+                map_remit_notice_record(
+                    record, source_id=source_id, raw_payload_id=raw_payload_id
+                )
+            )
+        elif isinstance(record, SystemWarningRecord):
+            grouped[_REPORTED_NOTICE_SPEC].append(
+                map_system_warning_record(
+                    record, source_id=source_id, raw_payload_id=raw_payload_id
+                )
+            )
         else:  # pragma: no cover - guarded before the transaction begins
             raise TypeError(f"unsupported normalized record: {type(record).__name__}")
     ordered_specs = (
@@ -457,6 +588,9 @@ def _map_record_batches(
         _DEMAND_SPEC,
         _FREQUENCY_SPEC,
         _INTERCONNECTOR_SPEC,
+        _CARBON_ACTUAL_SPEC,
+        _FORECAST_SPEC,
+        _REPORTED_NOTICE_SPEC,
     )
     return tuple((spec, grouped[spec]) for spec in ordered_specs if grouped[spec])
 
@@ -467,6 +601,11 @@ def _validate_record_types(records: Sequence[Any]) -> None:
         DemandRecord,
         FrequencyRecord,
         InterconnectorFlowRecord,
+        CarbonIntensityRecord,
+        DemandForecastRecord,
+        WindForecastRecord,
+        RemitUnavailabilityRecord,
+        SystemWarningRecord,
     )
     for record in records:
         if not isinstance(record, supported):

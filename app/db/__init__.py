@@ -12,6 +12,7 @@ from app.db.models import (
     IngestionRun,
     InterconnectorObservation,
     RawPayload,
+    ReportedNotice,
     SourceMetadata,
 )
 from app.db.session import (
@@ -39,6 +40,7 @@ __all__ = [
     "IngestionRun",
     "InterconnectorObservation",
     "RawPayload",
+    "ReportedNotice",
     "SourceMetadata",
     "database_session",
     "dispose_engine",

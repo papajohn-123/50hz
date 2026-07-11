@@ -1,8 +1,9 @@
 from __future__ import annotations
 
 import hashlib
+import json
 import re
-from dataclasses import dataclass
+from dataclasses import asdict, dataclass
 from datetime import datetime
 from typing import Any
 from urllib.parse import urlsplit
@@ -10,10 +11,16 @@ from uuid import UUID
 
 from app.domain.enums import FactQuality
 from app.sources.types import (
+    CarbonIntensityRecord,
+    DataClassification as SourceDataClassification,
+    DemandForecastRecord,
     DemandRecord,
     FrequencyRecord,
     GenerationRecord,
     InterconnectorFlowRecord,
+    RemitUnavailabilityRecord,
+    SystemWarningRecord,
+    WindForecastRecord,
     as_utc,
 )
 
@@ -52,6 +59,13 @@ DATASET_CADENCE_SECONDS: dict[tuple[str, str], int] = {
     ("elexon", "FREQ"): 60,
     ("elexon", "FUELINST"): 120,
     ("elexon", "INDO"): 120,
+    ("elexon", "NDF"): 1800,
+    ("elexon", "WINDFOR"): 1800,
+    ("elexon", "REMIT"): 300,
+    ("elexon", "SYSWARN"): 300,
+    ("neso", "CARBON_INTENSITY"): 1800,
+    ("neso", "CARBON_INTENSITY_NATIONAL"): 1800,
+    ("neso", "CARBON_INTENSITY_REGIONAL"): 1800,
 }
 
 
@@ -219,6 +233,287 @@ def map_interconnector_record(
             "signConvention": "positive_import_into_gb",
         },
     }
+
+
+def carbon_region_code(record: CarbonIntensityRecord) -> str:
+    if record.postcode:
+        return record.postcode.upper()
+    if record.region_id is not None:
+        return f"region-{record.region_id}"
+    return "GB"
+
+
+def map_carbon_actual_record(
+    record: CarbonIntensityRecord,
+    *,
+    source_id: str,
+    raw_payload_id: UUID,
+) -> dict[str, Any]:
+    if record.classification is not SourceDataClassification.OBSERVED:
+        raise ValueError("only observed carbon records belong in carbon_observations")
+    return {
+        "source_id": source_id,
+        "raw_payload_id": raw_payload_id,
+        "source_record_id": record.source_key,
+        "observed_at": as_utc(record.period_start, field_name="period_start"),
+        "published_at": None,
+        "retrieved_at": as_utc(record.retrieved_at, field_name="retrieved_at"),
+        "revision": 0,
+        "quality": FactQuality.VALIDATED,
+        "region_code": carbon_region_code(record),
+        "intensity_gco2_kwh": float(record.intensity_g_co2_per_kwh),
+        "index_label": record.index,
+        "generation_mix": [
+            {"fuel": share.fuel_type, "percent": float(share.percent)}
+            for share in record.generation_mix
+        ],
+        "attributes": _carbon_attributes(record),
+    }
+
+
+def map_carbon_forecast_record(
+    record: CarbonIntensityRecord,
+    *,
+    source_id: str,
+    raw_payload_id: UUID,
+) -> dict[str, Any]:
+    if record.classification is not SourceDataClassification.FORECAST:
+        raise ValueError("only forecast carbon records belong in forecast_observations")
+    retrieved_at = as_utc(record.retrieved_at, field_name="retrieved_at")
+    return {
+        "source_id": source_id,
+        "raw_payload_id": raw_payload_id,
+        "source_record_id": record.source_key,
+        "metric_type": "carbon_intensity",
+        "series_key": carbon_region_code(record),
+        "variant": "point",
+        "value": float(record.intensity_g_co2_per_kwh),
+        "unit": "gCO2/kWh",
+        "value_low": None,
+        "value_high": None,
+        "valid_from": as_utc(record.period_start, field_name="period_start"),
+        "valid_to": as_utc(record.period_end, field_name="period_end"),
+        # NESO's payload does not publish an issue timestamp. Retrieval time is
+        # retained explicitly as the version boundary rather than inventing one.
+        "issued_at": retrieved_at,
+        "published_at": None,
+        "retrieved_at": retrieved_at,
+        "model_name": "neso_carbon_intensity",
+        "settlement_date": None,
+        "settlement_period": None,
+        "attributes": {
+            **_carbon_attributes(record),
+            "classification": "forecast",
+            "issueTimeBasis": "retrieved_at",
+        },
+    }
+
+
+def map_demand_forecast_record(
+    record: DemandForecastRecord,
+    *,
+    source_id: str,
+    raw_payload_id: UUID,
+) -> dict[str, Any]:
+    return {
+        "source_id": source_id,
+        "raw_payload_id": raw_payload_id,
+        "source_record_id": record.source_key,
+        "metric_type": "demand",
+        "series_key": (record.boundary or "gb").strip().lower(),
+        "variant": "point",
+        "value": float(record.demand_mw),
+        "unit": "MW",
+        "value_low": None,
+        "value_high": None,
+        "valid_from": as_utc(record.forecast_for, field_name="forecast_for"),
+        "valid_to": None,
+        "issued_at": as_utc(record.published_at, field_name="published_at"),
+        "published_at": as_utc(record.published_at, field_name="published_at"),
+        "retrieved_at": as_utc(record.retrieved_at, field_name="retrieved_at"),
+        "model_name": record.dataset,
+        "settlement_date": record.settlement_date,
+        "settlement_period": record.settlement_period,
+        "attributes": {
+            "source": record.source,
+            "dataset": record.dataset,
+            "classification": "forecast",
+            "boundary": record.boundary,
+        },
+    }
+
+
+def map_wind_forecast_record(
+    record: WindForecastRecord,
+    *,
+    source_id: str,
+    raw_payload_id: UUID,
+) -> dict[str, Any]:
+    return {
+        "source_id": source_id,
+        "raw_payload_id": raw_payload_id,
+        "source_record_id": record.source_key,
+        "metric_type": "generation",
+        "series_key": "wind",
+        "variant": "point",
+        "value": float(record.generation_mw),
+        "unit": "MW",
+        "value_low": None,
+        "value_high": None,
+        "valid_from": as_utc(record.forecast_for, field_name="forecast_for"),
+        "valid_to": None,
+        "issued_at": as_utc(record.published_at, field_name="published_at"),
+        "published_at": as_utc(record.published_at, field_name="published_at"),
+        "retrieved_at": as_utc(record.retrieved_at, field_name="retrieved_at"),
+        "model_name": record.dataset,
+        "settlement_date": None,
+        "settlement_period": None,
+        "attributes": {
+            "source": record.source,
+            "dataset": record.dataset,
+            "classification": "forecast",
+            "fuelType": "wind",
+        },
+    }
+
+
+def map_remit_notice_record(
+    record: RemitUnavailabilityRecord,
+    *,
+    source_id: str,
+    raw_payload_id: UUID,
+) -> dict[str, Any]:
+    outage_profile = [
+        {
+            "start": as_utc(point.start, field_name="outage_profile.start").isoformat(),
+            "end": as_utc(point.end, field_name="outage_profile.end").isoformat(),
+            "availableCapacityMW": float(point.available_capacity_mw),
+        }
+        for point in record.outage_profile
+    ]
+    evidence = {
+        "classification": "reported",
+        "messageId": record.message_id,
+        "mRID": record.mrid,
+        "revisionNumber": record.revision_number,
+        "outageProfile": outage_profile,
+    }
+    return {
+        "source_id": source_id,
+        "raw_payload_id": raw_payload_id,
+        "notice_kind": "remit_unavailability",
+        "external_id": record.mrid,
+        "revision_key": f"r{record.revision_number}",
+        "revision_number": record.revision_number,
+        "source_record_id": record.source_key,
+        "content_sha256": _content_checksum(asdict(record)),
+        "classification": "reported",
+        "published_at": as_utc(record.published_at, field_name="published_at"),
+        "source_created_at": as_utc(record.created_at, field_name="created_at"),
+        "retrieved_at": as_utc(record.retrieved_at, field_name="retrieved_at"),
+        "event_start": as_utc(record.event_start, field_name="event_start"),
+        "event_end": (
+            as_utc(record.event_end, field_name="event_end")
+            if record.event_end is not None
+            else None
+        ),
+        "heading": record.message_heading,
+        "event_type": record.event_type,
+        "unavailability_type": record.unavailability_type,
+        "event_status": record.event_status,
+        "participant_id": record.participant_id,
+        "asset_id": record.asset_id,
+        "asset_type": record.asset_type,
+        "affected_unit": record.affected_unit,
+        "affected_unit_eic": record.affected_unit_eic,
+        "affected_area": record.affected_area,
+        "bidding_zone": record.bidding_zone,
+        "fuel_type": record.fuel_type,
+        "normal_capacity_mw": record.normal_capacity_mw,
+        "available_capacity_mw": record.available_capacity_mw,
+        "unavailable_capacity_mw": record.unavailable_capacity_mw,
+        "duration_uncertainty": record.duration_uncertainty,
+        "reported_cause": record.reported_cause,
+        "reported_related_information": record.reported_related_information,
+        "warning_type": None,
+        "warning_text": None,
+        "evidence": evidence,
+    }
+
+
+def map_system_warning_record(
+    record: SystemWarningRecord,
+    *,
+    source_id: str,
+    raw_payload_id: UUID,
+) -> dict[str, Any]:
+    published_at = as_utc(record.published_at, field_name="published_at")
+    identity = f"{record.warning_type}\0{published_at.isoformat()}"
+    external_id = f"syswarn:{hashlib.sha256(identity.encode()).hexdigest()[:32]}"
+    revision_key = (
+        f"r{record.revision_number}"
+        if record.revision_number is not None
+        else record.content_sha256.lower()
+    )
+    return {
+        "source_id": source_id,
+        "raw_payload_id": raw_payload_id,
+        "notice_kind": "system_warning",
+        "external_id": external_id,
+        "revision_key": revision_key,
+        "revision_number": record.revision_number,
+        "source_record_id": record.source_key,
+        "content_sha256": record.content_sha256.lower(),
+        "classification": "reported",
+        "published_at": published_at,
+        "source_created_at": None,
+        "retrieved_at": as_utc(record.retrieved_at, field_name="retrieved_at"),
+        "event_start": None,
+        "event_end": None,
+        "heading": None,
+        "event_type": None,
+        "unavailability_type": None,
+        "event_status": None,
+        "participant_id": None,
+        "asset_id": None,
+        "asset_type": None,
+        "affected_unit": None,
+        "affected_unit_eic": None,
+        "affected_area": None,
+        "bidding_zone": None,
+        "fuel_type": None,
+        "normal_capacity_mw": None,
+        "available_capacity_mw": None,
+        "unavailable_capacity_mw": None,
+        "duration_uncertainty": None,
+        "reported_cause": None,
+        "reported_related_information": None,
+        "warning_type": record.warning_type,
+        "warning_text": record.warning_text,
+        "evidence": {
+            "classification": "reported",
+            "warningType": record.warning_type,
+            "warningTextSha256": record.content_sha256.lower(),
+        },
+    }
+
+
+def _carbon_attributes(record: CarbonIntensityRecord) -> dict[str, Any]:
+    return {
+        "source": record.source,
+        "dataset": record.dataset,
+        "classification": record.classification.value,
+        "periodEnd": as_utc(record.period_end, field_name="period_end").isoformat(),
+        "regionId": record.region_id,
+        "regionName": record.region_name,
+        "dnoRegion": record.dno_region,
+        "postcode": record.postcode,
+    }
+
+
+def _content_checksum(value: dict[str, Any]) -> str:
+    encoded = json.dumps(value, sort_keys=True, separators=(",", ":"), default=str)
+    return hashlib.sha256(encoded.encode()).hexdigest()
 
 
 def _common_observation_values(

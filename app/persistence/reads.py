@@ -2,19 +2,21 @@ from __future__ import annotations
 
 from collections.abc import Callable, Iterable, Sequence
 from dataclasses import dataclass
-from datetime import UTC, datetime
+from datetime import UTC, datetime, timedelta
 from typing import Any, TypeVar
 
-from sqlalchemy import Select, func, select
+from sqlalchemy import Select, and_, func, or_, select
 from sqlalchemy.ext.asyncio import AsyncSession
 from sqlalchemy.orm import aliased
 
 from app.db.models import (
     CarbonObservation,
     DemandObservation,
+    ForecastObservation,
     FrequencyObservation,
     GenerationObservation,
     InterconnectorObservation,
+    ReportedNotice,
     SourceMetadata,
 )
 from app.sources.types import as_utc
@@ -75,6 +77,51 @@ class CarbonRead:
 
 
 @dataclass(frozen=True, slots=True)
+class ForecastRead:
+    metric_type: str
+    series_key: str
+    value: float
+    unit: str
+    valid_from: datetime
+    valid_to: datetime | None
+    issued_at: datetime
+    published_at: datetime | None
+    retrieved_at: datetime
+    source_id: str
+    source_record_id: str | None
+    model_name: str | None
+    attributes: dict[str, Any]
+
+
+@dataclass(frozen=True, slots=True)
+class ReportedNoticeRead:
+    id: str
+    source_id: str
+    notice_kind: str
+    external_id: str
+    revision_key: str
+    revision_number: int | None
+    published_at: datetime
+    retrieved_at: datetime
+    event_start: datetime | None
+    event_end: datetime | None
+    heading: str | None
+    event_type: str | None
+    event_status: str | None
+    affected_unit: str | None
+    asset_id: str | None
+    fuel_type: str | None
+    normal_capacity_mw: float | None
+    available_capacity_mw: float | None
+    unavailable_capacity_mw: float | None
+    reported_cause: str | None
+    reported_related_information: str | None
+    warning_type: str | None
+    warning_text: str | None
+    evidence: dict[str, Any]
+
+
+@dataclass(frozen=True, slots=True)
 class SourceMetadataRead:
     id: str
     provider: str
@@ -130,6 +177,7 @@ class GridTimelineRead:
     interconnectors: tuple[InterconnectorRead, ...]
     carbon: tuple[CarbonRead, ...]
     sources: tuple[SourceMetadataRead, ...]
+    forecasts: tuple[ForecastRead, ...] = ()
 
 
 class GridReadRepository:
@@ -252,6 +300,118 @@ class GridReadRepository:
             ).scalar_one_or_none()
         return map_carbon_read(row) if row is not None else None
 
+    async def get_latest_regional_carbon(
+        self,
+        region_code: str,
+        *,
+        as_of: datetime | None = None,
+    ) -> CarbonRead | None:
+        """Read an actual regional value by region-N id or outward postcode."""
+
+        if not region_code.strip():
+            raise ValueError("region_code cannot be blank")
+        return await self.get_latest_carbon(
+            as_of=as_of,
+            carbon_region=region_code.strip(),
+        )
+
+    async def get_forecasts(
+        self,
+        *,
+        window_start: datetime,
+        window_end: datetime,
+        metric_types: Iterable[str] | None = None,
+        series_key: str | None = None,
+        issued_before: datetime | None = None,
+    ) -> tuple[ForecastRead, ...]:
+        start = as_utc(window_start, field_name="window_start")
+        end = as_utc(window_end, field_name="window_end")
+        if start >= end:
+            raise ValueError("forecast window_start must precede window_end")
+        issue_cutoff = (
+            as_utc(issued_before, field_name="issued_before")
+            if issued_before is not None
+            else None
+        )
+        statement = _latest_forecasts_statement(
+            start,
+            end,
+            metric_types=metric_types,
+            series_key=series_key,
+            issued_before=issue_cutoff,
+        )
+        async with self._session_factory() as session:
+            rows = (await session.execute(statement)).scalars().all()
+        return tuple(map_forecast_read(row) for row in rows)
+
+    async def get_carbon_forecast(
+        self,
+        *,
+        region_code: str,
+        window_start: datetime,
+        window_end: datetime,
+        issued_before: datetime | None = None,
+    ) -> tuple[ForecastRead, ...]:
+        return await self.get_forecasts(
+            window_start=window_start,
+            window_end=window_end,
+            metric_types=("carbon_intensity",),
+            series_key=region_code,
+            issued_before=issued_before,
+        )
+
+    async def get_active_notices(
+        self,
+        *,
+        as_of: datetime | None = None,
+        warning_fresh_for_seconds: int = 900,
+    ) -> tuple[ReportedNoticeRead, ...]:
+        """Return current REMIT windows and recently observed SYSWARN reports.
+
+        SYSWARN has no explicit end time. It is included only while recently
+        observed, and remains labelled as reported rather than inferred.
+        """
+
+        cutoff = as_utc(as_of or self._clock(), field_name="as_of")
+        if warning_fresh_for_seconds <= 0:
+            raise ValueError("warning_fresh_for_seconds must be positive")
+        async with self._session_factory() as session:
+            rows = (
+                await session.execute(_latest_notice_revisions_statement(cutoff))
+            ).scalars().all()
+        notices = (map_reported_notice_read(row) for row in rows)
+        return tuple(
+            notice
+            for notice in notices
+            if _notice_is_active(
+                notice,
+                as_of=cutoff,
+                warning_fresh_for=timedelta(seconds=warning_fresh_for_seconds),
+            )
+        )
+
+    async def get_reported_notice_revisions(
+        self,
+        external_id: str,
+        *,
+        notice_kind: str | None = None,
+    ) -> tuple[ReportedNoticeRead, ...]:
+        if not external_id:
+            raise ValueError("external_id cannot be blank")
+        statement = select(ReportedNotice).where(
+            ReportedNotice.external_id == external_id
+        )
+        if notice_kind is not None:
+            statement = statement.where(ReportedNotice.notice_kind == notice_kind)
+        statement = statement.order_by(
+            ReportedNotice.revision_number.asc().nullsfirst(),
+            ReportedNotice.published_at,
+            ReportedNotice.retrieved_at,
+        )
+        async with self._session_factory() as session:
+            rows = (await session.execute(statement)).scalars().all()
+        return tuple(map_reported_notice_read(row) for row in rows)
+
     async def get_timeline(
         self,
         *,
@@ -302,6 +462,13 @@ class GridReadRepository:
             carbon_rows = list(
                 (await session.execute(carbon_statement)).scalars().all()
             )
+            forecast_rows = list(
+                (
+                    await session.execute(
+                        _latest_forecasts_statement(start, end)
+                    )
+                ).scalars().all()
+            )
 
             generation_rows = _downsample(
                 generation_rows,
@@ -340,6 +507,7 @@ class GridReadRepository:
                     *frequency_rows,
                     *interconnector_rows,
                     *carbon_rows,
+                    *forecast_rows,
                 )
             }
             source_rows = await _read_source_rows(session, source_ids)
@@ -356,6 +524,7 @@ class GridReadRepository:
             ),
             carbon=tuple(map_carbon_read(row) for row in carbon_rows),
             sources=tuple(map_source_metadata_read(row) for row in source_rows),
+            forecasts=tuple(map_forecast_read(row) for row in forecast_rows),
         )
 
     async def list_sources(self) -> tuple[SourceMetadataRead, ...]:
@@ -416,6 +585,53 @@ def map_carbon_read(row: CarbonObservation) -> CarbonRead:
         index_label=row.index_label,
         generation_mix=tuple(row.generation_mix or ()),
         provenance=_provenance(row),
+    )
+
+
+def map_forecast_read(row: ForecastObservation) -> ForecastRead:
+    return ForecastRead(
+        metric_type=row.metric_type,
+        series_key=row.series_key,
+        value=float(row.value),
+        unit=row.unit,
+        valid_from=row.valid_from,
+        valid_to=row.valid_to,
+        issued_at=row.issued_at,
+        published_at=row.published_at,
+        retrieved_at=row.retrieved_at,
+        source_id=row.source_id,
+        source_record_id=row.source_record_id,
+        model_name=row.model_name,
+        attributes=dict(row.attributes or {}),
+    )
+
+
+def map_reported_notice_read(row: ReportedNotice) -> ReportedNoticeRead:
+    return ReportedNoticeRead(
+        id=str(row.id),
+        source_id=row.source_id,
+        notice_kind=row.notice_kind,
+        external_id=row.external_id,
+        revision_key=row.revision_key,
+        revision_number=row.revision_number,
+        published_at=row.published_at,
+        retrieved_at=row.retrieved_at,
+        event_start=row.event_start,
+        event_end=row.event_end,
+        heading=row.heading,
+        event_type=row.event_type,
+        event_status=row.event_status,
+        affected_unit=row.affected_unit,
+        asset_id=row.asset_id,
+        fuel_type=row.fuel_type,
+        normal_capacity_mw=row.normal_capacity_mw,
+        available_capacity_mw=row.available_capacity_mw,
+        unavailable_capacity_mw=row.unavailable_capacity_mw,
+        reported_cause=row.reported_cause,
+        reported_related_information=row.reported_related_information,
+        warning_type=row.warning_type,
+        warning_text=row.warning_text,
+        evidence=dict(row.evidence or {}),
     )
 
 
@@ -519,6 +735,107 @@ def _latest_carbon_statement(as_of: datetime, *, carbon_region: str) -> Select:
     )
 
 
+def _latest_forecasts_statement(
+    start: datetime,
+    end: datetime,
+    *,
+    metric_types: Iterable[str] | None = None,
+    series_key: str | None = None,
+    issued_before: datetime | None = None,
+) -> Select:
+    conditions = [
+        ForecastObservation.valid_from < end,
+        or_(
+            and_(
+                ForecastObservation.valid_to.is_(None),
+                ForecastObservation.valid_from >= start,
+            ),
+            ForecastObservation.valid_to > start,
+        ),
+    ]
+    requested_metrics = tuple(sorted(set(metric_types or ())))
+    if requested_metrics:
+        conditions.append(ForecastObservation.metric_type.in_(requested_metrics))
+    if series_key is not None:
+        conditions.append(func.lower(ForecastObservation.series_key) == series_key.lower())
+    if issued_before is not None:
+        conditions.append(ForecastObservation.issued_at <= issued_before)
+
+    rank = func.row_number().over(
+        partition_by=(
+            ForecastObservation.metric_type,
+            ForecastObservation.series_key,
+            ForecastObservation.variant,
+            ForecastObservation.valid_from,
+        ),
+        order_by=(
+            ForecastObservation.issued_at.desc(),
+            ForecastObservation.retrieved_at.desc(),
+        ),
+    ).label("forecast_rank")
+    ranked = select(ForecastObservation, rank).where(*conditions).subquery()
+    latest = aliased(ForecastObservation, ranked)
+    return (
+        select(latest)
+        .where(ranked.c.forecast_rank == 1)
+        .order_by(latest.valid_from, latest.metric_type, latest.series_key)
+    )
+
+
+def _latest_notice_revisions_statement(as_of: datetime) -> Select:
+    rank = func.row_number().over(
+        partition_by=(
+            ReportedNotice.source_id,
+            ReportedNotice.notice_kind,
+            ReportedNotice.external_id,
+        ),
+        order_by=(
+            ReportedNotice.revision_number.desc().nullslast(),
+            ReportedNotice.published_at.desc(),
+            ReportedNotice.retrieved_at.desc(),
+            ReportedNotice.revision_key.desc(),
+        ),
+    ).label("notice_rank")
+    ranked = (
+        select(ReportedNotice, rank)
+        .where(ReportedNotice.published_at <= as_of)
+        .subquery()
+    )
+    latest = aliased(ReportedNotice, ranked)
+    return (
+        select(latest)
+        .where(ranked.c.notice_rank == 1)
+        .order_by(latest.notice_kind, latest.published_at.desc())
+    )
+
+
+def _notice_is_active(
+    notice: ReportedNoticeRead,
+    *,
+    as_of: datetime,
+    warning_fresh_for: timedelta,
+) -> bool:
+    if notice.notice_kind == "system_warning":
+        return (
+            notice.published_at <= as_of
+            and notice.retrieved_at >= as_of - warning_fresh_for
+        )
+    if notice.notice_kind != "remit_unavailability":
+        return False
+    if notice.event_start is None or notice.event_start > as_of:
+        return False
+    if notice.event_end is not None and notice.event_end <= as_of:
+        return False
+    status = (notice.event_status or "").strip().casefold().replace(" ", "_")
+    return status not in {
+        "cancelled",
+        "canceled",
+        "dismissed",
+        "withdrawn",
+        "inactive",
+    }
+
+
 def _between_statement(model: type, start: datetime, end: datetime) -> Select:
     return (
         select(model)
@@ -555,4 +872,3 @@ def _downsample(
         bucket = int(row.observed_at.timestamp()) // resolution_seconds
         latest_by_bucket[(*series_key(row), bucket)] = row
     return sorted(latest_by_bucket.values(), key=lambda row: row.observed_at)
-

@@ -181,6 +181,7 @@ def test_initial_metadata_contains_all_foundation_tables() -> None:
         "carbon_observations",
         "forecast_observations",
         "grid_snapshots",
+        "reported_notices",
         "detected_events",
         "event_explanations",
     }
@@ -211,4 +212,3 @@ def test_railway_database_urls_use_the_async_driver(
     input_url: str, expected: str
 ) -> None:
     assert normalize_async_database_url(input_url) == expected
-

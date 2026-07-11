@@ -457,6 +457,89 @@ class GridSnapshotRecord(Base):
     )
 
 
+class ReportedNotice(Base):
+    """An authoritative upstream publication retained revision by revision."""
+
+    __tablename__ = "reported_notices"
+
+    id: Mapped[uuid.UUID] = mapped_column(Uuid, primary_key=True, default=uuid.uuid4)
+    source_id: Mapped[str] = mapped_column(
+        ForeignKey("source_metadata.id", ondelete="RESTRICT"), nullable=False
+    )
+    raw_payload_id: Mapped[uuid.UUID | None] = mapped_column(
+        ForeignKey("raw_payloads.id", ondelete="SET NULL")
+    )
+    notice_kind: Mapped[str] = mapped_column(String(64), nullable=False)
+    external_id: Mapped[str] = mapped_column(String(240), nullable=False)
+    revision_key: Mapped[str] = mapped_column(String(128), nullable=False)
+    revision_number: Mapped[int | None] = mapped_column(Integer)
+    source_record_id: Mapped[str] = mapped_column(String(300), nullable=False)
+    content_sha256: Mapped[str] = mapped_column(String(64), nullable=False)
+    classification: Mapped[str] = mapped_column(
+        String(16), nullable=False, default="reported", server_default="reported"
+    )
+    published_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), nullable=False)
+    source_created_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True))
+    retrieved_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), nullable=False)
+    event_start: Mapped[datetime | None] = mapped_column(DateTime(timezone=True))
+    event_end: Mapped[datetime | None] = mapped_column(DateTime(timezone=True))
+    heading: Mapped[str | None] = mapped_column(String(500))
+    event_type: Mapped[str | None] = mapped_column(String(160))
+    unavailability_type: Mapped[str | None] = mapped_column(String(160))
+    event_status: Mapped[str | None] = mapped_column(String(120))
+    participant_id: Mapped[str | None] = mapped_column(String(160))
+    asset_id: Mapped[str | None] = mapped_column(String(160))
+    asset_type: Mapped[str | None] = mapped_column(String(120))
+    affected_unit: Mapped[str | None] = mapped_column(String(240))
+    affected_unit_eic: Mapped[str | None] = mapped_column(String(160))
+    affected_area: Mapped[str | None] = mapped_column(String(240))
+    bidding_zone: Mapped[str | None] = mapped_column(String(120))
+    fuel_type: Mapped[str | None] = mapped_column(String(80))
+    normal_capacity_mw: Mapped[float | None] = mapped_column(Float)
+    available_capacity_mw: Mapped[float | None] = mapped_column(Float)
+    unavailable_capacity_mw: Mapped[float | None] = mapped_column(Float)
+    duration_uncertainty: Mapped[str | None] = mapped_column(String(240))
+    reported_cause: Mapped[str | None] = mapped_column(Text)
+    reported_related_information: Mapped[str | None] = mapped_column(Text)
+    warning_type: Mapped[str | None] = mapped_column(String(160))
+    warning_text: Mapped[str | None] = mapped_column(Text)
+    evidence: Mapped[dict[str, Any]] = mapped_column(JSON_DOCUMENT, nullable=False)
+    created_at: Mapped[datetime] = mapped_column(
+        DateTime(timezone=True), nullable=False, server_default=func.now()
+    )
+
+    __table_args__ = (
+        UniqueConstraint(
+            "source_id",
+            "notice_kind",
+            "external_id",
+            "revision_key",
+            name="uq_reported_notice_revision",
+        ),
+        CheckConstraint(
+            "revision_number IS NULL OR revision_number > 0",
+            name="positive_revision_number",
+        ),
+        CheckConstraint(
+            "event_end IS NULL OR event_start IS NULL OR event_end >= event_start",
+            name="valid_reported_event_window",
+        ),
+        CheckConstraint(
+            "classification = 'reported'", name="reported_classification_only"
+        ),
+        Index(
+            "ix_reported_notices_external_published",
+            "notice_kind",
+            "external_id",
+            "published_at",
+        ),
+        Index(
+            "ix_reported_notices_active_window", "notice_kind", "event_start", "event_end"
+        ),
+        Index("ix_reported_notices_source_retrieved", "source_id", "retrieved_at"),
+    )
+
+
 class DetectedEvent(TimestampMixin, Base):
     __tablename__ = "detected_events"
 
