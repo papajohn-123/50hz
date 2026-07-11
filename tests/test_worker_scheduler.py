@@ -174,6 +174,43 @@ def test_worker_records_source_failure_without_stopping_other_ticks() -> None:
     assert repository.failures[0]["error_message"] == "upstream unavailable"
 
 
+def test_forever_loop_recovers_when_a_tick_crashes(caplog) -> None:
+    stop_event = asyncio.Event()
+
+    class FlakyRepository(FakeRepository):
+        def __init__(self) -> None:
+            super().__init__()
+            self.checkpoint_reads = 0
+
+        async def get_checkpoint(self, job_id: str) -> IngestionCheckpoint | None:
+            self.checkpoint_reads += 1
+            if self.checkpoint_reads == 1:
+                raise RuntimeError("database connection reset")
+            return await super().get_checkpoint(job_id)
+
+    class StoppingAdapter(FakeAdapter):
+        async def fetch(self, window: ObservationWindow) -> AdapterResult[Any]:
+            result = await super().fetch(window)
+            stop_event.set()
+            return result
+
+    repository = FlakyRepository()
+    worker = IngestionWorker(
+        schedules=[schedule(StoppingAdapter())],
+        repository=repository,
+        locks=FakeLocks(),
+        clock=lambda: NOW,
+    )
+
+    asyncio.run(
+        worker.run_forever(stop_event, tick_interval=timedelta(milliseconds=1))
+    )
+
+    assert repository.checkpoint_reads == 2
+    assert len(repository.successes) == 1
+    assert "Ingestion tick crashed" in caplog.text
+
+
 def test_reconciliation_revisits_preceding_48_hours_hourly() -> None:
     adapter = FakeAdapter()
     repository = FakeRepository()
@@ -198,4 +235,3 @@ def test_reconciliation_revisits_preceding_48_hours_hourly() -> None:
     outcomes = asyncio.run(worker.run_once(now=later))
     assert outcomes[0].status is RunStatus.SUCCEEDED
     assert outcomes[1].status is RunStatus.SKIPPED_NOT_DUE
-

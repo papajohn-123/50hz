@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import asyncio
+import logging
 from dataclasses import dataclass
 from datetime import UTC, datetime, timedelta
 from enum import StrEnum
@@ -15,6 +16,9 @@ from app.worker.contracts import (
     IngestionRepository,
     PersistOutcome,
 )
+
+
+logger = logging.getLogger(__name__)
 
 
 class RunMode(StrEnum):
@@ -264,7 +268,36 @@ class IngestionWorker:
         if tick_interval <= timedelta(0):
             raise ValueError("tick_interval must be positive")
         while not stop_event.is_set():
-            await self.run_once()
+            try:
+                outcomes = await self.run_once()
+            except Exception:
+                # The worker shares a process with the health endpoint.  An
+                # unobserved background-task exception would otherwise leave a
+                # green HTTP service that has stopped collecting data.
+                logger.exception("Ingestion tick crashed; retrying on the next tick")
+            else:
+                succeeded = [
+                    outcome
+                    for outcome in outcomes
+                    if outcome.status is RunStatus.SUCCEEDED
+                ]
+                failed = [
+                    outcome for outcome in outcomes if outcome.status is RunStatus.FAILED
+                ]
+                if succeeded:
+                    logger.info(
+                        "Ingestion tick completed: %d jobs, %d records",
+                        len(succeeded),
+                        sum(outcome.record_count for outcome in succeeded),
+                    )
+                if failed:
+                    logger.error(
+                        "Ingestion jobs failed: %s",
+                        "; ".join(
+                            f"{outcome.job_id} ({outcome.error_type}: {outcome.error_message})"
+                            for outcome in failed
+                        ),
+                    )
             try:
                 await asyncio.wait_for(
                     stop_event.wait(),
@@ -278,4 +311,3 @@ def _utc(value: datetime, name: str) -> datetime:
     if value.tzinfo is None or value.utcoffset() is None:
         raise ValueError(f"{name} must be timezone-aware")
     return value.astimezone(UTC)
-
