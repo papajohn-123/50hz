@@ -7,6 +7,7 @@ from app.events.models import (
     EvidenceFact,
     Severity,
 )
+from app.events.processor import EventProcessor, GridObservationWindow
 
 __all__ = [
     "Confidence",
@@ -16,5 +17,6 @@ __all__ = [
     "EvidenceClass",
     "EvidenceFact",
     "Severity",
+    "EventProcessor",
+    "GridObservationWindow",
 ]
-
