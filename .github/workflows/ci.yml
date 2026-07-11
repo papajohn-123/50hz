@@ -27,18 +27,35 @@ jobs:
         run: alembic upgrade head --sql > /tmp/50hz-migrations.sql
 
   ios:
-    name: iOS build and test bundle
+    name: iOS tests and release archive
     runs-on: macos-15
     steps:
       - uses: actions/checkout@v4
-      - name: Build app and test bundle
+      - name: Select an available iOS simulator
+        id: simulator
+        run: |
+          udid="$(xcrun simctl list devices available -j | python3 -c 'import json,sys; data=json.load(sys.stdin); print(next(device["udid"] for runtime,devices in data["devices"].items() if "SimRuntime.iOS-" in runtime for device in devices if device.get("isAvailable")))')"
+          test -n "$udid"
+          echo "udid=$udid" >> "$GITHUB_OUTPUT"
+      - name: Run iOS unit tests
         run: >-
           xcodebuild -quiet
           -project ios/50Hz.xcodeproj
           -scheme 50Hz
           -configuration Debug
           -sdk iphonesimulator
-          -destination 'generic/platform=iOS Simulator'
+          -destination 'platform=iOS Simulator,id=${{ steps.simulator.outputs.udid }}'
           -derivedDataPath /tmp/50hz-derived
           CODE_SIGNING_ALLOWED=NO
-          build-for-testing
+          test
+      - name: Build unsigned release archive
+        run: >-
+          xcodebuild -quiet
+          -project ios/50Hz.xcodeproj
+          -scheme 50Hz
+          -configuration Release
+          -sdk iphoneos
+          -destination 'generic/platform=iOS'
+          -archivePath /tmp/50Hz.xcarchive
+          CODE_SIGNING_ALLOWED=NO
+          archive
