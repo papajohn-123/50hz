@@ -59,7 +59,7 @@ FUEL_DISPLAY_ORDER = (
 def _mobile_fuel(fuel: str) -> str:
     if fuel == "pumped_storage":
         return "storage"
-    if fuel in {"oil", "unknown"}:
+    if fuel in {"coal", "oil", "other", "unknown"}:
         return "other"
     return fuel
 
@@ -155,6 +155,8 @@ def present_current(
     previous = previous_generation_mw or {}
     changes = {fuel: value - previous.get(fuel, value) for fuel, value in generation_mw.items()}
     net_import_mw = sum(flow.megawatts for flow in read.interconnectors)
+    if net_import_mw > 0:
+        generation_mw["imports"] = net_import_mw
     frequency_hz = read.frequency.hertz if read.frequency else None
 
     required_times = [

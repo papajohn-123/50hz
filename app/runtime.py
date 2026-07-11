@@ -9,7 +9,7 @@ from app.config import get_settings
 from app.db import dispose_engine, get_session_factory
 from app.persistence import PostgresAdvisoryLockProvider, PostgresIngestionRepository
 from app.sources import AsyncJSONClient
-from app.worker.defaults import build_elexon_schedules
+from app.worker.production import build_production_schedules
 from app.worker.scheduler import IngestionWorker
 
 
@@ -17,7 +17,7 @@ from app.worker.scheduler import IngestionWorker
 class WorkerRuntime:
     stop_event: asyncio.Event
     task: asyncio.Task[None]
-    client: AsyncJSONClient
+    clients: tuple[AsyncJSONClient, ...]
 
 
 @asynccontextmanager
@@ -27,10 +27,18 @@ async def lifespan(app: FastAPI):
     if settings.service_role == "worker":
         if not settings.database_url:
             raise RuntimeError("The worker requires DATABASE_URL")
-        client = AsyncJSONClient(base_url=settings.elexon_base_url.rstrip("/") + "/")
+        elexon_client = AsyncJSONClient(
+            base_url=settings.elexon_base_url.rstrip("/") + "/"
+        )
+        carbon_client = AsyncJSONClient(
+            base_url=settings.carbon_intensity_base_url.rstrip("/") + "/"
+        )
         session_factory = get_session_factory()
         worker = IngestionWorker(
-            schedules=build_elexon_schedules(client),
+            schedules=build_production_schedules(
+                elexon_client=elexon_client,
+                carbon_client=carbon_client,
+            ),
             repository=PostgresIngestionRepository(session_factory),
             locks=PostgresAdvisoryLockProvider(session_factory),
         )
@@ -42,7 +50,11 @@ async def lifespan(app: FastAPI):
             ),
             name="50hz-ingestion-worker",
         )
-        runtime = WorkerRuntime(stop_event=stop_event, task=task, client=client)
+        runtime = WorkerRuntime(
+            stop_event=stop_event,
+            task=task,
+            clients=(elexon_client, carbon_client),
+        )
         app.state.worker_runtime = runtime
     try:
         yield
@@ -50,6 +62,7 @@ async def lifespan(app: FastAPI):
         if runtime:
             runtime.stop_event.set()
             await runtime.task
-            await runtime.client.aclose()
+            for client in runtime.clients:
+                await client.aclose()
         if settings.database_url:
             await dispose_engine()
