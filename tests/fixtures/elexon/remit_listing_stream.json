@@ -1,0 +1,18 @@
+[
+  {
+    "url": "https://data.elexon.co.uk/bmrs/api/v1/remit/903180",
+    "id": 903180,
+    "mrid": "47X000000000386O-ELXP-RMT-00000052",
+    "revisionNumber": 3,
+    "createdTime": "2026-07-11T11:49:00Z",
+    "publishTime": "2026-07-11T11:50:00Z"
+  },
+  {
+    "url": "https://data.elexon.co.uk/bmrs/api/v1/remit/903186",
+    "id": 903186,
+    "mrid": "47X000000000386O-ELXP-RMT-00000052",
+    "revisionNumber": 4,
+    "createdTime": "2026-07-11T12:22:42Z",
+    "publishTime": "2026-07-11T12:23:59Z"
+  }
+]

@@ -1,0 +1,17 @@
+{
+  "data": [
+    {
+      "publishTime": "2026-07-10T18:02:00Z",
+      "warningType": "IT SYSTEMS OUTAGE",
+      "warningText": "NESO reports a planned outage affecting a subset of Balancing Mechanism API users on 16 July 2026."
+    },
+    {
+      "publishTime": "2026-07-11T12:24:00Z",
+      "warningType": "SO-SO TRADES",
+      "warningText": "NESO notification of excess energy prices used for settlement outside BALIT for SO-to-SO transactions."
+    }
+  ],
+  "metadata": {
+    "datasets": ["SYSWARN"]
+  }
+}

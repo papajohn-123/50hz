@@ -1,0 +1,76 @@
+{
+  "data": [
+    {
+      "id": 903180,
+      "dataset": "REMIT",
+      "mrid": "47X000000000386O-ELXP-RMT-00000052",
+      "revisionNumber": 3,
+      "publishTime": "2026-07-11T11:50:00Z",
+      "createdTime": "2026-07-11T11:49:00Z",
+      "messageType": "UnavailabilitiesOfElectricityFacilities",
+      "messageHeading": "Transmission Unavailability - GREENLINK",
+      "eventType": "Transmission unavailability",
+      "unavailabilityType": "Planned",
+      "participantId": "GREENLNK",
+      "assetId": "I_IEG-GRN1",
+      "assetType": "Interconnector",
+      "affectedUnit": "I_IEG-GRN1",
+      "biddingZone": "10YGB----------A",
+      "normalCapacity": 504.0,
+      "availableCapacity": 0.0,
+      "unavailableCapacity": 504.0,
+      "eventStatus": "Active",
+      "eventStartTime": "2026-06-22T04:00:00Z",
+      "eventEndTime": "2026-07-13T22:00:00Z",
+      "cause": "The market participant reports equipment repair work.",
+      "relatedInformation": "The market participant reports that the return date is under review.",
+      "outageProfile": [
+        {
+          "startTime": "2026-06-22T04:00:00Z",
+          "endTime": "2026-06-22T04:00:00Z",
+          "capacity": 504.0
+        },
+        {
+          "startTime": "2026-06-22T04:00:00Z",
+          "endTime": "2026-07-13T22:00:00Z",
+          "capacity": 0.0
+        }
+      ]
+    },
+    {
+      "id": 903186,
+      "dataset": "REMIT",
+      "mrid": "47X000000000386O-ELXP-RMT-00000052",
+      "revisionNumber": 4,
+      "publishTime": "2026-07-11T12:23:59Z",
+      "createdTime": "2026-07-11T12:22:42Z",
+      "messageType": "UnavailabilitiesOfElectricityFacilities",
+      "messageHeading": "Transmission Unavailability - GREENLINK",
+      "eventType": "Transmission unavailability",
+      "unavailabilityType": "Planned",
+      "participantId": "GREENLNK",
+      "assetId": "I_IEG-GRN1",
+      "assetType": "Interconnector",
+      "affectedUnit": "I_IEG-GRN1",
+      "biddingZone": "10YGB----------A",
+      "normalCapacity": 504.0,
+      "availableCapacity": 0.0,
+      "unavailableCapacity": 504.0,
+      "eventStatus": "Active",
+      "eventStartTime": "2026-06-22T04:00:00Z",
+      "eventEndTime": "2026-07-12T22:00:00Z",
+      "cause": "The market participant reports equipment repair work.",
+      "relatedInformation": "The market participant reports an earlier return to service.",
+      "outageProfile": [
+        {
+          "startTime": "2026-06-22T04:00:00Z",
+          "endTime": "2026-07-12T22:00:00Z",
+          "capacity": 0.0
+        }
+      ]
+    }
+  ],
+  "metadata": {
+    "datasets": ["REMIT"]
+  }
+}

@@ -7,7 +7,7 @@ import hashlib
 from dataclasses import dataclass
 from datetime import UTC, datetime
 from email.utils import parsedate_to_datetime
-from typing import Any, Awaitable, Callable, Mapping
+from typing import Any, Awaitable, Callable, Mapping, Sequence
 
 import httpx
 
@@ -19,6 +19,7 @@ from app.sources.exceptions import (
 
 
 DEFAULT_ELEXON_BASE_URL = "https://data.elexon.co.uk/bmrs/api/v1/"
+DEFAULT_NESO_CARBON_BASE_URL = "https://api.carbonintensity.org.uk/"
 DEFAULT_RETRY_STATUSES = frozenset({408, 425, 429, 500, 502, 503, 504})
 
 
@@ -96,7 +97,11 @@ class AsyncJSONClient:
         self,
         path: str,
         *,
-        params: Mapping[str, str | int | float | bool | None] | None = None,
+        params: Mapping[
+            str,
+            str | int | float | bool | None | Sequence[str | int | float | bool],
+        ]
+        | None = None,
     ) -> JSONResponse:
         last_transport_error: Exception | None = None
 
@@ -181,4 +186,3 @@ def _retry_after_seconds(response: httpx.Response, *, now: datetime) -> float | 
         if now.tzinfo is None:
             now = now.replace(tzinfo=UTC)
         return max((retry_at - now).total_seconds(), 0.0)
-

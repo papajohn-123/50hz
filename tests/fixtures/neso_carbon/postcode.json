@@ -1,0 +1,27 @@
+{
+  "data": [
+    {
+      "regionid": 13,
+      "dnoregion": "UKPN London",
+      "shortname": "London",
+      "postcode": "SW1A",
+      "data": [
+        {
+          "from": "2026-07-11T12:00Z",
+          "to": "2026-07-11T12:30Z",
+          "intensity": {
+            "forecast": 81,
+            "index": "low"
+          },
+          "generationmix": [
+            {"fuel": "imports", "perc": 57.0},
+            {"fuel": "gas", "perc": 5.7},
+            {"fuel": "solar", "perc": 26.3},
+            {"fuel": "wind", "perc": 10.5},
+            {"fuel": "other", "perc": 0.5}
+          ]
+        }
+      ]
+    }
+  ]
+}

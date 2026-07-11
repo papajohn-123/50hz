@@ -1,6 +1,11 @@
 """Public source-adapter surface."""
 
-from app.sources.client import AsyncJSONClient, RetryPolicy
+from app.sources.client import (
+    DEFAULT_ELEXON_BASE_URL,
+    DEFAULT_NESO_CARBON_BASE_URL,
+    AsyncJSONClient,
+    RetryPolicy,
+)
 from app.sources.elexon import (
     FreqAdapter,
     FuelInstAdapter,
@@ -8,22 +13,48 @@ from app.sources.elexon import (
     IndoAdapter,
     InitialDemandAdapter,
     InterconnectorFlowAdapter,
+    NationalDemandForecastAdapter,
+    NdfAdapter,
+    RemitUnavailabilityAdapter,
+    SystemWarningsAdapter,
     SystemFrequencyAdapter,
+    WindForAdapter,
+    WindGenerationForecastAdapter,
+)
+from app.sources.neso_carbon import (
+    LondonCarbonIntensityAdapter,
+    NationalCarbonCurrentAdapter,
+    NationalCarbonForecastAdapter,
+    PostcodeCarbonIntensityAdapter,
+    normalize_outward_postcode,
 )
 from app.sources.types import (
     AdapterResult,
+    CarbonIntensityRecord,
+    DataClassification,
     DemandRecord,
+    DemandForecastRecord,
     FlowDirection,
     FrequencyRecord,
+    GenerationMixShare,
     GenerationRecord,
     InterconnectorFlowRecord,
     ObservationWindow,
+    OutageProfilePoint,
+    RemitUnavailabilityRecord,
     SourceAdapter,
+    SystemWarningRecord,
+    WindForecastRecord,
 )
 
 __all__ = [
     "AdapterResult",
     "AsyncJSONClient",
+    "CarbonIntensityRecord",
+    "DEFAULT_ELEXON_BASE_URL",
+    "DEFAULT_NESO_CARBON_BASE_URL",
+    "DataClassification",
+    "DemandForecastRecord",
     "DemandRecord",
     "FlowDirection",
     "FreqAdapter",
@@ -31,13 +62,28 @@ __all__ = [
     "FuelInstAdapter",
     "FuelInstGenerationAdapter",
     "GenerationRecord",
+    "GenerationMixShare",
     "IndoAdapter",
     "InitialDemandAdapter",
     "InterconnectorFlowAdapter",
     "InterconnectorFlowRecord",
+    "LondonCarbonIntensityAdapter",
+    "NationalCarbonCurrentAdapter",
+    "NationalCarbonForecastAdapter",
+    "NationalDemandForecastAdapter",
+    "NdfAdapter",
     "ObservationWindow",
+    "OutageProfilePoint",
+    "PostcodeCarbonIntensityAdapter",
+    "RemitUnavailabilityAdapter",
+    "RemitUnavailabilityRecord",
     "RetryPolicy",
     "SourceAdapter",
+    "SystemWarningRecord",
+    "SystemWarningsAdapter",
     "SystemFrequencyAdapter",
+    "WindForAdapter",
+    "WindForecastRecord",
+    "WindGenerationForecastAdapter",
+    "normalize_outward_postcode",
 ]
-

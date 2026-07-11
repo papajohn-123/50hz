@@ -7,6 +7,7 @@ correction handling, and user-visible provenance.
 
 from __future__ import annotations
 
+import hashlib
 import json
 import math
 import re
@@ -18,11 +19,17 @@ from app.sources.client import AsyncJSONClient
 from app.sources.exceptions import SourceSchemaError
 from app.sources.types import (
     AdapterResult,
+    DataClassification,
     DemandRecord,
+    DemandForecastRecord,
     FrequencyRecord,
     GenerationRecord,
     InterconnectorFlowRecord,
     ObservationWindow,
+    OutageProfilePoint,
+    RemitUnavailabilityRecord,
+    SystemWarningRecord,
+    WindForecastRecord,
 )
 
 
@@ -39,6 +46,7 @@ FUEL_TYPES: Mapping[str, str] = {
     "OIL": "oil",
     "OTHER": "other",
     "PS": "pumped_storage",
+    "SOLAR": "solar",
     "WIND": "wind",
 }
 
@@ -348,10 +356,258 @@ class InterconnectorFlowAdapter(ElexonAdapter[InterconnectorFlowRecord]):
         )
 
 
+class NationalDemandForecastAdapter(ElexonAdapter[DemandForecastRecord]):
+    """Revision-preserving day/day-ahead National Demand forecasts (NDF)."""
+
+    source_id = "elexon.ndf"
+    dataset = "NDF"
+    endpoint = "datasets/NDF/stream"
+    include_format_parameter = False
+
+    def _parse_row(
+        self,
+        row: Mapping[str, Any],
+        *,
+        retrieved_at: datetime,
+    ) -> DemandForecastRecord:
+        forecast_for = _datetime(_required(row, "startTime", "start_time"), "startTime")
+        published_at = _datetime(
+            _required(row, "publishTime", "publish_time"),
+            "publishTime",
+        )
+        demand_mw = _number(_required(row, "demand", "demandMw"), "demand")
+        if demand_mw < 0:
+            raise ValueError("forecast demand cannot be negative")
+        boundary_value = _optional(row, "boundary")
+        boundary = str(boundary_value).strip() if boundary_value is not None else None
+        settlement_date, settlement_period = _settlement(row)
+        boundary_key = boundary or "national"
+        return DemandForecastRecord(
+            source_key=(
+                f"elexon:NDF:{_key_time(published_at)}:{_key_time(forecast_for)}:"
+                f"{boundary_key}"
+            ),
+            forecast_for=forecast_for,
+            published_at=published_at,
+            retrieved_at=_aware_utc(retrieved_at, "retrieved_at"),
+            demand_mw=demand_mw,
+            boundary=boundary,
+            settlement_date=settlement_date,
+            settlement_period=settlement_period,
+        )
+
+
+class WindGenerationForecastAdapter(ElexonAdapter[WindForecastRecord]):
+    """Revision-preserving hourly wind generation forecasts (WINDFOR)."""
+
+    source_id = "elexon.windfor"
+    dataset = "WINDFOR"
+    endpoint = "datasets/WINDFOR/stream"
+    include_format_parameter = False
+
+    def _parse_row(
+        self,
+        row: Mapping[str, Any],
+        *,
+        retrieved_at: datetime,
+    ) -> WindForecastRecord:
+        forecast_for = _datetime(_required(row, "startTime", "start_time"), "startTime")
+        published_at = _datetime(
+            _required(row, "publishTime", "publish_time"),
+            "publishTime",
+        )
+        generation_mw = _number(
+            _required(row, "generation", "generationMw"),
+            "generation",
+        )
+        if generation_mw < 0:
+            raise ValueError("forecast wind generation cannot be negative")
+        return WindForecastRecord(
+            source_key=(
+                f"elexon:WINDFOR:{_key_time(published_at)}:{_key_time(forecast_for)}"
+            ),
+            forecast_for=forecast_for,
+            published_at=published_at,
+            retrieved_at=_aware_utc(retrieved_at, "retrieved_at"),
+            generation_mw=generation_mw,
+        )
+
+
+class SystemWarningsAdapter(ElexonAdapter[SystemWarningRecord]):
+    """Reported NESO/Elexon system-warning publications without text inference."""
+
+    source_id = "elexon.syswarn"
+    dataset = "SYSWARN"
+    endpoint = "system/warnings"
+
+    def _parse_row(
+        self,
+        row: Mapping[str, Any],
+        *,
+        retrieved_at: datetime,
+    ) -> SystemWarningRecord:
+        published_at = _datetime(
+            _required(row, "publishTime", "publish_time"),
+            "publishTime",
+        )
+        warning_type = str(_required(row, "warningType", "warning_type")).strip()
+        warning_text = str(_required(row, "warningText", "warning_text"))
+        if not warning_type:
+            raise ValueError("warningType cannot be empty")
+        if not warning_text.strip():
+            raise ValueError("warningText cannot be empty")
+        content_hash = hashlib.sha256(
+            f"{warning_type}\0{warning_text}".encode("utf-8")
+        ).hexdigest()
+        return SystemWarningRecord(
+            source_key=(
+                f"elexon:SYSWARN:{_key_time(published_at)}:{content_hash[:16]}"
+            ),
+            published_at=published_at,
+            retrieved_at=_aware_utc(retrieved_at, "retrieved_at"),
+            warning_type=warning_type,
+            warning_text=warning_text,
+            content_sha256=content_hash,
+        )
+
+
+class RemitUnavailabilityAdapter:
+    """Fetch every published REMIT unavailability revision and then its details."""
+
+    source_id = "elexon.remit.unavailability"
+    dataset = "REMIT"
+    endpoint = "remit/list/by-publish/stream"
+    details_endpoint = "remit"
+
+    def __init__(self, client: AsyncJSONClient, *, batch_size: int = 100) -> None:
+        if batch_size < 1:
+            raise ValueError("batch_size must be positive")
+        self.client = client
+        self.batch_size = batch_size
+
+    async def fetch(
+        self,
+        window: ObservationWindow,
+    ) -> AdapterResult[RemitUnavailabilityRecord]:
+        listing = await self.client.get_json(
+            self.endpoint,
+            params={
+                "from": _format_datetime(window.start),
+                "to": _format_datetime(window.end),
+                "messageType": "UnavailabilitiesOfElectricityFacilities",
+                # Retaining every publication is essential: later revisions may
+                # shorten, cancel, or otherwise materially change an event.
+                "latestRevisionOnly": False,
+                "profileOnly": False,
+            },
+        )
+        listing_rows = _extract_rows(listing.payload)
+        ids: list[int] = []
+        listing_warnings: list[str] = []
+        for index, row in enumerate(listing_rows):
+            try:
+                message_id = _integer(_required(row, "id", "messageId"), "id")
+                if message_id < 1:
+                    raise ValueError("id must be positive")
+                ids.append(message_id)
+            except (KeyError, TypeError, ValueError) as exc:
+                listing_warnings.append(f"listing row {index} ignored: {exc}")
+        if listing_rows and not ids:
+            raise SourceSchemaError("REMIT listing contained no valid message IDs")
+
+        detail_responses = []
+        for offset in range(0, len(ids), self.batch_size):
+            detail_responses.append(
+                await self.client.get_json(
+                    self.details_endpoint,
+                    params={
+                        "messageId": ids[offset : offset + self.batch_size],
+                        "format": "json",
+                    },
+                )
+            )
+
+        detail_rows: list[Mapping[str, Any]] = []
+        for response in detail_responses:
+            detail_rows.extend(_extract_rows(response.payload))
+        retrieved_at = (
+            detail_responses[-1].retrieved_at
+            if detail_responses
+            else listing.retrieved_at
+        )
+        records, parse_warnings = self.parse(
+            detail_rows,
+            retrieved_at=retrieved_at,
+        )
+
+        returned_ids = {record.message_id for record in records}
+        missing_ids = sorted(set(ids) - returned_ids)
+        missing_warning = (
+            (f"detail response omitted {len(missing_ids)} listed message(s)",)
+            if missing_ids
+            else ()
+        )
+        raw_payload = {
+            "listing": listing.payload,
+            "details": [response.payload for response in detail_responses],
+        }
+        raw_body = canonical_payload_bytes(raw_payload)
+        return AdapterResult(
+            source_id=self.source_id,
+            dataset=self.dataset,
+            endpoint=self.endpoint,
+            window=window,
+            retrieved_at=retrieved_at,
+            request_url=listing.request_url,
+            records=records,
+            raw_payload=raw_payload,
+            raw_body=raw_body,
+            checksum_sha256=hashlib.sha256(raw_body).hexdigest(),
+            content_type="application/json",
+            metadata={
+                "listingChecksum": listing.checksum_sha256,
+                "detailChecksums": [
+                    response.checksum_sha256 for response in detail_responses
+                ],
+                "detailRequestUrls": [response.request_url for response in detail_responses],
+            },
+            warnings=tuple(listing_warnings) + parse_warnings + missing_warning,
+        )
+
+    def parse(
+        self,
+        rows_or_payload: Any,
+        *,
+        retrieved_at: datetime,
+    ) -> tuple[tuple[RemitUnavailabilityRecord, ...], tuple[str, ...]]:
+        rows = _extract_rows(rows_or_payload)
+        records: list[RemitUnavailabilityRecord] = []
+        warnings: list[str] = []
+        invalid = 0
+        ignored = 0
+        for index, row in enumerate(rows):
+            try:
+                message_type = str(_required(row, "messageType", "message_type"))
+                if message_type.casefold() != "unavailabilitiesofelectricityfacilities".casefold():
+                    ignored += 1
+                    continue
+                records.append(_parse_remit_unavailability(row, retrieved_at=retrieved_at))
+            except (KeyError, TypeError, ValueError) as exc:
+                invalid += 1
+                warnings.append(f"detail row {index} ignored: {exc}")
+        if ignored:
+            warnings.append(f"ignored {ignored} non-unavailability REMIT message(s)")
+        if rows and not records and invalid:
+            raise SourceSchemaError("no valid REMIT unavailability details")
+        return tuple(records), tuple(warnings)
+
+
 # Short aliases for callers that prefer the upstream dataset codes.
 FuelInstAdapter = FuelInstGenerationAdapter
 IndoAdapter = InitialDemandAdapter
 FreqAdapter = SystemFrequencyAdapter
+NdfAdapter = NationalDemandForecastAdapter
+WindForAdapter = WindGenerationForecastAdapter
 
 
 def _extract_rows(payload: Any) -> tuple[Mapping[str, Any], ...]:
@@ -439,6 +695,149 @@ def _number(value: Any, field_name: str) -> float:
     if not math.isfinite(result):
         raise ValueError(f"{field_name} must be finite")
     return result
+
+
+def _integer(value: Any, field_name: str) -> int:
+    if isinstance(value, bool):
+        raise TypeError(f"{field_name} must be an integer")
+    try:
+        result = int(value)
+    except (TypeError, ValueError) as exc:
+        raise TypeError(f"{field_name} must be an integer") from exc
+    if isinstance(value, float) and not value.is_integer():
+        raise TypeError(f"{field_name} must be an integer")
+    return result
+
+
+def _optional_number(row: Mapping[str, Any], *names: str) -> float | None:
+    value = _optional(row, *names)
+    return _number(value, names[0]) if value is not None else None
+
+
+def _optional_string(row: Mapping[str, Any], *names: str) -> str | None:
+    value = _optional(row, *names)
+    return str(value) if value is not None else None
+
+
+def _optional_datetime(row: Mapping[str, Any], *names: str) -> datetime | None:
+    value = _optional(row, *names)
+    return _datetime(value, names[0]) if value is not None else None
+
+
+def _parse_remit_unavailability(
+    row: Mapping[str, Any],
+    *,
+    retrieved_at: datetime,
+) -> RemitUnavailabilityRecord:
+    mrid = str(_required(row, "mrid", "mRID")).strip()
+    if not mrid:
+        raise ValueError("mrid cannot be empty")
+    revision_number = _integer(
+        _required(row, "revisionNumber", "revision_number"),
+        "revisionNumber",
+    )
+    if revision_number < 1:
+        raise ValueError("revisionNumber must be positive")
+    message_id = _integer(_required(row, "id", "messageId"), "id")
+    if message_id < 1:
+        raise ValueError("id must be positive")
+    published_at = _datetime(
+        _required(row, "publishTime", "publish_time"),
+        "publishTime",
+    )
+    created_at = _datetime(
+        _required(row, "createdTime", "created_time"),
+        "createdTime",
+    )
+    event_start = _datetime(
+        _required(row, "eventStartTime", "event_start_time"),
+        "eventStartTime",
+    )
+    event_end = _optional_datetime(row, "eventEndTime", "event_end_time")
+    if event_end is not None and event_end < event_start:
+        raise ValueError("eventEndTime cannot precede eventStartTime")
+    return RemitUnavailabilityRecord(
+        source_key=f"elexon:REMIT:{mrid}:r{revision_number}",
+        mrid=mrid,
+        revision_number=revision_number,
+        message_id=message_id,
+        published_at=published_at,
+        created_at=created_at,
+        retrieved_at=_aware_utc(retrieved_at, "retrieved_at"),
+        event_start=event_start,
+        event_end=event_end,
+        message_heading=_optional_string(row, "messageHeading", "message_heading"),
+        event_type=_optional_string(row, "eventType", "event_type"),
+        unavailability_type=_optional_string(
+            row,
+            "unavailabilityType",
+            "unavailability_type",
+        ),
+        event_status=_optional_string(row, "eventStatus", "event_status"),
+        participant_id=_optional_string(row, "participantId", "participant_id"),
+        asset_id=_optional_string(row, "assetId", "asset_id"),
+        asset_type=_optional_string(row, "assetType", "asset_type"),
+        affected_unit=_optional_string(row, "affectedUnit", "affected_unit"),
+        affected_unit_eic=_optional_string(
+            row,
+            "affectedUnitEIC",
+            "affected_unit_eic",
+        ),
+        affected_area=_optional_string(row, "affectedArea", "affected_area"),
+        bidding_zone=_optional_string(row, "biddingZone", "bidding_zone"),
+        fuel_type=_optional_string(row, "fuelType", "fuel_type"),
+        normal_capacity_mw=_optional_number(row, "normalCapacity", "normal_capacity"),
+        available_capacity_mw=_optional_number(
+            row,
+            "availableCapacity",
+            "available_capacity",
+        ),
+        unavailable_capacity_mw=_optional_number(
+            row,
+            "unavailableCapacity",
+            "unavailable_capacity",
+        ),
+        duration_uncertainty=_optional_string(
+            row,
+            "durationUncertainty",
+            "duration_uncertainty",
+        ),
+        reported_cause=_optional_string(row, "cause"),
+        reported_related_information=_optional_string(
+            row,
+            "relatedInformation",
+            "related_information",
+        ),
+        outage_profile=_outage_profile(row),
+        classification=DataClassification.REPORTED,
+    )
+
+
+def _outage_profile(row: Mapping[str, Any]) -> tuple[OutageProfilePoint, ...]:
+    raw_profile = _optional(row, "outageProfile", "outage_profile")
+    if raw_profile is None:
+        return ()
+    if not isinstance(raw_profile, list):
+        raise TypeError("outageProfile must be an array")
+    profile: list[OutageProfilePoint] = []
+    for item in raw_profile:
+        if not isinstance(item, dict):
+            raise TypeError("outageProfile entries must be objects")
+        start = _datetime(_required(item, "startTime", "start_time"), "outage startTime")
+        end = _datetime(_required(item, "endTime", "end_time"), "outage endTime")
+        if start > end:
+            raise ValueError("outage profile start cannot follow end")
+        profile.append(
+            OutageProfilePoint(
+                start=start,
+                end=end,
+                available_capacity_mw=_number(
+                    _required(item, "capacity"),
+                    "outage capacity",
+                ),
+            )
+        )
+    return tuple(profile)
 
 
 def _settlement(row: Mapping[str, Any]) -> tuple[date | None, int | None]:

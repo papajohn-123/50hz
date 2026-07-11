@@ -9,6 +9,11 @@ no customer or personal data.
 - `frequency_stream.json`: `GET /datasets/FREQ/stream`
 - `interconnectors_historic.json`: the compatible half-hour response from
   `GET /generation/outturn/interconnectors?format=json`
+- `ndf_stream.json`: `GET /datasets/NDF/stream`
+- `windfor_stream.json`: `GET /datasets/WINDFOR/stream`
+- `syswarn.json`: `GET /system/warnings?format=json`
+- `remit_listing_stream.json`: `GET /remit/list/by-publish/stream`
+- `remit_details.json`: bulk details from `GET /remit?messageId=...`
 
 The production interconnector adapter filters five-minute `INT*` records from raw
 FUELINST so the Live map does not inherit the half-hour endpoint's additional lag.

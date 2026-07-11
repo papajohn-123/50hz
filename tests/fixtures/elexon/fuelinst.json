@@ -78,6 +78,15 @@
       "startTime": "2026-07-11T12:15:00Z",
       "settlementDate": "2026-07-11",
       "settlementPeriod": 27,
+      "fuelType": "SOLAR",
+      "generation": 1842
+    },
+    {
+      "dataset": "FUELINST",
+      "publishTime": "2026-07-11T12:20:00Z",
+      "startTime": "2026-07-11T12:15:00Z",
+      "settlementDate": "2026-07-11",
+      "settlementPeriod": 27,
       "fuelType": "WIND",
       "generation": 2295
     }

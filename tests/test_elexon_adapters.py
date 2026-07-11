@@ -60,11 +60,15 @@ def test_fuelinst_normalizes_generation_and_excludes_interconnectors() -> None:
         fixture("fuelinst.json"),
     )
 
-    assert len(result.records) == 7
+    assert len(result.records) == 8
     assert {record.fuel_code for record in result.records}.isdisjoint({"INTELEC", "INTEW"})
     assert next(record for record in result.records if record.fuel_code == "CCGT").fuel_type == "gas"
     pumped_storage = next(record for record in result.records if record.fuel_code == "PS")
     assert pumped_storage.generation_mw == -291
+    solar = next(record for record in result.records if record.fuel_code == "SOLAR")
+    wind = next(record for record in result.records if record.fuel_code == "WIND")
+    assert solar.fuel_type == "solar"
+    assert wind.fuel_type == "wind"
     assert pumped_storage.source_key == "elexon:FUELINST:2026-07-11T12:15:00Z:PS"
     assert "ignored 2 out-of-scope row(s)" in result.warnings
     assert result.metadata == {"datasets": ["FUELINST"]}
@@ -181,4 +185,3 @@ def test_parser_fails_when_every_in_scope_row_is_invalid() -> None:
             await client.aclose()
 
     asyncio.run(scenario())
-
