@@ -76,8 +76,10 @@ jobs:
           status="${PIPESTATUS[0]}"
           set -e
           if [ "$status" -ne 0 ]; then
-            diagnostic="$(grep -E '(^| )error:|Test Case .* failed|XCTAssert|Testing failed:' /tmp/50hz-xcode-test.log | tail -20 | tr '\n' ' ' | cut -c1-1800)"
-            echo "::error title=iOS test diagnostics::${diagnostic:-xcodebuild failed without a parsed diagnostic; inspect the test log artifact}"
+            set +e
+            diagnostic="$(tail -80 /tmp/50hz-xcode-test.log | tr '\n' ' ' | cut -c1-1800)"
+            set -e
+            echo "::error title=iOS test diagnostics::${diagnostic:-xcodebuild failed without output; inspect the test log artifact}"
             exit "$status"
           fi
       - name: Upload iOS test log
