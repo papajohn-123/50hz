@@ -5,6 +5,7 @@ from fastapi import HTTPException, status
 from app.config import get_settings
 from app.db import DatabaseNotConfiguredError, get_session_factory
 from app.persistence import GridReadRepository
+from app.regions import OnDemandRegionalCarbonProvider, RegionalCarbonProvider
 
 
 @lru_cache(maxsize=1)
@@ -22,3 +23,11 @@ def get_grid_read_repository() -> GridReadRepository:
             detail="Grid database is not configured",
         ) from error
 
+
+@lru_cache(maxsize=1)
+def get_regional_carbon_provider() -> RegionalCarbonProvider:
+    settings = get_settings()
+    return OnDemandRegionalCarbonProvider(
+        base_url=settings.carbon_intensity_base_url,
+        timeout_seconds=5.0,
+    )

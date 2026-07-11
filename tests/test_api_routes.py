@@ -1,4 +1,4 @@
-from datetime import UTC, datetime
+from datetime import UTC, datetime, timedelta
 
 from fastapi.testclient import TestClient
 
@@ -13,6 +13,7 @@ from app.persistence.reads import (
     GridTimelineRead,
     InterconnectorRead,
     ReadProvenance,
+    ReportedNoticeRead,
     SourceMetadataRead,
 )
 
@@ -68,6 +69,51 @@ class FakeRepository:
     async def list_sources(self) -> tuple[SourceMetadataRead, ...]:
         return SOURCES
 
+    async def get_active_notices(
+        self,
+        *,
+        as_of: datetime | None = None,
+        warning_fresh_for_seconds: int = 900,
+    ) -> tuple[ReportedNoticeRead, ...]:
+        return ()
+
+
+class EventFakeRepository(FakeRepository):
+    async def get_active_notices(
+        self,
+        *,
+        as_of: datetime | None = None,
+        warning_fresh_for_seconds: int = 900,
+    ) -> tuple[ReportedNoticeRead, ...]:
+        return (
+            ReportedNoticeRead(
+                id="notice-row-1",
+                source_id="elexon.syswarn",
+                notice_kind="system_warning",
+                external_id="syswarn:1",
+                revision_key="checksum-1",
+                revision_number=None,
+                published_at=OBSERVED - timedelta(minutes=1),
+                retrieved_at=OBSERVED,
+                event_start=None,
+                event_end=None,
+                heading=None,
+                event_type=None,
+                event_status=None,
+                affected_unit=None,
+                asset_id=None,
+                fuel_type=None,
+                normal_capacity_mw=None,
+                available_capacity_mw=None,
+                unavailable_capacity_mw=None,
+                reported_cause=None,
+                reported_related_information=None,
+                warning_type="System Warning",
+                warning_text="A system warning has been reported.",
+                evidence={"classification": "reported"},
+            ),
+        )
+
 
 def client() -> TestClient:
     app.dependency_overrides[get_grid_read_repository] = lambda: FakeRepository()
@@ -82,6 +128,20 @@ def test_current_route_matches_native_acronym_keys() -> None:
     payload = response.json()
     assert payload["frequency"]["sourceID"] == "elexon.freq"
     assert payload["generation"][0]["share"] <= 1
+
+
+def test_current_route_includes_highest_priority_reported_event() -> None:
+    app.dependency_overrides[get_grid_read_repository] = lambda: EventFakeRepository()
+    try:
+        with TestClient(app) as test_client:
+            response = test_client.get("/v1/grid/current")
+    finally:
+        app.dependency_overrides.clear()
+    assert response.status_code == 200
+    event = response.json()["activeEvent"]
+    assert event["title"] == "System Warning"
+    assert event["evidenceClass"] == "reported"
+    assert response.json()["freshness"] == "critical"
 
 
 def test_timeline_route_accepts_native_query_contract() -> None:
