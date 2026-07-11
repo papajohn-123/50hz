@@ -21,7 +21,7 @@ struct GridTimelineView: View {
         VStack(spacing: 11) {
             HStack(alignment: .firstTextBaseline) {
                 VStack(alignment: .leading, spacing: 2) {
-                    Text(isLive ? "NOW" : selectedDate.formatted(.dateTime.hour().minute()))
+                    Text(isLive ? "NOW" : selectedDateLabel)
                         .font(.system(.subheadline, design: .monospaced, weight: .semibold))
                         .foregroundStyle(isForecast ? GridTheme.forecastViolet : GridTheme.textPrimary)
                     Text(isLive ? "Live snapshot" : (isForecast ? "Forecast frame" : "Observed replay"))
@@ -108,7 +108,7 @@ struct GridTimelineView: View {
 
             GeometryReader { proxy in
                 ZStack {
-                    Text(firstDate.formatted(.dateTime.hour().minute()))
+                    Text(axisLabel(for: firstDate))
                         .frame(maxWidth: .infinity, alignment: .leading)
 
                     if hasForecastRange {
@@ -117,7 +117,7 @@ struct GridTimelineView: View {
                                 x: (proxy.size.width * nowRatio).clamped(to: 48...(proxy.size.width - 48)),
                                 y: proxy.size.height / 2
                             )
-                        Text(lastDate.formatted(.dateTime.hour().minute()))
+                        Text(axisLabel(for: lastDate))
                             .frame(maxWidth: .infinity, alignment: .trailing)
                     } else {
                         Text("NOW")
@@ -133,6 +133,20 @@ struct GridTimelineView: View {
         .padding(.vertical, 14)
         .background(.ultraThinMaterial.opacity(0.68))
         .overlay(alignment: .top) { Hairline() }
+    }
+
+    private var selectedDateLabel: String {
+        if Calendar.autoupdatingCurrent.isDate(selectedDate, inSameDayAs: timeline.nowBoundary) {
+            return selectedDate.formatted(.dateTime.hour().minute())
+        }
+        return selectedDate.formatted(.dateTime.weekday(.abbreviated).hour().minute())
+    }
+
+    private func axisLabel(for date: Date) -> String {
+        if Calendar.autoupdatingCurrent.isDate(date, inSameDayAs: timeline.nowBoundary) {
+            return date.formatted(.dateTime.hour().minute())
+        }
+        return date.formatted(.dateTime.weekday(.abbreviated).hour().minute())
     }
 }
 
