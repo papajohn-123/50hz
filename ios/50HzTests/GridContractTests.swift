@@ -2,6 +2,15 @@ import XCTest
 @testable import FiftyHz
 
 final class GridContractTests: XCTestCase {
+    func testUnknownFuelSafelyMapsToOther() throws {
+        let json = """
+        {"fuel":"future_source","megawatts":25,"share":0.01,"changeOneHour":0,"rank":9,"factClass":"observed"}
+        """
+        let reading = try GridJSON.decoder.decode(FuelReading.self, from: Data(json.utf8))
+        XCTAssertEqual(reading.fuel, .other)
+        XCTAssertEqual(reading.share, 0.01)
+    }
+
     func testSnapshotContractDecodesProvenanceAndSignConvention() throws {
         let json = """
         {

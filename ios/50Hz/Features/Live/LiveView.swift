@@ -2,6 +2,7 @@ import SwiftUI
 
 struct LiveView: View {
     @EnvironmentObject private var model: AppModel
+    @State private var sharePayload: GridShareCardPayload?
 
     var body: some View {
         ZStack {
@@ -39,6 +40,12 @@ struct LiveView: View {
                 .presentationDragIndicator(.visible)
                 .presentationBackground(GridTheme.surface)
         }
+        .sheet(item: $sharePayload) { payload in
+            ShareCardSheet(payload: payload)
+                .presentationDetents([.large])
+                .presentationDragIndicator(.visible)
+                .presentationBackground(GridTheme.surface)
+        }
     }
 
     private func loadedContent(snapshot: GridSnapshot, model: AppModel) -> some View {
@@ -46,11 +53,15 @@ struct LiveView: View {
 
         return ScrollView {
             LazyVStack(alignment: .leading, spacing: 19) {
-                BrandHeader(snapshot: snapshot, mode: model.timelineModeLabel)
+                BrandHeader(
+                    snapshot: snapshot,
+                    mode: model.timelineModeLabel,
+                    onShare: { sharePayload = .current(snapshot) }
+                )
                     .padding(.top, 8)
 
-                if snapshot.freshness != .live {
-                    DataStateBanner(snapshot: snapshot) {
+                if snapshot.freshness != .live || model.lastRefreshError != nil {
+                    DataStateBanner(snapshot: snapshot, lastError: model.lastRefreshError, isRefreshing: model.isRefreshing) {
                         Task { await model.retry() }
                     }
                 }
@@ -148,15 +159,18 @@ private struct SourceFootnote: View {
 
 private struct DataStateBanner: View {
     let snapshot: GridSnapshot
+    let lastError: String?
+    let isRefreshing: Bool
     let retry: () -> Void
 
     private var color: Color {
-        snapshot.freshness == .critical ? GridTheme.warning : GridTheme.staleAmber
+        if lastError != nil { return GridTheme.staleAmber }
+        return snapshot.freshness == .critical ? GridTheme.warning : GridTheme.staleAmber
     }
 
     private var title: String {
         switch snapshot.freshness {
-        case .live: "Connected"
+        case .live: lastError == nil ? "Connected" : "Timeline update incomplete"
         case .stale: "Feed delayed"
         case .offline: "Viewing the last confirmed snapshot"
         case .critical: "Material reported event"
@@ -165,9 +179,9 @@ private struct DataStateBanner: View {
 
     private var detail: String {
         switch snapshot.freshness {
-        case .live: "The latest source data is available."
-        case .stale: "Measurements are \(max(snapshot.freshnessAgeSeconds / 60, 1)) minutes old. Automatic retry is in progress."
-        case .offline: "Last confirmed at \(snapshot.timestamp.formatted(.dateTime.hour().minute())). The story will resume when the connection returns."
+        case .live: lastError ?? "The latest source data is available."
+        case .stale: "Measurements are \(max(snapshot.freshnessAgeSeconds / 60, 1)) minutes old. \(lastError ?? "Automatic retry is in progress.")"
+        case .offline: "Last confirmed at \(snapshot.timestamp.formatted(.dateTime.hour().minute())). \(lastError ?? "The story will resume when the connection returns.")"
         case .critical: snapshot.activeEvent?.summary ?? "Open the event for source-backed details."
         }
     }
@@ -186,10 +200,11 @@ private struct DataStateBanner: View {
             }
             Spacer(minLength: 4)
             if snapshot.freshness != .critical {
-                Button("Retry", action: retry)
+                Button(isRefreshing ? "Retrying…" : "Retry", action: retry)
                     .font(.caption.weight(.semibold))
                     .foregroundStyle(color)
                     .frame(minHeight: 44)
+                    .disabled(isRefreshing)
             }
         }
         .padding(.horizontal, 14)

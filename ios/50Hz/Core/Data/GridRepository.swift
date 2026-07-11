@@ -1,8 +1,15 @@
 import Foundation
 
 protocol GridRepository: Sendable {
+    func cachedSnapshot() async -> GridSnapshot?
+    func cachedTimeline() async -> GridTimeline?
     func currentSnapshot() async throws -> GridSnapshot
     func timeline() async throws -> GridTimeline
+}
+
+extension GridRepository {
+    func cachedSnapshot() async -> GridSnapshot? { nil }
+    func cachedTimeline() async -> GridTimeline? { nil }
 }
 
 enum GridRepositoryError: LocalizedError {
@@ -63,4 +70,3 @@ enum GridJSON {
         return encoder
     }
 }
-

@@ -23,6 +23,7 @@ enum FuelKind: String, Codable, Sendable, CaseIterable, Identifiable {
     case hydro
     case imports
     case storage
+    case other
 
     var id: String { rawValue }
 
@@ -36,6 +37,7 @@ enum FuelKind: String, Codable, Sendable, CaseIterable, Identifiable {
         case .hydro: "Hydro"
         case .imports: "Imports"
         case .storage: "Storage"
+        case .other: "Other"
         }
     }
 
@@ -45,8 +47,20 @@ enum FuelKind: String, Codable, Sendable, CaseIterable, Identifiable {
         case .biomass: "Bio"
         case .imports: "Import"
         case .storage: "Store"
+        case .other: "Other"
         default: displayName
         }
+    }
+
+    init(from decoder: Decoder) throws {
+        let container = try decoder.singleValueContainer()
+        let rawValue = try container.decode(String.self)
+        self = FuelKind(rawValue: rawValue) ?? .other
+    }
+
+    func encode(to encoder: Encoder) throws {
+        var container = encoder.singleValueContainer()
+        try container.encode(rawValue)
     }
 }
 

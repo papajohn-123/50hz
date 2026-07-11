@@ -51,18 +51,32 @@ struct GridTimelineSampler: Sendable {
         _ upper: [FuelReading],
         _ progress: Double
     ) -> [FuelReading] {
+        let lowerByFuel = Dictionary(uniqueKeysWithValues: lower.map { ($0.fuel, $0) })
         let upperByFuel = Dictionary(uniqueKeysWithValues: upper.map { ($0.fuel, $0) })
-        return lower.compactMap { reading in
-            guard let next = upperByFuel[reading.fuel] else { return reading }
+        let fuels = FuelKind.allCases.filter { lowerByFuel[$0] != nil || upperByFuel[$0] != nil }
+
+        return fuels.map { fuel in
+            let reading = lowerByFuel[fuel] ?? zeroReading(for: fuel, basedOn: upperByFuel[fuel]!)
+            let next = upperByFuel[fuel] ?? zeroReading(for: fuel, basedOn: reading)
             return FuelReading(
-                fuel: reading.fuel,
+                fuel: fuel,
                 megawatts: interpolate(reading.megawatts, next.megawatts, progress),
                 share: interpolate(reading.share, next.share, progress),
                 changeOneHour: reading.changeOneHour,
-                rank: reading.rank,
+                rank: progress < 0.5 ? reading.rank : next.rank,
                 factClass: reading.factClass
             )
         }
     }
-}
 
+    private func zeroReading(for fuel: FuelKind, basedOn reading: FuelReading) -> FuelReading {
+        FuelReading(
+            fuel: fuel,
+            megawatts: 0,
+            share: 0,
+            changeOneHour: reading.changeOneHour,
+            rank: reading.rank,
+            factClass: reading.factClass
+        )
+    }
+}

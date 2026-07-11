@@ -12,6 +12,7 @@ private struct TodayMoment: Identifiable {
 
 struct TodayView: View {
     @EnvironmentObject private var model: AppModel
+    @State private var sharePayload: GridShareCardPayload?
 
     var body: some View {
         Group {
@@ -22,6 +23,12 @@ struct TodayView: View {
             }
         }
         .gridPageBackground()
+        .sheet(item: $sharePayload) { payload in
+            ShareCardSheet(payload: payload)
+                .presentationDetents([.large])
+                .presentationDragIndicator(.visible)
+                .presentationBackground(GridTheme.surface)
+        }
     }
 
     private func content(snapshot: GridSnapshot, timeline: GridTimeline) -> some View {
@@ -47,9 +54,19 @@ struct TodayView: View {
                     .padding(.bottom, 28)
 
                 if let lead = moments.first(where: \.importance) {
-                    LeadMoment(moment: lead) {
-                        open(lead)
-                    }
+                    LeadMoment(
+                        moment: lead,
+                        action: { open(lead) },
+                        share: {
+                            sharePayload = .moment(
+                                title: lead.title,
+                                detail: lead.detail,
+                                timestamp: lead.time,
+                                factClass: lead.factClass,
+                                sources: snapshot.sources
+                            )
+                        }
+                    )
                     .padding(.bottom, 30)
                 }
 
@@ -149,43 +166,57 @@ struct TodayView: View {
 private struct LeadMoment: View {
     let moment: TodayMoment
     let action: () -> Void
+    let share: () -> Void
 
     var body: some View {
-        Button(action: action) {
-            VStack(alignment: .leading, spacing: 15) {
-                HStack {
-                    Label("FORECAST", systemImage: "moon.stars")
-                        .font(.caption2.weight(.semibold))
-                        .fontDesign(.monospaced)
-                        .tracking(0.8)
-                        .foregroundStyle(GridTheme.forecastViolet)
-                    Spacer()
-                    Text(moment.time.formatted(.dateTime.hour().minute()))
-                        .font(.caption)
-                        .fontDesign(.monospaced)
-                        .foregroundStyle(GridTheme.textTertiary)
+        VStack(alignment: .leading, spacing: 15) {
+            HStack {
+                Label("FORECAST", systemImage: "moon.stars")
+                    .font(.caption2.weight(.semibold))
+                    .fontDesign(.monospaced)
+                    .tracking(0.8)
+                    .foregroundStyle(GridTheme.forecastViolet)
+                Spacer()
+                Text(moment.time.formatted(.dateTime.hour().minute()))
+                    .font(.caption)
+                    .fontDesign(.monospaced)
+                    .foregroundStyle(GridTheme.textTertiary)
+                Button(action: share) {
+                    Image(systemName: "square.and.arrow.up")
+                        .font(.subheadline)
+                        .foregroundStyle(GridTheme.textSecondary)
+                        .frame(width: 44, height: 44)
                 }
-                Text(moment.title)
-                    .font(.system(.title, design: .rounded, weight: .medium))
-                    .tracking(-0.8)
-                    .foregroundStyle(GridTheme.textPrimary)
-                Text(moment.detail)
-                    .font(.subheadline)
-                    .foregroundStyle(GridTheme.textSecondary)
-                    .lineSpacing(4)
-                HStack {
-                    Text("Open on Live map")
-                        .font(.caption.weight(.semibold))
-                    Spacer()
-                    Image(systemName: "arrow.right")
-                }
-                .foregroundStyle(GridTheme.forecastViolet)
+                .buttonStyle(.plain)
+                .accessibilityLabel("Share this forecast moment")
             }
-            .padding(18)
-            .background(GridTheme.forecastViolet.opacity(0.075), in: RoundedRectangle(cornerRadius: GridTheme.cornerRadius))
-            .overlay(RoundedRectangle(cornerRadius: GridTheme.cornerRadius).stroke(GridTheme.forecastViolet.opacity(0.20), lineWidth: 1))
+
+            Button(action: action) {
+                VStack(alignment: .leading, spacing: 15) {
+                    Text(moment.title)
+                        .font(.system(.title, design: .rounded, weight: .medium))
+                        .tracking(-0.8)
+                        .foregroundStyle(GridTheme.textPrimary)
+                    Text(moment.detail)
+                        .font(.subheadline)
+                        .foregroundStyle(GridTheme.textSecondary)
+                        .lineSpacing(4)
+                    HStack {
+                        Text("Open on Live map")
+                            .font(.caption.weight(.semibold))
+                        Spacer()
+                        Image(systemName: "arrow.right")
+                    }
+                    .foregroundStyle(GridTheme.forecastViolet)
+                }
+                .contentShape(Rectangle())
+            }
+            .buttonStyle(.plain)
         }
-        .buttonStyle(.plain)
+        .padding(18)
+        .background(GridTheme.forecastViolet.opacity(0.075), in: RoundedRectangle(cornerRadius: GridTheme.cornerRadius))
+        .overlay(RoundedRectangle(cornerRadius: GridTheme.cornerRadius).stroke(GridTheme.forecastViolet.opacity(0.20), lineWidth: 1))
+        .accessibilityElement(children: .contain)
     }
 }
 

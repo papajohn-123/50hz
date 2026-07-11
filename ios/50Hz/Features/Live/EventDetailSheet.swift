@@ -4,6 +4,7 @@ struct EventDetailSheet: View {
     let event: GridEvent
     let snapshot: GridSnapshot?
     @Environment(\.dismiss) private var dismiss
+    @State private var sharePayload: GridShareCardPayload?
 
     var body: some View {
         NavigationStack {
@@ -63,12 +64,26 @@ struct EventDetailSheet: View {
             .navigationTitle("Grid event")
             .navigationBarTitleDisplayMode(.inline)
             .toolbar {
+                ToolbarItem(placement: .topBarLeading) {
+                    Button {
+                        sharePayload = .event(event, snapshot: snapshot)
+                    } label: {
+                        Image(systemName: "square.and.arrow.up")
+                    }
+                    .foregroundStyle(GridTheme.textSecondary)
+                    .accessibilityLabel("Share this grid event")
+                }
                 ToolbarItem(placement: .topBarTrailing) {
                     Button("Done") { dismiss() }.foregroundStyle(GridTheme.liveCyan)
                 }
             }
         }
         .preferredColorScheme(.dark)
+        .sheet(item: $sharePayload) { payload in
+            ShareCardSheet(payload: payload)
+                .presentationDetents([.large])
+                .presentationDragIndicator(.visible)
+                .presentationBackground(GridTheme.surface)
+        }
     }
 }
-

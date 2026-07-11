@@ -3,6 +3,13 @@ import SwiftUI
 struct BrandHeader: View {
     let snapshot: GridSnapshot?
     let mode: String
+    let onShare: (() -> Void)?
+
+    init(snapshot: GridSnapshot?, mode: String, onShare: (() -> Void)? = nil) {
+        self.snapshot = snapshot
+        self.mode = mode
+        self.onShare = onShare
+    }
 
     var body: some View {
         HStack(alignment: .firstTextBaseline) {
@@ -13,6 +20,18 @@ struct BrandHeader: View {
                 .accessibilityAddTraits(.isHeader)
 
             Spacer()
+
+            if let onShare {
+                Button(action: onShare) {
+                    Image(systemName: "square.and.arrow.up")
+                        .font(.subheadline.weight(.medium))
+                        .foregroundStyle(GridTheme.textSecondary)
+                        .frame(width: 38, height: 38)
+                        .contentShape(Circle())
+                }
+                .buttonStyle(.plain)
+                .accessibilityLabel("Share this grid state")
+            }
 
             StatusLabel(snapshot: snapshot, mode: mode)
         }

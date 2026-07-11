@@ -26,6 +26,7 @@ enum GridTheme {
         case .hydro: Color(hex: 0x4FB3B3)
         case .imports: Color(hex: 0xDFE6EE)
         case .storage: Color(hex: 0xA98BD6)
+        case .other: Color(hex: 0x8893A1)
         }
     }
 }
@@ -62,4 +63,3 @@ struct Hairline: View {
             .accessibilityHidden(true)
     }
 }
-
