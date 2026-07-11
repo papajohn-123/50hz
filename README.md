@@ -10,37 +10,32 @@ provenance remain visible for professional users.
 
 The repository is a release candidate, not a TestFlight release. The native app,
 Railway API/worker, source adapters, persistence, public routes, and OpenRouter
-integration are implemented. Apple signing, a signed device archive, production
-redeployment, and end-to-end release verification remain.
+integration are implemented and production-smoked. Apple signing, a signed
+physical-device archive, and TestFlight release verification remain.
 
 ## Production status
 
 Public API:
 [50hz-api-production.up.railway.app](https://50hz-api-production.up.railway.app)
 
-The latest read-only production check was run at 14:12 UTC on 11 July 2026 while
-Railway was still serving a commit older than the latest hardening changes:
+The release-candidate production smoke was completed on 11 July 2026:
 
-- `/health`, `/v1/meta`, `/v1/grid/current`, `/v1/grid/timeline`,
-  `/v1/sources`, `/v1/events`, and `/v1/game/today` returned HTTP 200.
-- `/v1/regions/SW1A` returned HTTP 503 because the deployed regional selector
-  rejected a delayed upstream period. The current tree accepts a bounded delayed
-  reading, but that fix has not been verified after deployment.
-- `/ready`, `/privacy`, and `/support` returned 404, confirming that the current
-  readiness/legal-page release had not reached the public service.
-- ETag/HTTP 304 reuse on `/v1/sources` and gzip on the timeline were verified on
-  the deployed older service.
-- `/v1/ask` returned HTTP 503 for the tested question because the deployed answer
-  referenced an unknown source. Citation ownership has since moved to the server,
-  but the new behavior has not been verified against the live model.
-- Event explanations, the new readiness behavior, and burst limits were not
-  production-smoked on the current release candidate.
-- Railway CLI authentication could not be refreshed, so worker deployment state
-  and logs were not independently inspected.
+- `/health`, `/ready`, `/privacy`, `/support`, and every public `/v1` route used
+  by the app returned its expected successful response.
+- The national snapshot reported live data; the 48-hour timeline contained both
+  observed and forecast samples, and all three daily missions were available.
+- `/v1/regions/SW1A` returned Central London data and explicitly labelled the
+  bounded upstream delay instead of failing the request.
+- Ask correctly answered that Britain was importing from the signed net-flow
+  evidence, with server-owned citations and model-generated follow-up prompts.
+- A current reported-unavailability event produced a validated OpenRouter
+  explanation, then reused its revision-keyed cache on the second request.
+- ETag/HTTP 304 reuse on `/v1/sources` and gzip on the timeline were verified.
+- The worker's private `/ready` endpoint returned ready after its first-deploy
+  grace period, with PostgreSQL reachable and ingestion data advancing.
 
-Do not treat the public deployment as the release candidate until the current
-commit has been deployed and every user-visible route has passed the smoke test
-in [OPERATIONS.md](docs/OPERATIONS.md).
+This proves the deployed engineering baseline; it does not replace signed-device
+or processed-TestFlight verification.
 
 ## Architecture
 
@@ -254,8 +249,8 @@ The owner needs to provide or confirm:
    answers.
 7. A rotated production OpenRouter key and final account/project spend cap.
 
-Engineering must then deploy both roles, run the full production smoke test,
-create a signed Release archive, install it on a physical iPhone, complete
+After the owner inputs are supplied, engineering must configure signing, create a
+signed Release archive, install it on a physical iPhone, complete
 accessibility/offline/battery QA, upload it, and verify the processed TestFlight
 build. See [IMPLEMENTATION_PLAN.md](docs/IMPLEMENTATION_PLAN.md) for sequencing,
 [OPERATIONS.md](docs/OPERATIONS.md) for deployment checks, and

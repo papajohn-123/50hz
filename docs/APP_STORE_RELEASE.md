@@ -1,9 +1,10 @@
 # 50Hz App Store and TestFlight handoff
 
 This is the release worksheet for the iOS 18+ app. The copy is ready to paste
-once the owner-only inputs below are complete and the current backend release is
-deployed. Do not upload a build that points at an older API: at the last check,
-`/ready`, `/privacy`, and `/support` still returned 404 in production.
+once the owner-only inputs below are complete. The release-candidate API and
+worker were deployed and production-smoked on 11 July 2026, including readiness,
+the hosted legal pages, regional data, Ask, and event explanations. Re-run the
+preflight after any backend change before uploading a build.
 
 ## Owner-only inputs
 
@@ -110,8 +111,8 @@ electricity,energy,grid,carbon,power,renewables,frequency,demand,wind,solar,Brit
 
 ### URLs
 
-These routes exist in the current repository but must return HTTP 200 from the
-release deployment before being entered in App Store Connect.
+These routes returned HTTP 200 from the release-candidate deployment on 11 July
+2026. Recheck them before entering or submitting the final App Store record.
 
 | Field | Ready value |
 | --- | --- |
@@ -287,8 +288,8 @@ Owner-only screenshot gate:
    has a managed manual-signing policy.
 5. Confirm bundle ID, iOS 18.0 minimum, iPhone device family, version 1.0, and a
    unique incrementing build number.
-6. Align the Info.plist category with the approved App Store category and apply
-   the owner-confirmed export-compliance key if appropriate.
+6. Confirm the Info.plist Utilities category and apply the owner-confirmed
+   export-compliance key if appropriate.
 
 ### B. Release preflight
 

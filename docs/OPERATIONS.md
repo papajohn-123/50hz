@@ -1,10 +1,9 @@
 # 50Hz Railway operations runbook
 
 This runbook covers the Railway API service, worker service, and shared
-PostgreSQL database. Replace placeholders with the exact names or IDs returned
-by Railway. The known public API is
-`https://50hz-api-production.up.railway.app`; the worker service identity still
-needs confirmation after Railway CLI login.
+PostgreSQL database. The public API is
+`https://50hz-api-production.up.railway.app`; the deployed service names are
+`50hz-api` and `50hz-worker`.
 
 Never paste secrets into tickets, chat, command arguments, screenshots, or
 shared logs. Railway variable output can contain raw credentials. Regional
@@ -35,7 +34,7 @@ environment. Then set local labels from confirmed values:
 
 ```bash
 export API_SERVICE='50hz-api'
-export WORKER_SERVICE='replace-with-confirmed-worker-service'
+export WORKER_SERVICE='50hz-worker'
 export RAILWAY_ENVIRONMENT='production'
 export API_BASE='https://50hz-api-production.up.railway.app'
 ```
@@ -491,15 +490,12 @@ Prefer Railway service references and managed rotation for PostgreSQL. Both API
 and worker consume `DATABASE_URL`, so coordinate and verify them sequentially.
 Never copy the connection string into documentation.
 
-## 11. Current operational and TestFlight gaps
+## 11. Remaining operational and TestFlight gaps
 
-Before calling the service release-ready:
+The API and worker release candidate has passed the production smoke in this
+runbook. Before expanding traffic or submitting the signed app:
 
-- deploy the current commit and close the known regional/Ask production smoke
-  failures
-- confirm the worker service identity, role, `/ready` state, and advancing source
-  data
-- add per-source last-success/failure/lag/record-count observability and alerts
+- add external per-source last-success/failure/lag/record-count alerting
 - approve the default 72-hour raw-payload policy and define retention for HTTP
   logs, questions, detected events, and generated explanations
 - keep one API process or introduce shared durable rate/budget controls

@@ -1,7 +1,7 @@
 # 50Hz implementation plan
 
-Last reconciled with the repository and the pre-release production smoke test on
-11 July 2026.
+Last reconciled with the repository and release-candidate production smoke test
+on 11 July 2026.
 
 ## Product objective
 
@@ -46,13 +46,13 @@ as a contextual inspector rather than a generic chat tab.
 - **Release verified:** exercised through a signed build on a physical iPhone and
   a processed TestFlight install.
 
-The current tree is implemented but not release verified. A read-only production
-check at 14:12 UTC on 11 July still observed an older deployment: current,
-timeline, sources, events, and game succeeded; regional lookup still returned
-503; and `/ready`, `/privacy`, and `/support` were not present. ETag/304 and gzip
-behavior were verified on that older deployment. Ask previously returned 503
-with its older citation handling and was not re-spent after the local fix. Worker
-state was not inspected because Railway CLI authentication failed.
+The current tree is implemented and production verified, but not release
+verified. The 11 July production smoke covered API and worker readiness, hosted
+privacy/support pages, current and forecast data, Central London regional data,
+the daily game plan, reported events, a grounded Ask answer, a validated live
+event explanation and its revision cache, ETag/304 reuse, and gzip. Release
+verification still requires owner-controlled Apple signing, a physical-device
+pass, and a processed TestFlight install.
 
 ## Implemented architecture
 
@@ -252,8 +252,7 @@ Known native/release gaps:
 - Physical-device battery/thermal/performance, VoiceOver, Dynamic Type, Reduce
   Motion, offline, and failure-state QA remain.
 - CI executes XCTest on an available simulator and creates an unsigned Release
-  archive. Its latest remote result still needs confirmation for the release
-  commit.
+  archive. A signed upload archive remains an owner-controlled release step.
 - No production crash/freshness telemetry or alerting is installed.
 
 ## Verification record
