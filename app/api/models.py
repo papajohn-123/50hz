@@ -52,7 +52,7 @@ class GridMetric(MobileModel):
 class FuelReading(MobileModel):
     fuel: str
     megawatts: float
-    share: float = Field(ge=0, le=100)
+    share: float = Field(ge=0, le=1, description="Fraction of displayed generation, from 0 to 1")
     change_one_hour: float = 0
     rank: int = Field(ge=1)
     fact_class: FactClass
@@ -153,4 +153,3 @@ class SourceMetadataResponse(MobileModel):
     licence_url: str | None = None
     attribution: str
     expected_cadence_seconds: int
-
