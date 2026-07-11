@@ -340,10 +340,11 @@ Current one-minute process-local limits:
 | `GET /v1/grid/timeline` | 60 | 300 |
 
 HTTP 429 must include `Retry-After`. Do not hammer production to prove limits:
-use unit tests or a dedicated staging service. Counters key the right-most
-`X-Forwarded-For` value supplied by Railway, fall back to the socket address,
-live only in one process, and reset on restart. They are burst protection, not
-authentication or a distributed abuse-control system.
+use unit tests or a dedicated staging service. Counters prefer Railway's
+proxy-owned `X-Real-IP`, then the left-most `X-Forwarded-For` value for non-Railway
+or local proxy setups, and finally the socket address. They live only in one
+process and reset on restart. They are burst protection, not authentication or a
+distributed abuse-control system.
 
 ## 7. Logs and freshness
 
@@ -400,37 +401,38 @@ reviewed for secrets.
 
 ## 8. Migrations
 
-Normal deployment runs:
+Normal deployment automatically runs this pre-deploy command inside Railway:
 
 ```bash
 alembic upgrade head
 ```
 
-Inspect the production database revision without printing variables:
+Inspect the production database revision inside the API service without printing
+variables:
 
 ```bash
-railway run \
+railway ssh \
   --service "$API_SERVICE" \
   --environment "$RAILWAY_ENVIRONMENT" \
-  --no-local \
   alembic current
 ```
 
 Run an approved migration manually only when needed:
 
 ```bash
-railway run \
+railway ssh \
   --service "$API_SERVICE" \
   --environment "$RAILWAY_ENVIRONMENT" \
-  --no-local \
   alembic upgrade head
 ```
 
-Flags must precede the child command. Never run `railway run env`, `printenv`, or
-similar commands in a captured/shared session because they can print secrets.
-Do not automatically downgrade a production database after a failed release.
-Prefer a reviewed forward fix. Stop and confirm restore options before any
-destructive DDL or data restoration.
+Railway's private PostgreSQL hostname is not generally resolvable from a local
+shell, so do not use a local `railway run alembic ...` invocation for this check.
+Flags must precede the remote command. Never run `env`, `printenv`, or similar
+commands in a captured/shared session because they can print secrets. Do not
+automatically downgrade a production database after a failed release. Prefer a
+reviewed forward fix. Stop and confirm restore options before any destructive
+DDL or data restoration.
 
 ## 9. Restart, rollback, and incident triage
 

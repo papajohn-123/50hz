@@ -122,8 +122,8 @@ hourly run by default and retries later if more remain.
 | `elexon.indo` | National demand | 5 min | 1 h; prior 48 h hourly |
 | `elexon.freq` | System frequency | 1 min | 10 min; prior 48 h hourly |
 | `elexon.interconnectors` | Interconnector flows | 2 min | 10 min; prior 48 h hourly |
-| `neso.carbon.national.current` | Current GB carbon | 15 min | 5 min |
-| `neso.carbon.regional.london` | London carbon | 15 min | 5 min |
+| `neso.carbon.national.current` | Current GB carbon | 5 min | 5 min |
+| `neso.carbon.regional.london` | London carbon | 5 min | 5 min |
 | `neso.carbon.national.forecast` | 48-hour GB carbon forecast | 30 min | 5 min |
 | `elexon.ndf` | National demand forecast | 15 min | 2 h; prior 48 h every 6 h |
 | `elexon.windfor` | Wind forecast | 30 min | 12 h; prior 48 h every 12 h |
@@ -276,14 +276,13 @@ xcodebuild \
   build-for-testing
 ```
 
-The latest backend run completed with **159 passed and one dependency
+The final clean backend run completed with **172 passed and one dependency
 deprecation warning**. Offline migration SQL generation through
-`20260711_0003` and privacy-manifest lint also passed. An unsigned iOS
-`build-for-testing` code/test compile passed with the asset catalogue excluded
-because local simulator tooling was unavailable; a later Release archive attempt
-was blocked by the same local CoreSimulator/assets failure. Neither result
-verified signing or TestFlight readiness. Before the release commit, rerun every
-command from the final clean checkout and record the exact commit and outputs.
+`20260711_0003` and privacy-manifest lint also passed. GitHub Actions ran the
+XCTest target on a booted iOS simulator and produced an unsigned Release archive,
+including the asset catalogue, from the code-identical `a56ed41` checkpoint. CI
+does not verify Apple signing, a physical-device install, or TestFlight
+processing.
 
 ## Next milestones
 
