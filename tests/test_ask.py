@@ -133,6 +133,210 @@ def power_envelope() -> EvidenceEnvelope:
     )
 
 
+def energy_position_envelope(
+    value: int | float,
+    *,
+    freshness: str = "fresh",
+) -> EvidenceEnvelope:
+    return EvidenceEnvelope(
+        as_of=NOW,
+        freshness=freshness,
+        evidence_class="observed",
+        facts=[
+            EvidenceFact(
+                fact_id="net_flow",
+                metric="net_interconnector_flow_mw",
+                label="net interconnector flow",
+                value=value,
+                unit="MW",
+                observed_at=NOW,
+                source_record_ids=["elexon:b1620:1"],
+            )
+        ],
+        source_refs={
+            "elexon": SourceCitation(
+                source_id="elexon",
+                publisher="Elexon",
+                title="Interconnector physical flows",
+                canonical_url="https://bmrs.elexon.co.uk/",
+            )
+        },
+        limitations=["Interconnector readings can be revised."],
+    )
+
+
+@pytest.mark.parametrize(
+    ("question", "flow_mw", "prefix", "direction_claim"),
+    (
+        (
+            "Is Britain importing or exporting right now?",
+            7_189,
+            "Importing:",
+            "Positive flow means Britain is importing overall.",
+        ),
+        (
+            "Are we a net importer or exporter?",
+            -7_189,
+            "Exporting:",
+            "Negative flow means Britain is exporting overall.",
+        ),
+        (
+            "Importing or exporting?",
+            0,
+            "Balanced:",
+            "Britain is broadly balanced",
+        ),
+        (
+            "Is the UK exporting?",
+            30,
+            "Balanced:",
+            "close to zero",
+        ),
+    ),
+)
+@pytest.mark.asyncio
+async def test_energy_position_answer_is_server_owned(
+    question: str,
+    flow_mw: int,
+    prefix: str,
+    direction_claim: str,
+) -> None:
+    client = OpenRouterAskClient(
+        api_key="temporary",
+        model="test",
+        base_url="https://openrouter.test",
+        public_base_url="https://50hz.test",
+        timeout_seconds=1,
+        budget=DailyCallBudget(1),
+        provider=Provider(),
+    )
+    content = json.dumps(
+        {
+            "answer": "The model does not determine the direction.",
+            "suggested_questions": ["Which interconnectors are active?"],
+        }
+    )
+
+    result = client._validate_final(
+        content,
+        [energy_position_envelope(flow_mw)],
+        AskRequest(question=question),
+    )
+    await client.close()
+
+    assert result.answer.startswith(prefix)
+    assert f"{flow_mw:,} MW" in result.answer
+    assert direction_claim in result.answer
+    assert result.evidence_refs == ["elexon"]
+    assert result.suggested_questions == ["Which interconnectors are active?"]
+
+
+@pytest.mark.asyncio
+async def test_live_contradictory_energy_position_prose_is_replaced() -> None:
+    calls = 0
+
+    class EnergyPositionProvider:
+        async def call(
+            self,
+            name: str,
+            arguments: dict[str, Any],
+        ) -> EvidenceEnvelope:
+            assert name == "get_current_grid_state"
+            return energy_position_envelope(7_189, freshness="delayed")
+
+    def handler(request: httpx.Request) -> httpx.Response:
+        nonlocal calls
+        calls += 1
+        if calls == 1:
+            return httpx.Response(
+                200,
+                json={
+                    "choices": [
+                        {
+                            "message": {
+                                "role": "assistant",
+                                "content": None,
+                                "tool_calls": [
+                                    {
+                                        "id": "call_1",
+                                        "type": "function",
+                                        "function": {
+                                            "name": "get_current_grid_state",
+                                            "arguments": "{}",
+                                        },
+                                    }
+                                ],
+                            }
+                        }
+                    ]
+                },
+            )
+        contradictory = {
+            "answer": (
+                "Exporting: net interconnector flow is 7,189 MW. "
+                "Positive flow means Britain is importing overall."
+            ),
+            "suggested_questions": ["Which interconnectors are active?"],
+        }
+        return httpx.Response(
+            200,
+            json={
+                "choices": [
+                    {"message": {"content": json.dumps(contradictory)}}
+                ]
+            },
+        )
+
+    client = OpenRouterAskClient(
+        api_key="temporary",
+        model="test",
+        base_url="https://openrouter.test",
+        public_base_url="https://50hz.test",
+        timeout_seconds=1,
+        budget=DailyCallBudget(2),
+        provider=EnergyPositionProvider(),
+        transport=httpx.MockTransport(handler),
+    )
+    result = await client.ask(
+        AskRequest(question="Is Britain importing or exporting right now?")
+    )
+    await client.close()
+
+    assert calls == 2
+    assert result.answer.startswith("Importing:")
+    assert "Exporting:" not in result.answer
+    assert "7,189 MW" in result.answer
+    assert result.freshness == "delayed"
+    assert result.evidence_refs == ["elexon"]
+    assert result.citations[0].publisher == "Elexon"
+    assert result.limitations == ["Interconnector readings can be revised."]
+    assert result.suggested_questions == ["Which interconnectors are active?"]
+
+
+@pytest.mark.asyncio
+async def test_explanatory_import_export_question_preserves_generic_ask_behavior() -> None:
+    client = OpenRouterAskClient(
+        api_key="temporary",
+        model="test",
+        base_url="https://openrouter.test",
+        public_base_url="https://50hz.test",
+        timeout_seconds=1,
+        budget=DailyCallBudget(1),
+        provider=Provider(),
+    )
+    model_answer = "The model-authored explanation remains in control."
+    content = json.dumps({"answer": model_answer, "suggested_questions": []})
+
+    result = client._validate_final(
+        content,
+        [energy_position_envelope(7_189)],
+        AskRequest(question="Why is Britain importing or exporting?"),
+    )
+    await client.close()
+
+    assert result.answer == model_answer
+
+
 @pytest.mark.asyncio
 async def test_ask_allows_deterministically_rounded_megawatt_to_gigawatt_value() -> None:
     client = OpenRouterAskClient(

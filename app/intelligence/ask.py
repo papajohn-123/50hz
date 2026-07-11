@@ -125,6 +125,28 @@ _NUMBER_RE = re.compile(r"(?<![\w])[-+]?\d+(?:,\d{3})*(?:\.\d+)?")
 _FACT_NUMBER_RE = re.compile(r"[-+]?\d+(?:,\d{3})*(?:\.\d+)?")
 _FRESHNESS_ORDER = {"fresh": 0, "delayed": 1, "stale": 2, "unavailable": 3}
 _CAUSAL_PHRASES = (" caused ", " because ", " led to ", " as a result ", " triggered ")
+_NET_FLOW_BALANCED_THRESHOLD_MW = Decimal("50")
+_IMPORT_EXPORT_PAIR_RE = re.compile(
+    r"\bimport(?:ing|er|s|ed)?\b\s+(?:or|versus|vs\.?)\s+"
+    r"\bexport(?:ing|er|s|ed)?\b|"
+    r"\bexport(?:ing|er|s|ed)?\b\s+(?:or|versus|vs\.?)\s+"
+    r"\bimport(?:ing|er|s|ed)?\b"
+)
+_DIRECT_NET_POSITION_RE = re.compile(
+    r"^(?:is|are)?\s*(?:great\s+britain|britain|the\s+uk|uk|gb|we|"
+    r"the\s+(?:grid|system))\b.{0,60}\b(?:net\s+)?"
+    r"(?:import(?:ing|er|s|ed)?|export(?:ing|er|s|ed)?)\b"
+    r"(?:\s+(?:right\s+now|now|currently|overall|on\s+balance|"
+    r"at\s+the\s+moment))?[\s?.!]*$"
+)
+_GB_POSITION_CONTEXT_RE = re.compile(
+    r"\b(?:great\s+britain|britain|uk|gb|we|grid|system)\b"
+)
+_POSITION_INTENT_BLOCKER_RE = re.compile(
+    r"\b(?:why|how|explain|cause|caused|causing|change|changed|changing|"
+    r"trend|compare|compared|history|historical|forecast|predict|prediction|"
+    r"expected|will|would|could|might|tomorrow|yesterday|later|when|where|which)\b"
+)
 _KNOWN_UNITS = {
     "%",
     "w",
@@ -326,6 +348,32 @@ class OpenRouterAskClient:
         if not evidence_refs:
             raise AskUnavailableError("No authoritative source citation was gathered")
 
+        as_of = min(envelope.as_of for envelope in envelopes)
+        freshness = max(
+            (envelope.freshness for envelope in envelopes),
+            key=lambda value: _FRESHNESS_ORDER.get(value, 3),
+        )
+        limitations = list(
+            dict.fromkeys(
+                limitation
+                for envelope in envelopes
+                for limitation in envelope.limitations
+            )
+        )[:6]
+
+        if _is_energy_position_question(request.question):
+            position_answer = _energy_position_answer(envelopes)
+            if position_answer is not None:
+                return AskAnswer(
+                    answer=position_answer,
+                    as_of=as_of,
+                    freshness=freshness,
+                    evidence_refs=evidence_refs,
+                    citations=[citations[ref] for ref in evidence_refs],
+                    limitations=limitations,
+                    suggested_questions=authored.suggested_questions,
+                )
+
         exact_numbers: set[tuple[Decimal, str | None]] = set()
         allowed_gigawatts: set[Decimal] = set()
         for envelope in envelopes:
@@ -373,18 +421,6 @@ class OpenRouterAskClient:
         ):
             raise AskUnavailableError("The answer contains an unsupported causal claim")
 
-        as_of = min(envelope.as_of for envelope in envelopes)
-        freshness = max(
-            (envelope.freshness for envelope in envelopes),
-            key=lambda value: _FRESHNESS_ORDER.get(value, 3),
-        )
-        limitations = list(
-            dict.fromkeys(
-                limitation
-                for envelope in envelopes
-                for limitation in envelope.limitations
-            )
-        )[:6]
         return AskAnswer(
             answer=authored.answer,
             as_of=as_of,
@@ -394,6 +430,60 @@ class OpenRouterAskClient:
             limitations=limitations,
             suggested_questions=authored.suggested_questions,
         )
+
+
+def _is_energy_position_question(question: str) -> bool:
+    normalized = " ".join(question.casefold().replace("’", "'").split())
+    if _POSITION_INTENT_BLOCKER_RE.search(normalized):
+        return False
+    if _DIRECT_NET_POSITION_RE.search(normalized):
+        return True
+    pair = _IMPORT_EXPORT_PAIR_RE.search(normalized)
+    if pair is None:
+        return False
+    return bool(
+        _GB_POSITION_CONTEXT_RE.search(normalized)
+        or re.match(r"^(?:net\s+)?(?:import|export)", normalized)
+    )
+
+
+def _energy_position_answer(envelopes: list[EvidenceEnvelope]) -> str | None:
+    candidates: list[tuple[datetime, Decimal]] = []
+    for envelope in envelopes:
+        for fact in envelope.facts:
+            if (
+                fact.metric != "net_interconnector_flow_mw"
+                or _normalise_unit(fact.unit) != "mw"
+                or isinstance(fact.value, bool)
+            ):
+                continue
+            value = _normalise_number(fact.value)
+            if value is not None:
+                candidates.append((fact.observed_at, value))
+    if not candidates:
+        return None
+
+    _, net_flow = max(candidates, key=lambda candidate: candidate[0])
+    formatted_flow = format(net_flow, ",f")
+    if abs(net_flow) <= _NET_FLOW_BALANCED_THRESHOLD_MW:
+        if net_flow == 0:
+            return (
+                "Balanced: net interconnector flow is 0 MW, so Britain is "
+                "broadly balanced across its interconnectors."
+            )
+        return (
+            f"Balanced: net interconnector flow is {formatted_flow} MW, close "
+            "to zero, so Britain is broadly balanced across its interconnectors."
+        )
+    if net_flow > 0:
+        return (
+            f"Importing: net interconnector flow is {formatted_flow} MW. "
+            "Positive flow means Britain is importing overall."
+        )
+    return (
+        f"Exporting: net interconnector flow is {formatted_flow} MW. "
+        "Negative flow means Britain is exporting overall."
+    )
 
 
 def _normalise_number(value: str | int | float) -> Decimal | None:
