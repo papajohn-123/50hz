@@ -13,6 +13,9 @@ struct GridTimelineView: View {
     private var selectedRatio: CGFloat { CGFloat(selectedDate.timeIntervalSince(firstDate) / span).clamped(to: 0...1) }
     private var isForecast: Bool { selectedDate > timeline.nowBoundary }
     private var isLive: Bool { selectedTime == nil }
+    private var hasForecastRange: Bool {
+        lastDate > timeline.nowBoundary.addingTimeInterval(TimeInterval(timeline.sourceResolutionSeconds / 2))
+    }
 
     var body: some View {
         VStack(spacing: 11) {
@@ -103,14 +106,26 @@ struct GridTimelineView: View {
             .frame(height: 24)
             .sensoryFeedback(.selection, trigger: feedbackTick)
 
-            HStack {
-                Text(firstDate.formatted(.dateTime.hour().minute()))
-                Spacer()
-                Text("NOW")
-                    .offset(x: 10)
-                Spacer()
-                Text(lastDate.formatted(.dateTime.hour().minute()))
+            GeometryReader { proxy in
+                ZStack {
+                    Text(firstDate.formatted(.dateTime.hour().minute()))
+                        .frame(maxWidth: .infinity, alignment: .leading)
+
+                    if hasForecastRange {
+                        Text("NOW")
+                            .position(
+                                x: (proxy.size.width * nowRatio).clamped(to: 48...(proxy.size.width - 48)),
+                                y: proxy.size.height / 2
+                            )
+                        Text(lastDate.formatted(.dateTime.hour().minute()))
+                            .frame(maxWidth: .infinity, alignment: .trailing)
+                    } else {
+                        Text("NOW")
+                            .frame(maxWidth: .infinity, alignment: .trailing)
+                    }
+                }
             }
+            .frame(height: 12)
             .font(.system(size: 9, weight: .medium, design: .monospaced))
             .foregroundStyle(GridTheme.textTertiary)
         }
@@ -139,4 +154,3 @@ private extension Comparable {
         min(max(self, range.lowerBound), range.upperBound)
     }
 }
-

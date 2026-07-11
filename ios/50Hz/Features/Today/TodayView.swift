@@ -236,7 +236,10 @@ struct TodayView: View {
             )
         }
 
-        var reportedEvents = model.events
+        let startOfToday = Calendar.autoupdatingCurrent.startOfDay(for: snapshot.timestamp)
+        var reportedEvents = model.events.filter {
+            $0.startedAt >= startOfToday && $0.startedAt <= snapshot.timestamp
+        }
         if let active = snapshot.activeEvent, !reportedEvents.contains(where: { $0.id == active.id }) {
             reportedEvents.append(active)
         }
@@ -402,7 +405,7 @@ private struct MomentRow: View {
                 }
                 VStack(alignment: .leading, spacing: 5) {
                     HStack {
-                        Text(isNow ? "NOW" : moment.time.formatted(.dateTime.hour().minute()))
+                        Text(timestampLabel)
                             .font(.caption2.weight(.semibold))
                             .fontDesign(.monospaced)
                             .foregroundStyle(color)
@@ -430,6 +433,19 @@ private struct MomentRow: View {
         .buttonStyle(.plain)
         .accessibilityElement(children: .combine)
         .accessibilityHint("Opens this moment on the Live map")
+    }
+
+    private var timestampLabel: String {
+        if isNow { return "NOW" }
+        if Calendar.autoupdatingCurrent.isDateInToday(moment.time) {
+            return moment.time.formatted(.dateTime.hour().minute())
+        }
+        let currentYear = Calendar.autoupdatingCurrent.component(.year, from: Date())
+        let momentYear = Calendar.autoupdatingCurrent.component(.year, from: moment.time)
+        if momentYear != currentYear {
+            return moment.time.formatted(.dateTime.day().month(.abbreviated).year().hour().minute())
+        }
+        return moment.time.formatted(.dateTime.day().month(.abbreviated).hour().minute())
     }
 }
 

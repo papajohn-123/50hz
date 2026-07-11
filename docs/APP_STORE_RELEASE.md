@@ -10,7 +10,9 @@ preflight after any backend change before uploading a build.
 
 Engineering cannot supply or legally decide these values:
 
-- [ ] **Apple Developer Team ID** and a user with signing permission.
+- [ ] **Apple Developer Team:** confirm the locally selected `VKMJPS7WP4` is the
+  intended paid Developer Program team and the current user has signing/upload
+  permission.
 - [ ] **App Store Connect access** with an Account Holder, Admin, App Manager, or
   Developer role capable of creating the record/uploading the build. App Privacy
   publishing requires an eligible App Store Connect role.
@@ -284,8 +286,8 @@ Owner-only screenshot gate:
 2. In App Store Connect, create the iOS app record with that exact bundle ID.
 3. In Xcode, open `ios/50Hz.xcodeproj`, select target **50Hz**, then **Signing &
    Capabilities**.
-4. Select the owner-provided Team and enable automatic signing unless the owner
-   has a managed manual-signing policy.
+4. Confirm the preselected `VKMJPS7WP4` Team and keep automatic signing enabled
+   unless the owner has a managed manual-signing policy.
 5. Confirm bundle ID, iOS 18.0 minimum, iPhone device family, version 1.0, and a
    unique incrementing build number.
 6. Confirm the Info.plist Utilities category and apply the owner-confirmed

@@ -245,7 +245,8 @@ Known native/release gaps:
 - Mission completion, prediction choice, and streak are local participation
   notes. There is intentionally no account, server submission, result
   verification, leaderboard, prize, or prediction-resolution/scoring flow yet.
-- No Apple Development Team is configured.
+- Xcode now records Apple team `VKMJPS7WP4`; paid-program membership,
+  distribution certificates, and upload permission remain unverified.
 - Bundle ID `com.papajohn.50hz` is present but not confirmed as registered.
 - No signed archive, physical-device install, TestFlight processing, or App Store
   Connect record has been verified.
@@ -284,6 +285,12 @@ including the asset catalogue, from the code-identical `a56ed41` checkpoint. CI
 does not verify Apple signing, a physical-device install, or TestFlight
 processing.
 
+A later iPhone 16 Pro / iOS 18.6 simulator run exercised the production Live,
+Today, Mine, Log, event explanation, and Ask flows. The run exposed iOS 18's
+stricter rejection of fractional-second timestamps under JSONDecoder's built-in
+`.iso8601` strategy; the client now explicitly accepts both fractional and
+whole-second ISO 8601 values, with 23 simulator tests passing.
+
 ## Next milestones
 
 ### 1. Freeze, verify, and deploy this release candidate
@@ -306,7 +313,8 @@ commit and both roles show current required data, not merely running processes.
 
 Inputs required from the owner:
 
-- Apple Developer Team ID and permission to sign/upload.
+- Confirmation that Apple team `VKMJPS7WP4` is correct and permission to
+  sign/upload through it.
 - Confirmation or registration of `com.papajohn.50hz`.
 - App Store Connect app record and internal tester group.
 - Approval of the hosted `/privacy` and `/support` pages/contact route, or

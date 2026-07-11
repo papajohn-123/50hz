@@ -2,6 +2,21 @@ import XCTest
 @testable import FiftyHz
 
 final class GridContractTests: XCTestCase {
+    func testGridJSONDecodesProductionFractionalAndWholeSecondDates() throws {
+        struct DateEnvelope: Decodable {
+            let timestamp: Date
+        }
+
+        let fractional = Data(#"{"timestamp":"2026-07-11T15:06:28.937491Z"}"#.utf8)
+        let wholeSecond = Data(#"{"timestamp":"2026-07-11T15:06:28Z"}"#.utf8)
+
+        let fractionalDate = try GridJSON.decoder.decode(DateEnvelope.self, from: fractional).timestamp
+        let wholeSecondDate = try GridJSON.decoder.decode(DateEnvelope.self, from: wholeSecond).timestamp
+
+        XCTAssertEqual(fractionalDate.timeIntervalSince1970, 1_783_782_388.937491, accuracy: 0.000_001)
+        XCTAssertEqual(wholeSecondDate.timeIntervalSince1970, 1_783_782_388, accuracy: 0.001)
+    }
+
     func testUnknownFuelSafelyMapsToOther() throws {
         let json = """
         {"fuel":"future_source","megawatts":25,"share":0.01,"changeOneHour":0,"rank":9,"factClass":"observed"}

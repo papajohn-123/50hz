@@ -90,7 +90,7 @@ struct BritainGridMap: View {
                 .padding(.top, 10)
                 .padding(.trailing, 10)
         }
-        .overlay(alignment: .bottomLeading) {
+        .overlay(alignment: .topLeading) {
             if let event = snapshot.activeEvent {
                 Button(action: onEventTap) {
                     HStack(spacing: 8) {
@@ -108,7 +108,8 @@ struct BritainGridMap: View {
                     .overlay(Capsule().stroke(GridTheme.warning.opacity(0.35), lineWidth: 1))
                 }
                 .buttonStyle(.plain)
-                .padding(10)
+                .padding(.top, 28)
+                .padding(.leading, 10)
             }
         }
         .background(

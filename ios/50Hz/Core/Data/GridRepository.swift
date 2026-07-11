@@ -94,9 +94,42 @@ struct FixtureGridRepository: GridRepository {
 }
 
 enum GridJSON {
+    private static let fractionalDateStyle = Date.ISO8601FormatStyle(
+        dateSeparator: .dash,
+        dateTimeSeparator: .standard,
+        timeSeparator: .colon,
+        timeZoneSeparator: .colon,
+        includingFractionalSeconds: true,
+        timeZone: .gmt
+    )
+
+    private static let wholeSecondDateStyle = Date.ISO8601FormatStyle(
+        dateSeparator: .dash,
+        dateTimeSeparator: .standard,
+        timeSeparator: .colon,
+        timeZoneSeparator: .colon,
+        includingFractionalSeconds: false,
+        timeZone: .gmt
+    )
+
     static var decoder: JSONDecoder {
         let decoder = JSONDecoder()
-        decoder.dateDecodingStrategy = .iso8601
+        decoder.dateDecodingStrategy = .custom { decoder in
+            let container = try decoder.singleValueContainer()
+            let value = try container.decode(String.self)
+
+            if let date = try? fractionalDateStyle.parse(value) {
+                return date
+            }
+            if let date = try? wholeSecondDateStyle.parse(value) {
+                return date
+            }
+
+            throw DecodingError.dataCorruptedError(
+                in: container,
+                debugDescription: "Expected an ISO 8601 timestamp with optional fractional seconds."
+            )
+        }
         return decoder
     }
 

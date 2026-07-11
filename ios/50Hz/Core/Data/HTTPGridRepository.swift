@@ -382,6 +382,10 @@ actor HTTPGridRepository: GridRepository {
             do {
                 return try GridJSON.decoder.decode(type, from: data)
             } catch {
+#if DEBUG
+                let endpoint = request.url?.path ?? "unknown endpoint"
+                print("50Hz decode failure for \(endpoint): \(String(reflecting: error))")
+#endif
                 throw GridAPIError.decoding(String(describing: error))
             }
         } catch is CancellationError {
@@ -443,6 +447,10 @@ actor HTTPGridRepository: GridRepository {
             do {
                 decoded = try GridJSON.decoder.decode(type, from: data)
             } catch {
+#if DEBUG
+                let endpoint = request.url?.path ?? "unknown endpoint"
+                print("50Hz decode failure for \(endpoint): \(String(reflecting: error))")
+#endif
                 throw GridAPIError.decoding(String(describing: error))
             }
 

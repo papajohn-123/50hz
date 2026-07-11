@@ -37,6 +37,11 @@ The release-candidate production smoke was completed on 11 July 2026:
 This proves the deployed engineering baseline; it does not replace signed-device
 or processed-TestFlight verification.
 
+The native client has also been run on an iPhone 16 Pro / iOS 18.6 simulator
+against production. Live, Today, Mine, Log, reported-event explanation, and a
+grounded Ask answer were exercised successfully. That run caught and fixed iOS
+18's stricter handling of fractional-second API timestamps.
+
 ## Architecture
 
 ```text
@@ -237,7 +242,8 @@ credentials in the iOS bundle.
 
 The owner needs to provide or confirm:
 
-1. Apple Developer Team ID and signing access.
+1. Confirmation that the locally selected Apple team `VKMJPS7WP4` is the
+   intended paid Developer Program team and has signing/upload access.
 2. Registration/ownership of bundle ID `com.papajohn.50hz` or a replacement.
 3. App Store Connect app record, internal tester group, and required roles.
 4. Approval of the hosted `/privacy` and `/support` pages, including the public

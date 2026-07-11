@@ -92,8 +92,20 @@ struct ConditionHeadlineView: View {
     var body: some View {
         VStack(alignment: .leading, spacing: 9) {
             ViewThatFits(in: .horizontal) {
-                HStack(spacing: 7) { headlineParts }
-                VStack(alignment: .leading, spacing: 2) { headlineParts }
+                HStack(spacing: 7) {
+                    Text(headline.cleanliness)
+                    Text("·").foregroundStyle(GridTheme.textTertiary)
+                    Text(headline.balance)
+                    Text("·").foregroundStyle(GridTheme.textTertiary)
+                    Text(headline.energyPosition)
+                        .foregroundStyle(isForecast ? GridTheme.forecastViolet : GridTheme.liveCyan)
+                }
+                VStack(alignment: .leading, spacing: 5) {
+                    Text(headline.cleanliness)
+                    Text(headline.balance)
+                    Text(headline.energyPosition)
+                        .foregroundStyle(isForecast ? GridTheme.forecastViolet : GridTheme.liveCyan)
+                }
             }
             .font(.system(.title2, design: .rounded, weight: .medium))
             .tracking(-0.7)
@@ -108,15 +120,6 @@ struct ConditionHeadlineView: View {
         }
     }
 
-    @ViewBuilder
-    private var headlineParts: some View {
-        Text(headline.cleanliness)
-        Text("·").foregroundStyle(GridTheme.textTertiary)
-        Text(headline.balance)
-        Text("·").foregroundStyle(GridTheme.textTertiary)
-        Text(headline.energyPosition)
-            .foregroundStyle(isForecast ? GridTheme.forecastViolet : GridTheme.liveCyan)
-    }
 }
 
 struct MeasurementRow: View {
