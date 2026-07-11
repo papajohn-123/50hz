@@ -43,7 +43,15 @@ class OpenRouterExplanationClient:
         except BudgetExceededError:
             return ExplanationResult(explanation=fallback, model="deterministic", used_fallback=True)
 
-        schema = GroundedExplanation.model_json_schema()
+        schema = _strict_response_schema(GroundedExplanation.model_json_schema())
+        allowed_refs = sorted(packet.source_refs)
+        if not allowed_refs:
+            return ExplanationResult(
+                explanation=fallback,
+                model="deterministic",
+                used_fallback=True,
+            )
+        schema["properties"]["evidence_refs"]["items"]["enum"] = allowed_refs
         payload = {
             "model": self.model,
             "provider": {"zdr": True},
@@ -85,3 +93,30 @@ class OpenRouterExplanationClient:
             )
         except (httpx.HTTPError, KeyError, TypeError, ValueError, json.JSONDecodeError, ExplanationValidationError):
             return ExplanationResult(explanation=fallback, model="deterministic", used_fallback=True)
+
+
+def _strict_response_schema(value: dict) -> dict:
+    """Adapt Pydantic JSON Schema to OpenAI/OpenRouter strict-output rules.
+
+    Strict providers require every object property in ``required`` even when
+    its value may be null, and reject Pydantic's ``default`` annotations.
+    Operate on a JSON round-trip so the model-owned schema is never mutated.
+    """
+
+    schema = json.loads(json.dumps(value))
+
+    def normalize(node: object) -> None:
+        if isinstance(node, dict):
+            node.pop("default", None)
+            properties = node.get("properties")
+            if isinstance(properties, dict):
+                node["required"] = list(properties)
+                node["additionalProperties"] = False
+            for child in node.values():
+                normalize(child)
+        elif isinstance(node, list):
+            for child in node:
+                normalize(child)
+
+    normalize(schema)
+    return schema

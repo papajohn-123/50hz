@@ -6,7 +6,7 @@ import pytest
 
 from app.events.models import EvidenceFact
 from app.intelligence.budget import DailyCallBudget
-from app.intelligence.client import OpenRouterExplanationClient
+from app.intelligence.client import OpenRouterExplanationClient, _strict_response_schema
 from app.intelligence.models import EvidencePacket, GroundedExplanation, SourceCitation
 from app.intelligence.validation import ExplanationValidationError, validate_explanation
 
@@ -92,7 +92,15 @@ def test_validation_allows_time_tokens_present_in_string_evidence() -> None:
 @pytest.mark.asyncio
 async def test_client_falls_back_on_invalid_model_output() -> None:
     def handler(request: httpx.Request) -> httpx.Response:
-        assert json.loads(request.content)["provider"] == {"zdr": True}
+        payload = json.loads(request.content)
+        assert payload["provider"] == {"zdr": True}
+        schema = payload["response_format"]["json_schema"]["schema"]
+        assert schema["additionalProperties"] is False
+        assert set(schema["required"]) == set(schema["properties"])
+        assert schema["properties"]["evidence_refs"]["items"]["enum"] == [
+            "src_1"
+        ]
+        assert "default" not in schema["properties"]["why_it_matters"]
         return httpx.Response(
             200,
             json={
@@ -115,3 +123,19 @@ async def test_client_falls_back_on_invalid_model_output() -> None:
     await client.close()
     assert result.used_fallback is True
     assert result.model == "deterministic"
+
+
+def test_strict_schema_requires_nullable_and_defaulted_fields_without_defaults() -> None:
+    schema = _strict_response_schema(GroundedExplanation.model_json_schema())
+
+    assert set(schema["required"]) == {
+        "headline",
+        "plain_language",
+        "why_it_matters",
+        "caveat",
+        "evidence_refs",
+        "suggested_questions",
+    }
+    assert schema["additionalProperties"] is False
+    assert "default" not in schema["properties"]["caveat"]
+    assert "default" not in schema["properties"]["why_it_matters"]
