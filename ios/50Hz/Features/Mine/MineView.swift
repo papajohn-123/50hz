@@ -7,16 +7,25 @@ struct MineView: View {
     @FocusState private var postcodeFocused: Bool
 
     private var nationalCarbon: Double {
-        model.snapshot?.carbonIntensity.value ?? 172
+        model.regionalContext?.nationalCarbonIntensity ?? model.snapshot?.carbonIntensity.value ?? 0
     }
 
     var body: some View {
         ScrollView {
             VStack(alignment: .leading, spacing: 27) {
                 header
-                regionalReading
-                comparison
-                cleanWindow
+                if let error = model.regionError {
+                    RegionalStateBanner(message: error, hasCachedValue: model.regionalContext != nil) {
+                        Task { await model.loadRegion(postcode: postcode) }
+                    }
+                }
+                if let context = model.regionalContext {
+                    regionalReading(context)
+                    comparison(context)
+                    cleanWindow(context)
+                } else {
+                    regionalPlaceholder
+                }
                 postcodeControl
                 methodology
             }
@@ -28,6 +37,9 @@ struct MineView: View {
         .scrollIndicators(.hidden)
         .gridPageBackground()
         .onAppear { draftPostcode = postcode }
+        .task(id: postcode) {
+            await model.loadRegion(postcode: postcode)
+        }
     }
 
     private var header: some View {
@@ -39,7 +51,8 @@ struct MineView: View {
             HStack(spacing: 7) {
                 Image(systemName: "location.circle.fill")
                     .foregroundStyle(GridTheme.liveCyan)
-                Text(postcode.isEmpty ? "Central London · default region" : "London · \(postcode.uppercased())")
+                Text(model.regionalContext.map { "\($0.name) · \($0.postcode)" }
+                    ?? (postcode.isEmpty ? "Central London · default region" : postcode.uppercased()))
                     .font(.subheadline)
                     .foregroundStyle(GridTheme.textSecondary)
             }
@@ -49,11 +62,11 @@ struct MineView: View {
         }
     }
 
-    private var regionalReading: some View {
+    private func regionalReading(_ context: RegionalGridContext) -> some View {
         VStack(alignment: .leading, spacing: 7) {
             SectionLabel("Regional carbon", trailing: "ESTIMATED")
             HStack(alignment: .firstTextBaseline, spacing: 8) {
-                Text("138")
+                Text(Int(context.carbonIntensity.rounded()).formatted())
                     .font(.system(size: 54, weight: .light, design: .rounded))
                     .tracking(-2)
                     .foregroundStyle(GridTheme.liveCyan)
@@ -62,23 +75,39 @@ struct MineView: View {
                     .font(.subheadline)
                     .foregroundStyle(GridTheme.textSecondary)
             }
-            Text("Low carbon intensity for this time of day")
+            Text(context.rating)
                 .font(.subheadline)
                 .foregroundStyle(GridTheme.textPrimary)
         }
         .accessibilityElement(children: .combine)
-        .accessibilityLabel("Estimated regional carbon intensity, 138 grams of carbon dioxide per kilowatt hour, low")
+        .accessibilityLabel("Estimated regional carbon intensity, \(Int(context.carbonIntensity.rounded())) grams of carbon dioxide per kilowatt hour, \(context.rating)")
     }
 
-    private var comparison: some View {
+    private func comparison(_ context: RegionalGridContext) -> some View {
         VStack(alignment: .leading, spacing: 13) {
             SectionLabel("Against Britain")
-            comparisonBar(label: "Central London", value: 138, maximum: 260, color: GridTheme.liveCyan)
-            comparisonBar(label: "Great Britain", value: nationalCarbon, maximum: 260, color: GridTheme.textSecondary)
-            Text("London is approximately \(max(Int((1 - 138 / max(nationalCarbon, 1)) * 100), 0))% cleaner than the national snapshot.")
+            comparisonBar(label: context.name, value: context.carbonIntensity, maximum: comparisonMaximum(context), color: GridTheme.liveCyan)
+            comparisonBar(label: "Great Britain", value: nationalCarbon, maximum: comparisonMaximum(context), color: GridTheme.textSecondary)
+            Text(comparisonCopy(context))
                 .font(.caption)
                 .foregroundStyle(GridTheme.textTertiary)
         }
+    }
+
+    private func comparisonMaximum(_ context: RegionalGridContext) -> Double {
+        max(context.carbonIntensity, context.nationalCarbonIntensity, 100) * 1.2
+    }
+
+    private func comparisonCopy(_ context: RegionalGridContext) -> String {
+        let national = max(context.nationalCarbonIntensity, 1)
+        let difference = Int((abs(context.carbonIntensity - national) / national * 100).rounded())
+        if context.carbonIntensity < national {
+            return "\(context.name) is approximately \(difference)% cleaner than the national estimate in this snapshot."
+        }
+        if context.carbonIntensity > national {
+            return "\(context.name) is approximately \(difference)% more carbon-intensive than the national estimate in this snapshot."
+        }
+        return "The regional and national estimates are currently aligned."
     }
 
     private func comparisonBar(label: String, value: Double, maximum: Double, color: Color) -> some View {
@@ -96,15 +125,15 @@ struct MineView: View {
         }
     }
 
-    private var cleanWindow: some View {
+    private func cleanWindow(_ context: RegionalGridContext) -> some View {
         VStack(alignment: .leading, spacing: 14) {
             HStack(alignment: .top) {
                 VStack(alignment: .leading, spacing: 5) {
                     SectionLabel("Best charging window")
-                    Text("01:30–04:00")
+                    Text(windowLabel(start: context.chargingWindowStart, end: context.chargingWindowEnd))
                         .font(.system(.title, design: .monospaced, weight: .medium))
                         .foregroundStyle(GridTheme.forecastViolet)
-                    Text("Forecast carbon bottoms near 94 g/kWh")
+                    Text("Lowest continuous charging period in the national forecast")
                         .font(.caption)
                         .foregroundStyle(GridTheme.textSecondary)
                 }
@@ -115,17 +144,26 @@ struct MineView: View {
             }
             Hairline()
             HStack(spacing: 0) {
-                chargingFact(value: "7.0 kWh", label: "Charge")
-                chargingFact(value: "0.7 kg", label: "Estimated CO₂")
-                chargingFact(value: "35%", label: "Cleaner than now")
+                chargingFact(value: durationLabel(start: context.chargingWindowStart, end: context.chargingWindowEnd), label: "Window")
+                chargingFact(value: context.chargingWindowStart.formatted(.dateTime.weekday(.abbreviated)), label: "Day")
+                chargingFact(value: context.forecastIssuedAt.formatted(.dateTime.hour().minute()), label: "Issued")
             }
-            Text("Assumes 7 kWh delivered at 90% charging efficiency. Compares with this region’s current estimate.")
+            Text("This window comes from Britain’s national forecast; the current reading above is regional. 50Hz does not claim an emissions saving until the API supplies the window’s average intensity.")
                 .font(.caption2)
                 .foregroundStyle(GridTheme.textTertiary)
         }
         .padding(16)
         .background(GridTheme.forecastViolet.opacity(0.075), in: RoundedRectangle(cornerRadius: GridTheme.cornerRadius))
         .overlay(RoundedRectangle(cornerRadius: GridTheme.cornerRadius).stroke(GridTheme.forecastViolet.opacity(0.18), lineWidth: 1))
+    }
+
+    private func windowLabel(start: Date, end: Date) -> String {
+        "\(start.formatted(.dateTime.hour().minute()))–\(end.formatted(.dateTime.hour().minute()))"
+    }
+
+    private func durationLabel(start: Date, end: Date) -> String {
+        let hours = max(end.timeIntervalSince(start) / 3_600, 0)
+        return "\(hours.formatted(.number.precision(.fractionLength(hours.rounded() == hours ? 0 : 1)))) hr"
     }
 
     private func chargingFact(value: String, label: String) -> some View {
@@ -157,7 +195,7 @@ struct MineView: View {
                     .frame(minHeight: 46)
                     .background(GridTheme.liveCyan, in: RoundedRectangle(cornerRadius: 11))
             }
-            Text("Stored only on this device. This fixture keeps the London region until the live postcode endpoint is connected.")
+            Text("Stored only on this device. 50Hz sends the postcode to its backend to resolve a NESO carbon-intensity region; location permission is not used.")
                 .font(.caption2)
                 .foregroundStyle(GridTheme.textTertiary)
         }
@@ -171,9 +209,58 @@ struct MineView: View {
     private var methodology: some View {
         VStack(alignment: .leading, spacing: 8) {
             Hairline()
-            Text("Regional values are modelled estimates from NESO Carbon Intensity data. National generation shown elsewhere comes from Elexon and is not a regional mix.")
+            Text(methodologyCopy)
                 .font(.caption2)
                 .foregroundStyle(GridTheme.textTertiary)
         }
+    }
+
+    private var methodologyCopy: String {
+        let source = model.regionalContext?.source
+        let provenance = source.map { " Source: \($0.name), \($0.dataset), observed \($0.observedAt.formatted(.dateTime.hour().minute()))." } ?? ""
+        return "The current carbon value is regional. The charging window uses Britain’s national carbon forecast, and national generation shown elsewhere is not a regional generation mix.\(provenance)"
+    }
+
+    private var regionalPlaceholder: some View {
+        VStack(alignment: .leading, spacing: 12) {
+            SectionLabel("Regional carbon")
+            if case .failed(let message) = model.regionLoadPhase {
+                Text(message)
+                    .font(.subheadline)
+                    .foregroundStyle(GridTheme.textSecondary)
+            } else {
+                ProgressView("Resolving the regional forecast…")
+                    .tint(GridTheme.liveCyan)
+                    .foregroundStyle(GridTheme.textSecondary)
+            }
+        }
+        .frame(maxWidth: .infinity, minHeight: 130, alignment: .leading)
+    }
+}
+
+private struct RegionalStateBanner: View {
+    let message: String
+    let hasCachedValue: Bool
+    let retry: () -> Void
+
+    var body: some View {
+        HStack(alignment: .top, spacing: 10) {
+            Image(systemName: "location.slash")
+                .foregroundStyle(GridTheme.staleAmber)
+            VStack(alignment: .leading, spacing: 3) {
+                Text(hasCachedValue ? "Showing the last regional forecast" : "Regional data unavailable")
+                    .font(.subheadline.weight(.semibold))
+                Text(message)
+                    .font(.caption)
+                    .foregroundStyle(GridTheme.textSecondary)
+            }
+            Spacer(minLength: 4)
+            Button("Retry", action: retry)
+                .font(.caption.weight(.semibold))
+                .foregroundStyle(GridTheme.staleAmber)
+                .frame(minHeight: 44)
+        }
+        .padding(12)
+        .background(GridTheme.staleAmber.opacity(0.07), in: RoundedRectangle(cornerRadius: 12))
     }
 }

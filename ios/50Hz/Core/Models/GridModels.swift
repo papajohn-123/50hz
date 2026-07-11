@@ -185,6 +185,110 @@ struct RegionalGridContext: Codable, Hashable, Sendable {
     let source: SourceReference
 }
 
+struct GridSourceCitation: Codable, Hashable, Sendable, Identifiable {
+    var id: String { sourceID }
+    let sourceID: String
+    let publisher: String
+    let title: String
+    let canonicalURL: URL
+    let publishedAt: Date?
+}
+
+struct AskGridRequest: Codable, Hashable, Sendable {
+    let question: String
+    let mapTime: Date?
+    let regionCode: String?
+}
+
+struct AskGridAnswer: Codable, Hashable, Sendable {
+    let answer: String
+    let asOf: Date
+    let freshness: String
+    let evidenceRefs: [String]
+    let citations: [GridSourceCitation]
+    let limitations: [String]
+    let suggestedQuestions: [String]
+
+    init(
+        answer: String,
+        asOf: Date,
+        freshness: String,
+        evidenceRefs: [String],
+        citations: [GridSourceCitation] = [],
+        limitations: [String] = [],
+        suggestedQuestions: [String] = []
+    ) {
+        self.answer = answer
+        self.asOf = asOf
+        self.freshness = freshness
+        self.evidenceRefs = evidenceRefs
+        self.citations = citations
+        self.limitations = limitations
+        self.suggestedQuestions = suggestedQuestions
+    }
+
+    private enum CodingKeys: String, CodingKey {
+        case answer, asOf, freshness, evidenceRefs, citations, limitations, suggestedQuestions
+    }
+
+    init(from decoder: Decoder) throws {
+        let container = try decoder.container(keyedBy: CodingKeys.self)
+        answer = try container.decode(String.self, forKey: .answer)
+        asOf = try container.decode(Date.self, forKey: .asOf)
+        freshness = try container.decode(String.self, forKey: .freshness)
+        evidenceRefs = try container.decodeIfPresent([String].self, forKey: .evidenceRefs) ?? []
+        citations = try container.decodeIfPresent([GridSourceCitation].self, forKey: .citations) ?? []
+        limitations = try container.decodeIfPresent([String].self, forKey: .limitations) ?? []
+        suggestedQuestions = try container.decodeIfPresent([String].self, forKey: .suggestedQuestions) ?? []
+    }
+}
+
+struct EventExplanation: Codable, Hashable, Sendable {
+    let headline: String
+    let plainLanguage: String
+    let whyItMatters: String?
+    let caveat: String?
+    let evidenceRefs: [String]
+    let suggestedQuestions: [String]
+
+    private enum CodingKeys: String, CodingKey {
+        case headline, plainLanguage, whyItMatters, caveat, evidenceRefs, suggestedQuestions
+    }
+
+    init(from decoder: Decoder) throws {
+        let container = try decoder.container(keyedBy: CodingKeys.self)
+        headline = try container.decode(String.self, forKey: .headline)
+        plainLanguage = try container.decode(String.self, forKey: .plainLanguage)
+        whyItMatters = try container.decodeIfPresent(String.self, forKey: .whyItMatters)
+        caveat = try container.decodeIfPresent(String.self, forKey: .caveat)
+        evidenceRefs = try container.decodeIfPresent([String].self, forKey: .evidenceRefs) ?? []
+        suggestedQuestions = try container.decodeIfPresent([String].self, forKey: .suggestedQuestions) ?? []
+    }
+}
+
+struct EventExplanationResponse: Codable, Hashable, Sendable {
+    let eventID: String
+    let revision: Int
+    let explanation: EventExplanation
+    let citations: [GridSourceCitation]
+    let model: String?
+    let usedFallback: Bool
+
+    private enum CodingKeys: String, CodingKey {
+        case eventID, revision, explanation, citations, model, usedFallback
+    }
+
+    init(from decoder: Decoder) throws {
+        let container = try decoder.container(keyedBy: CodingKeys.self)
+        eventID = try container.decode(String.self, forKey: .eventID)
+        revision = try container.decodeIfPresent(Int.self, forKey: .revision) ?? 1
+        explanation = try container.decode(EventExplanation.self, forKey: .explanation)
+        citations = try container.decodeIfPresent([GridSourceCitation].self, forKey: .citations) ?? []
+        model = try container.decodeIfPresent(String.self, forKey: .model)
+        usedFallback = try container.decodeIfPresent(Bool.self, forKey: .usedFallback) ?? false
+    }
+}
+
 enum LoadPhase: Equatable, Sendable {
     case loading
     case loaded

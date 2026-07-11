@@ -1,8 +1,16 @@
 import Foundation
 
-enum GridCacheKey: String, Sendable {
-    case current
-    case timeline
+struct GridCacheKey: Hashable, Sendable {
+    let rawValue: String
+
+    static let current = GridCacheKey(rawValue: "current")
+    static let timeline = GridCacheKey(rawValue: "timeline")
+    static let events = GridCacheKey(rawValue: "events")
+
+    static func region(_ postcode: String) -> GridCacheKey {
+        let normalized = postcode.lowercased().filter { $0.isLetter || $0.isNumber }
+        return GridCacheKey(rawValue: "region-\(normalized.isEmpty ? "default" : normalized)")
+    }
 }
 
 struct GridCacheEntry: Sendable {
@@ -89,4 +97,3 @@ actor GridDiskCache {
         directory.appendingPathComponent("grid-\(key.rawValue).metadata.json")
     }
 }
-

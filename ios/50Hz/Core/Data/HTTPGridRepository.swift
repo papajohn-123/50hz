@@ -53,11 +53,15 @@ actor HTTPGridRepository: GridRepository {
     private enum Endpoint {
         case current
         case timeline
+        case events
+        case region(String)
 
         var cacheKey: GridCacheKey {
             switch self {
             case .current: .current
             case .timeline: .timeline
+            case .events: .events
+            case .region(let postcode): .region(postcode)
             }
         }
     }
@@ -67,6 +71,8 @@ actor HTTPGridRepository: GridRepository {
     private let cache: GridDiskCache
     private var currentTask: Task<GridSnapshot, Error>?
     private var timelineTask: Task<GridTimeline, Error>?
+    private var eventsTask: Task<[GridEvent], Error>?
+    private var regionTasks: [String: Task<RegionalGridContext, Error>] = [:]
 
     init(
         baseURL: URL = HTTPGridRepository.productionBaseURL,
@@ -108,6 +114,27 @@ actor HTTPGridRepository: GridRepository {
             return try GridJSON.decoder.decode(GridTimeline.self, from: entry.data)
         } catch {
             await cache.remove(.timeline)
+            return nil
+        }
+    }
+
+    func cachedRegion(postcode: String) async -> RegionalGridContext? {
+        let key = GridCacheKey.region(postcode)
+        guard let entry = await cache.entry(for: key) else { return nil }
+        do {
+            return try GridJSON.decoder.decode(RegionalGridContext.self, from: entry.data)
+        } catch {
+            await cache.remove(key)
+            return nil
+        }
+    }
+
+    func cachedEvents() async -> [GridEvent]? {
+        guard let entry = await cache.entry(for: .events) else { return nil }
+        do {
+            return try GridJSON.decoder.decode([GridEvent].self, from: entry.data)
+        } catch {
+            await cache.remove(.events)
             return nil
         }
     }
@@ -156,6 +183,75 @@ actor HTTPGridRepository: GridRepository {
         }
     }
 
+    func region(postcode: String) async throws -> RegionalGridContext {
+        let normalized = Self.normalizedPostcode(postcode)
+        if let task = regionTasks[normalized] { return try await task.value }
+
+        let task = Task<RegionalGridContext, Error> {
+            try await Self.fetch(
+                endpoint: .region(normalized),
+                requestURL: Self.regionURL(baseURL: baseURL, postcode: normalized),
+                session: session,
+                cache: cache,
+                as: RegionalGridContext.self
+            )
+        }
+        regionTasks[normalized] = task
+        defer { regionTasks[normalized] = nil }
+
+        return try await withTaskCancellationHandler {
+            try await task.value
+        } onCancel: {
+            task.cancel()
+        }
+    }
+
+    func events() async throws -> [GridEvent] {
+        if let eventsTask { return try await eventsTask.value }
+
+        let task = Task<[GridEvent], Error> {
+            try await Self.fetch(
+                endpoint: .events,
+                requestURL: Self.eventsURL(baseURL: baseURL),
+                session: session,
+                cache: cache,
+                as: [GridEvent].self
+            )
+        }
+        eventsTask = task
+        defer { eventsTask = nil }
+
+        return try await withTaskCancellationHandler {
+            try await task.value
+        } onCancel: {
+            task.cancel()
+        }
+    }
+
+    func event(id: String) async throws -> GridEvent {
+        try await Self.send(
+            request: URLRequest(url: Self.eventURL(baseURL: baseURL, id: id)),
+            session: session,
+            as: GridEvent.self
+        )
+    }
+
+    func eventExplanation(id: String) async throws -> EventExplanationResponse {
+        try await Self.send(
+            request: URLRequest(url: Self.eventExplanationURL(baseURL: baseURL, id: id)),
+            session: session,
+            as: EventExplanationResponse.self
+        )
+    }
+
+    func ask(_ request: AskGridRequest) async throws -> AskGridAnswer {
+        var urlRequest = URLRequest(url: baseURL.appendingPathComponent("v1/ask"))
+        urlRequest.httpMethod = "POST"
+        urlRequest.setValue("application/json", forHTTPHeaderField: "Content-Type")
+        urlRequest.httpBody = try GridJSON.encoder.encode(request)
+        return try await Self.send(request: urlRequest, session: session, as: AskGridAnswer.self)
+    }
+
     private nonisolated static func currentURL(baseURL: URL) throws -> URL {
         baseURL.appendingPathComponent("v1/grid/current")
     }
@@ -169,11 +265,73 @@ actor HTTPGridRepository: GridRepository {
         formatter.formatOptions = [.withInternetDateTime]
         components.queryItems = [
             URLQueryItem(name: "from", value: formatter.string(from: now.addingTimeInterval(-24 * 3_600))),
-            URLQueryItem(name: "to", value: formatter.string(from: now.addingTimeInterval(8 * 3_600))),
+            URLQueryItem(name: "to", value: formatter.string(from: now.addingTimeInterval(24 * 3_600))),
             URLQueryItem(name: "resolution", value: "1800")
         ]
         guard let url = components.url else { throw GridAPIError.invalidBaseURL }
         return url
+    }
+
+    private nonisolated static func normalizedPostcode(_ postcode: String) -> String {
+        let value = postcode.trimmingCharacters(in: .whitespacesAndNewlines).uppercased()
+        return value.isEmpty ? "SW1A 1AA" : value
+    }
+
+    private nonisolated static func regionURL(baseURL: URL, postcode: String) -> URL {
+        baseURL.appendingPathComponent("v1/regions").appendingPathComponent(postcode)
+    }
+
+    private nonisolated static func eventsURL(baseURL: URL) -> URL {
+        baseURL.appendingPathComponent("v1/events")
+    }
+
+    private nonisolated static func eventURL(baseURL: URL, id: String) -> URL {
+        baseURL.appendingPathComponent("v1/events").appendingPathComponent(id)
+    }
+
+    private nonisolated static func eventExplanationURL(baseURL: URL, id: String) -> URL {
+        eventURL(baseURL: baseURL, id: id).appendingPathComponent("explanation")
+    }
+
+    private nonisolated static func send<Value: Decodable & Sendable>(
+        request: URLRequest,
+        session: URLSession,
+        as type: Value.Type
+    ) async throws -> Value {
+        var request = request
+        request.timeoutInterval = 30
+        request.setValue("application/json", forHTTPHeaderField: "Accept")
+
+        do {
+            try Task.checkCancellation()
+            let (data, response) = try await session.data(for: request)
+            try Task.checkCancellation()
+            guard let response = response as? HTTPURLResponse else { throw GridAPIError.invalidResponse }
+            guard (200..<300).contains(response.statusCode) else {
+                let body = try? JSONDecoder().decode(APIErrorBody.self, from: data)
+                throw GridAPIError.httpStatus(
+                    code: response.statusCode,
+                    message: body?.safeMessage,
+                    retryAfter: response.value(forHTTPHeaderField: "Retry-After")
+                )
+            }
+            guard !data.isEmpty else { throw GridAPIError.invalidResponse }
+            guard data.count <= 2_000_000 else { throw GridAPIError.responseTooLarge }
+            do {
+                return try GridJSON.decoder.decode(type, from: data)
+            } catch {
+                throw GridAPIError.decoding(String(describing: error))
+            }
+        } catch is CancellationError {
+            throw GridAPIError.cancelled
+        } catch let error as URLError {
+            if error.code == .cancelled { throw GridAPIError.cancelled }
+            throw GridAPIError.transport(error.code)
+        } catch let error as GridAPIError {
+            throw error
+        } catch {
+            throw GridAPIError.invalidResponse
+        }
     }
 
     private nonisolated static func fetch<Value: Decodable & Sendable>(

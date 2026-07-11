@@ -2,107 +2,43 @@ import SwiftUI
 
 struct AskGridInspector: View {
     let snapshot: GridSnapshot
+    @EnvironmentObject private var model: AppModel
     @Environment(\.dismiss) private var dismiss
     @State private var question = ""
-    @State private var askedQuestion = "Why is wind leading right now?"
-
-    private var answer: String {
-        let wind = snapshot.reading(for: .wind)
-        let gas = snapshot.reading(for: .gas)
-        guard let wind else { return "There is not enough confirmed evidence in this snapshot to answer that." }
-
-        if askedQuestion.localizedCaseInsensitiveContains("charge") {
-            return "The national carbon forecast is expected to be lowest after 01:00. For Central London, the current fixture recommends 01:30–04:00. This is a forecast, not a guarantee."
-        }
-        if askedQuestion.localizedCaseInsensitiveContains("import") || askedQuestion.localizedCaseInsensitiveContains("export") {
-            let net = snapshot.interconnectors.reduce(0) { $0 + $1.megawatts }
-            return "The reported interconnector flows sum to \(abs(Int(net))) MW \(net >= 0 ? "importing into" : "exporting from") Britain. Individual links can move in opposite directions at the same time."
-        }
-        let gasGW = ((gas?.megawatts ?? 0) / 1_000).formatted(.number.precision(.fractionLength(1)))
-        return "Wind is producing \((wind.megawatts / 1_000).formatted(.number.precision(.fractionLength(1)))) GW, or \(Int(wind.share * 100))% of the generation shown. That places it #\(wind.rank) in this snapshot. Gas is at \(gasGW) GW. The data shows the difference, but does not by itself establish a cause."
-    }
+    @State private var askedQuestion: String?
+    @State private var answer: AskGridAnswer?
+    @State private var isAsking = false
+    @State private var errorMessage: String?
 
     var body: some View {
         NavigationStack {
             ScrollView {
                 VStack(alignment: .leading, spacing: 22) {
-                    VStack(alignment: .leading, spacing: 8) {
-                        Text(askedQuestion)
-                            .font(.title2.weight(.medium))
-                            .foregroundStyle(GridTheme.textPrimary)
-                        Label("Bounded analysis", systemImage: "checkmark.shield")
-                            .font(.caption)
-                            .foregroundStyle(GridTheme.liveCyan)
-                    }
+                    heading
 
-                    Text(answer)
-                        .font(.body)
-                        .foregroundStyle(GridTheme.textPrimary)
-                        .lineSpacing(5)
-                        .textSelection(.enabled)
-
-                    VStack(alignment: .leading, spacing: 10) {
-                        SectionLabel("Qualification")
-                        Text("This answer uses only the validated facts in the selected snapshot. It will not infer a fault, outage or cause unless an authoritative notice reports one.")
-                            .font(.caption)
-                            .foregroundStyle(GridTheme.textSecondary)
-                            .padding(12)
-                            .background(GridTheme.forecastViolet.opacity(0.08), in: RoundedRectangle(cornerRadius: 10))
-                    }
-
-                    VStack(alignment: .leading, spacing: 12) {
-                        SectionLabel("Evidence", trailing: snapshot.timestamp.formatted(.dateTime.hour().minute()))
-                        ForEach(snapshot.sources) { source in
-                            HStack(alignment: .top, spacing: 12) {
-                                Image(systemName: "doc.text.magnifyingglass")
-                                    .foregroundStyle(GridTheme.liveCyan)
-                                VStack(alignment: .leading, spacing: 3) {
-                                    Text(source.name).font(.subheadline.weight(.medium))
-                                    Text("\(source.dataset) · observed \(source.observedAt.formatted(.dateTime.hour().minute()))")
-                                        .font(.caption2)
-                                        .fontDesign(.monospaced)
-                                        .foregroundStyle(GridTheme.textTertiary)
-                                }
-                                Spacer()
-                            }
-                            .accessibilityElement(children: .combine)
+                    if isAsking {
+                        HStack(spacing: 10) {
+                            ProgressView().tint(GridTheme.liveCyan)
+                            Text("Checking validated grid evidence…")
+                                .font(.subheadline)
+                                .foregroundStyle(GridTheme.textSecondary)
                         }
+                        .frame(maxWidth: .infinity, minHeight: 100, alignment: .leading)
+                        .accessibilityElement(children: .combine)
+                        .accessibilityLabel("Checking validated grid evidence")
+                    } else if let answer {
+                        answerContent(answer)
+                    } else if let errorMessage {
+                        errorContent(errorMessage)
+                    } else {
+                        introduction
                     }
 
-                    VStack(alignment: .leading, spacing: 8) {
-                        SectionLabel("Try asking")
-                        suggestion("Are we importing or exporting?")
-                        suggestion("When should I charge tonight?")
-                        suggestion("Is this unusually clean?")
-                    }
+                    suggestions
                 }
                 .padding(GridTheme.horizontalPadding)
             }
-            .safeAreaInset(edge: .bottom) {
-                HStack(spacing: 9) {
-                    TextField("Ask about this grid state", text: $question)
-                        .textFieldStyle(.plain)
-                        .padding(.horizontal, 14)
-                        .frame(minHeight: 44)
-                        .background(GridTheme.surfaceRaised, in: Capsule())
-                    Button {
-                        let trimmed = question.trimmingCharacters(in: .whitespacesAndNewlines)
-                        guard !trimmed.isEmpty else { return }
-                        askedQuestion = trimmed
-                        question = ""
-                    } label: {
-                        Image(systemName: "arrow.up")
-                            .font(.headline)
-                            .frame(width: 44, height: 44)
-                            .background(GridTheme.liveCyan, in: Circle())
-                            .foregroundStyle(GridTheme.background)
-                    }
-                    .accessibilityLabel("Ask question")
-                }
-                .padding(.horizontal, GridTheme.horizontalPadding)
-                .padding(.vertical, 10)
-                .background(.ultraThinMaterial)
-            }
+            .safeAreaInset(edge: .bottom) { composer }
             .navigationTitle("Ask the Grid")
             .navigationBarTitleDisplayMode(.inline)
             .toolbar {
@@ -115,19 +51,195 @@ struct AskGridInspector: View {
         .preferredColorScheme(.dark)
     }
 
-    private func suggestion(_ text: String) -> some View {
-        Button {
-            withAnimation(.easeOut(duration: 0.18)) { askedQuestion = text }
-        } label: {
-            HStack {
-                Text(text).font(.subheadline)
-                Spacer()
-                Image(systemName: "arrow.up.right").font(.caption)
-            }
-            .foregroundStyle(GridTheme.textSecondary)
-            .frame(minHeight: 44)
-            .overlay(alignment: .bottom) { Hairline() }
+    private var heading: some View {
+        VStack(alignment: .leading, spacing: 8) {
+            Text(askedQuestion ?? "What would you like to understand?")
+                .font(.title2.weight(.medium))
+                .foregroundStyle(GridTheme.textPrimary)
+            Label("Source-grounded analysis", systemImage: "checkmark.shield")
+                .font(.caption)
+                .foregroundStyle(GridTheme.liveCyan)
         }
-        .buttonStyle(.plain)
+    }
+
+    private var introduction: some View {
+        VStack(alignment: .leading, spacing: 10) {
+            Text("Ask about the selected grid state, a change in generation, imports, carbon intensity, or a reported event.")
+                .font(.body)
+                .foregroundStyle(GridTheme.textSecondary)
+                .lineSpacing(4)
+            Text("50Hz asks its backend to gather bounded evidence before the model answers. It will not diagnose an outage from an output change alone.")
+                .font(.caption)
+                .foregroundStyle(GridTheme.textTertiary)
+        }
+    }
+
+    @ViewBuilder
+    private func answerContent(_ answer: AskGridAnswer) -> some View {
+        Text(answer.answer)
+            .font(.body)
+            .foregroundStyle(GridTheme.textPrimary)
+            .lineSpacing(5)
+            .textSelection(.enabled)
+
+        if !answer.limitations.isEmpty {
+            VStack(alignment: .leading, spacing: 10) {
+                SectionLabel("Qualification")
+                ForEach(answer.limitations, id: \.self) { limitation in
+                    Label(limitation, systemImage: "info.circle")
+                        .font(.caption)
+                        .foregroundStyle(GridTheme.textSecondary)
+                }
+            }
+            .padding(12)
+            .background(GridTheme.forecastViolet.opacity(0.08), in: RoundedRectangle(cornerRadius: 10))
+        }
+
+        VStack(alignment: .leading, spacing: 12) {
+            SectionLabel("Evidence", trailing: "\(answer.freshness.uppercased()) · \(answer.asOf.formatted(.dateTime.hour().minute()))")
+            if answer.citations.isEmpty {
+                ForEach(answer.evidenceRefs, id: \.self) { sourceID in
+                    evidenceIDRow(sourceID)
+                }
+            } else {
+                ForEach(answer.citations) { citation in
+                    Link(destination: citation.canonicalURL) {
+                        HStack(alignment: .top, spacing: 12) {
+                            Image(systemName: "doc.text.magnifyingglass")
+                                .foregroundStyle(GridTheme.liveCyan)
+                            VStack(alignment: .leading, spacing: 3) {
+                                Text(citation.title).font(.subheadline.weight(.medium))
+                                Text(citation.publisher)
+                                    .font(.caption2)
+                                    .foregroundStyle(GridTheme.textTertiary)
+                            }
+                            Spacer()
+                            Image(systemName: "arrow.up.right")
+                                .font(.caption2)
+                                .foregroundStyle(GridTheme.textTertiary)
+                        }
+                        .frame(minHeight: 44)
+                    }
+                    .buttonStyle(.plain)
+                    .accessibilityHint("Opens the source in your browser")
+                }
+            }
+        }
+    }
+
+    private func evidenceIDRow(_ sourceID: String) -> some View {
+        let source = snapshot.sources.first { $0.id == sourceID }
+        return HStack(alignment: .top, spacing: 12) {
+            Image(systemName: "doc.text.magnifyingglass")
+                .foregroundStyle(GridTheme.liveCyan)
+            VStack(alignment: .leading, spacing: 3) {
+                Text(source?.name ?? sourceID).font(.subheadline.weight(.medium))
+                Text(source.map { "\($0.dataset) · observed \($0.observedAt.formatted(.dateTime.hour().minute()))" } ?? "Evidence reference supplied by the backend")
+                    .font(.caption2)
+                    .fontDesign(.monospaced)
+                    .foregroundStyle(GridTheme.textTertiary)
+            }
+            Spacer()
+        }
+        .frame(minHeight: 44)
+        .accessibilityElement(children: .combine)
+    }
+
+    private func errorContent(_ message: String) -> some View {
+        VStack(alignment: .leading, spacing: 12) {
+            Label("A grounded answer is unavailable", systemImage: "exclamationmark.bubble")
+                .font(.subheadline.weight(.semibold))
+                .foregroundStyle(GridTheme.staleAmber)
+            Text(message)
+                .font(.caption)
+                .foregroundStyle(GridTheme.textSecondary)
+            if let askedQuestion {
+                Button("Try again") { ask(askedQuestion) }
+                    .font(.caption.weight(.semibold))
+                    .foregroundStyle(GridTheme.staleAmber)
+                    .frame(minHeight: 44)
+            }
+        }
+        .padding(14)
+        .background(GridTheme.staleAmber.opacity(0.07), in: RoundedRectangle(cornerRadius: 12))
+    }
+
+    private var suggestions: some View {
+        VStack(alignment: .leading, spacing: 8) {
+            SectionLabel("Try asking")
+            ForEach(suggestionTexts, id: \.self) { text in
+                Button { ask(text) } label: {
+                    HStack {
+                        Text(text).font(.subheadline)
+                        Spacer()
+                        Image(systemName: "arrow.up.right").font(.caption)
+                    }
+                    .foregroundStyle(GridTheme.textSecondary)
+                    .frame(minHeight: 44)
+                    .overlay(alignment: .bottom) { Hairline() }
+                }
+                .buttonStyle(.plain)
+                .disabled(isAsking)
+            }
+        }
+    }
+
+    private var suggestionTexts: [String] {
+        let supplied = answer?.suggestedQuestions.filter { !$0.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty } ?? []
+        return Array((supplied.isEmpty ? [
+            "Are we importing or exporting?",
+            "Why is the leading source ahead?",
+            "Is this unusually clean?"
+        ] : supplied).prefix(3))
+    }
+
+    private var composer: some View {
+        HStack(spacing: 9) {
+            TextField("Ask about this grid state", text: $question)
+                .textFieldStyle(.plain)
+                .submitLabel(.send)
+                .onSubmit(submit)
+                .padding(.horizontal, 14)
+                .frame(minHeight: 44)
+                .background(GridTheme.surfaceRaised, in: Capsule())
+                .disabled(isAsking)
+            Button(action: submit) {
+                Image(systemName: "arrow.up")
+                    .font(.headline)
+                    .frame(width: 44, height: 44)
+                    .background(GridTheme.liveCyan, in: Circle())
+                    .foregroundStyle(GridTheme.background)
+            }
+            .disabled(isAsking || question.trimmingCharacters(in: .whitespacesAndNewlines).count < 2)
+            .accessibilityLabel("Ask question")
+        }
+        .padding(.horizontal, GridTheme.horizontalPadding)
+        .padding(.vertical, 10)
+        .background(.ultraThinMaterial)
+    }
+
+    private func submit() {
+        let trimmed = question.trimmingCharacters(in: .whitespacesAndNewlines)
+        guard trimmed.count >= 2 else { return }
+        question = ""
+        ask(trimmed)
+    }
+
+    private func ask(_ text: String) {
+        guard !isAsking else { return }
+        askedQuestion = text
+        isAsking = true
+        answer = nil
+        errorMessage = nil
+
+        Task {
+            do {
+                answer = try await model.askGrid(question: text)
+            } catch {
+                guard !Task.isCancelled else { return }
+                errorMessage = error.localizedDescription
+            }
+            isAsking = false
+        }
     }
 }

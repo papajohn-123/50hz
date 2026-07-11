@@ -133,8 +133,12 @@ struct BritainGridMap: View {
         let leading = snapshot.generation.sorted { $0.megawatts > $1.megawatts }.prefix(3)
             .map { "\($0.fuel.displayName) \(($0.megawatts / 1_000).formatted(.number.precision(.fractionLength(1)))) gigawatts" }
             .joined(separator: ", ")
+        let generationSummary = leading.isEmpty ? "Generation mix unavailable for this frame." : "Leading sources: \(leading)."
+        guard !snapshot.interconnectors.isEmpty else {
+            return "\(generationSummary) Interconnector position unavailable for this frame."
+        }
         let position = snapshot.interconnectors.reduce(0) { $0 + $1.megawatts } >= 0 ? "net importing" : "net exporting"
-        return "Leading sources: \(leading). Britain is \(position)."
+        return "\(generationSummary) Britain is \(position)."
     }
 
     private func drawScene(context: inout GraphicsContext, size: CGSize, date: Date) {
@@ -318,4 +322,3 @@ struct BritainGridMap: View {
         )
     }
 }
-

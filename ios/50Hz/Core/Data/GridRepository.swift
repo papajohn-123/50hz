@@ -3,18 +3,46 @@ import Foundation
 protocol GridRepository: Sendable {
     func cachedSnapshot() async -> GridSnapshot?
     func cachedTimeline() async -> GridTimeline?
+    func cachedRegion(postcode: String) async -> RegionalGridContext?
+    func cachedEvents() async -> [GridEvent]?
     func currentSnapshot() async throws -> GridSnapshot
     func timeline() async throws -> GridTimeline
+    func region(postcode: String) async throws -> RegionalGridContext
+    func events() async throws -> [GridEvent]
+    func event(id: String) async throws -> GridEvent
+    func eventExplanation(id: String) async throws -> EventExplanationResponse
+    func ask(_ request: AskGridRequest) async throws -> AskGridAnswer
 }
 
 extension GridRepository {
     func cachedSnapshot() async -> GridSnapshot? { nil }
     func cachedTimeline() async -> GridTimeline? { nil }
+    func cachedRegion(postcode: String) async -> RegionalGridContext? { nil }
+    func cachedEvents() async -> [GridEvent]? { nil }
+
+    func region(postcode: String) async throws -> RegionalGridContext {
+        throw GridRepositoryError.unsupportedFeature("Regional data")
+    }
+
+    func events() async throws -> [GridEvent] { [] }
+
+    func event(id: String) async throws -> GridEvent {
+        throw GridRepositoryError.unsupportedFeature("Event details")
+    }
+
+    func eventExplanation(id: String) async throws -> EventExplanationResponse {
+        throw GridRepositoryError.unsupportedFeature("Event explanations")
+    }
+
+    func ask(_ request: AskGridRequest) async throws -> AskGridAnswer {
+        throw GridRepositoryError.unsupportedFeature("Ask the Grid")
+    }
 }
 
 enum GridRepositoryError: LocalizedError {
     case missingFixture(String)
     case invalidFixture(String, Error)
+    case unsupportedFeature(String)
 
     var errorDescription: String? {
         switch self {
@@ -22,6 +50,8 @@ enum GridRepositoryError: LocalizedError {
             "The bundled fixture \(name) could not be found."
         case .invalidFixture(let name, let error):
             "The bundled fixture \(name) is invalid: \(error.localizedDescription)"
+        case .unsupportedFeature(let feature):
+            "\(feature) is not available from this data source."
         }
     }
 }

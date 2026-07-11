@@ -8,6 +8,7 @@ private struct TodayMoment: Identifiable {
     let factClass: FactClass
     let subject: FuelKind?
     let importance: Bool
+    let event: GridEvent?
 }
 
 struct TodayView: View {
@@ -53,6 +54,18 @@ struct TodayView: View {
                     .foregroundStyle(GridTheme.textSecondary)
                     .padding(.bottom, 28)
 
+                if !timeline.samples.contains(where: { $0.factClass == .forecast }) {
+                    ForecastUnavailableNotice()
+                        .padding(.bottom, 24)
+                }
+
+                if let eventError = model.eventsError, !model.events.isEmpty {
+                    Text("Reported events are shown from the last confirmed event list. \(eventError)")
+                        .font(.caption)
+                        .foregroundStyle(GridTheme.staleAmber)
+                        .padding(.bottom, 18)
+                }
+
                 if let lead = moments.first(where: \.importance) {
                     LeadMoment(
                         moment: lead,
@@ -70,7 +83,10 @@ struct TodayView: View {
                     .padding(.bottom, 30)
                 }
 
-                SectionLabel("Chronology", trailing: "Observed + forecast")
+                SectionLabel(
+                    "Chronology",
+                    trailing: timeline.samples.contains(where: { $0.factClass == .forecast }) ? "Observed + forecast" : "Observed"
+                )
                     .padding(.bottom, 8)
 
                 ForEach(moments.filter { !$0.importance }) { moment in
@@ -95,6 +111,14 @@ struct TodayView: View {
     }
 
     private func open(_ moment: TodayMoment) {
+        if let event = moment.event {
+            model.selectedTab = .live
+            Task { @MainActor in
+                await Task.yield()
+                model.selectedEvent = event
+            }
+            return
+        }
         withAnimation(.snappy(duration: 0.3)) {
             model.selectedTime = moment.time
             model.selectedFuel = moment.subject
@@ -104,62 +128,152 @@ struct TodayView: View {
 
     private func makeMoments(snapshot: GridSnapshot, timeline: GridTimeline) -> [TodayMoment] {
         let now = timeline.nowBoundary
-        return [
+        let observed = timeline.samples.filter { $0.factClass != .forecast && $0.timestamp <= now }
+        let forecast = timeline.samples.filter { $0.factClass == .forecast && $0.timestamp >= now }
+        var moments: [TodayMoment] = []
+
+        if let cleanest = forecast.min(by: { $0.carbonIntensity < $1.carbonIntensity }) {
+            moments.append(
+                TodayMoment(
+                    id: "forecast-cleanest-\(cleanest.timestamp.timeIntervalSince1970)",
+                    time: cleanest.timestamp,
+                    title: "Cleanest forecast period",
+                    detail: "The latest forecast reaches about \(Int(cleanest.carbonIntensity.rounded())) gCO₂/kWh. Treat this as a window that can move as the forecast updates.",
+                    factClass: .forecast,
+                    subject: leadingFuel(in: cleanest),
+                    importance: true,
+                    event: nil
+                )
+            )
+        }
+
+        if let solarHigh = observed.max(by: { megawatts(.solar, in: $0) < megawatts(.solar, in: $1) }),
+           megawatts(.solar, in: solarHigh) > 0 {
+            moments.append(
+                TodayMoment(
+                    id: "observed-solar-high-\(solarHigh.timestamp.timeIntervalSince1970)",
+                    time: solarHigh.timestamp,
+                    title: "Solar’s observed high",
+                    detail: "The national estimate reached \(gigawatts(megawatts(.solar, in: solarHigh))) GW in the available timeline.",
+                    factClass: solarHigh.generation.first(where: { $0.fuel == .solar })?.factClass ?? .estimated,
+                    subject: .solar,
+                    importance: false,
+                    event: nil
+                )
+            )
+        }
+
+        if let observedDemandHigh = observed.max(by: { $0.demandMW < $1.demandMW }) {
+            moments.append(
+                TodayMoment(
+                    id: "observed-demand-high-\(observedDemandHigh.timestamp.timeIntervalSince1970)",
+                    time: observedDemandHigh.timestamp,
+                    title: "Observed demand high",
+                    detail: "Demand reached \(gigawatts(observedDemandHigh.demandMW)) GW in the timeline currently held by 50Hz.",
+                    factClass: .observed,
+                    subject: nil,
+                    importance: false,
+                    event: nil
+                )
+            )
+        }
+
+        moments.append(
             TodayMoment(
-                id: "clean-window",
-                time: now.addingTimeInterval(3 * 3_600),
-                title: "Tonight’s cleanest window",
-                detail: "Carbon is forecast to fall near 96 g/kWh as wind strengthens. Best viewed as a window, not an exact promise.",
-                factClass: .forecast,
-                subject: .wind,
-                importance: true
-            ),
-            TodayMoment(
-                id: "wind-lead",
-                time: now.addingTimeInterval(-5 * 3_600),
-                title: "Wind became the largest source",
-                detail: "Output passed gas during the morning ramp and has remained in first place.",
-                factClass: .observed,
-                subject: .wind,
-                importance: false
-            ),
-            TodayMoment(
-                id: "solar-noon",
-                time: now.addingTimeInterval(-2 * 3_600),
-                title: "Solar reached its daytime high",
-                detail: "The reported national estimate topped 6.3 GW before beginning its afternoon decline.",
-                factClass: .estimated,
-                subject: .solar,
-                importance: false
-            ),
-            TodayMoment(
-                id: "now",
+                id: "now-\(now.timeIntervalSince1970)",
                 time: now,
-                title: "Comfortable and exporting",
+                title: [snapshot.headline.balance, snapshot.headline.energyPosition].joined(separator: " · "),
                 detail: snapshot.headline.interpretation,
                 factClass: .observed,
-                subject: nil,
-                importance: false
-            ),
-            TodayMoment(
-                id: "wind-rise",
-                time: now.addingTimeInterval(2 * 3_600),
-                title: "Wind expected to rise",
-                detail: "The latest forecast points to roughly 2.1 GW more wind by early evening.",
-                factClass: .forecast,
-                subject: .wind,
-                importance: false
-            ),
-            TodayMoment(
-                id: "evening-peak",
-                time: now.addingTimeInterval(6 * 3_600),
-                title: "Evening demand peak",
-                detail: "Demand is forecast near 35.8 GW. Available data does not indicate a tight-system warning.",
-                factClass: .forecast,
-                subject: .gas,
-                importance: false
+                subject: snapshot.generation.min(by: { $0.rank < $1.rank })?.fuel,
+                importance: false,
+                event: nil
             )
-        ]
+        )
+
+        if let demandHigh = forecast.max(by: { $0.demandMW < $1.demandMW }) {
+            moments.append(
+                TodayMoment(
+                    id: "forecast-demand-high-\(demandHigh.timestamp.timeIntervalSince1970)",
+                    time: demandHigh.timestamp,
+                    title: "Forecast demand high",
+                    detail: "The available forecast reaches about \(gigawatts(demandHigh.demandMW)) GW. This is a forecast, not a system warning.",
+                    factClass: .forecast,
+                    subject: leadingFuel(in: demandHigh),
+                    importance: false,
+                    event: nil
+                )
+            )
+        }
+
+        if let windHigh = forecast.max(by: { megawatts(.wind, in: $0) < megawatts(.wind, in: $1) }),
+           megawatts(.wind, in: windHigh) > 0 {
+            moments.append(
+                TodayMoment(
+                    id: "forecast-wind-high-\(windHigh.timestamp.timeIntervalSince1970)",
+                    time: windHigh.timestamp,
+                    title: "Forecast wind high",
+                    detail: "Wind reaches about \(gigawatts(megawatts(.wind, in: windHigh))) GW in the latest available forecast.",
+                    factClass: .forecast,
+                    subject: .wind,
+                    importance: false,
+                    event: nil
+                )
+            )
+        }
+
+        var reportedEvents = model.events
+        if let active = snapshot.activeEvent, !reportedEvents.contains(where: { $0.id == active.id }) {
+            reportedEvents.append(active)
+        }
+        moments.append(contentsOf: reportedEvents.map { event in
+            TodayMoment(
+                id: "event-\(event.id)",
+                time: event.startedAt,
+                title: event.title,
+                detail: event.summary,
+                factClass: .observed,
+                subject: nil,
+                importance: false,
+                event: event
+            )
+        })
+
+        return moments.sorted { lhs, rhs in
+            if lhs.importance != rhs.importance { return lhs.importance }
+            return lhs.time < rhs.time
+        }
+    }
+
+    private func megawatts(_ fuel: FuelKind, in sample: GridTimelineSample) -> Double {
+        sample.generation.first(where: { $0.fuel == fuel })?.megawatts ?? 0
+    }
+
+    private func leadingFuel(in sample: GridTimelineSample) -> FuelKind? {
+        sample.generation.max(by: { $0.megawatts < $1.megawatts })?.fuel
+    }
+
+    private func gigawatts(_ megawatts: Double) -> String {
+        (megawatts / 1_000).formatted(.number.precision(.fractionLength(1)))
+    }
+}
+
+private struct ForecastUnavailableNotice: View {
+    var body: some View {
+        HStack(alignment: .top, spacing: 11) {
+            Image(systemName: "cloud.slash")
+                .foregroundStyle(GridTheme.staleAmber)
+            VStack(alignment: .leading, spacing: 3) {
+                Text("Forecast not available yet")
+                    .font(.subheadline.weight(.semibold))
+                Text("Today is using confirmed observations only. 50Hz will add forward-looking moments when a current forecast is available.")
+                    .font(.caption)
+                    .foregroundStyle(GridTheme.textSecondary)
+            }
+        }
+        .padding(14)
+        .background(GridTheme.staleAmber.opacity(0.07), in: RoundedRectangle(cornerRadius: 12))
+        .overlay(RoundedRectangle(cornerRadius: 12).stroke(GridTheme.staleAmber.opacity(0.18), lineWidth: 1))
     }
 }
 

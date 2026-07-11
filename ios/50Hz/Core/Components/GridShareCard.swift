@@ -54,7 +54,7 @@ struct GridShareCardPayload: Identifiable, Sendable {
             detail: snapshot.headline.interpretation,
             timestamp: snapshot.timestamp,
             metrics: metrics,
-            sourceLine: sourceNames(snapshot.sources),
+            sourceLine: snapshot.demand.factClass == .forecast ? "50Hz forecast timeline" : sourceNames(snapshot.sources),
             accent: snapshot.demand.factClass == .forecast ? .forecast : .observed
         )
     }
@@ -97,7 +97,7 @@ struct GridShareCardPayload: Identifiable, Sendable {
                     unit: factClass == .forecast ? "Latest available issue" : "Confirmed timeline"
                 )
             ],
-            sourceLine: sourceNames(sources),
+            sourceLine: factClass == .forecast ? "50Hz forecast timeline" : sourceNames(sources),
             accent: factClass == .forecast ? .forecast : .observed
         )
     }

@@ -96,23 +96,34 @@ struct LiveView: View {
                     .padding(.bottom, 2)
                 }
 
-                VStack(alignment: .leading, spacing: 12) {
-                    SectionLabel(
-                        "Generation mix",
-                        trailing: "\((snapshot.totalGenerationMW / 1_000).formatted(.number.precision(.fractionLength(1)))) GW"
-                    )
-                    GenerationMixBar(readings: snapshot.generation, selectedFuel: model.selectedFuel)
+                if snapshot.generation.isEmpty {
+                    VStack(alignment: .leading, spacing: 8) {
+                        SectionLabel("Generation mix", trailing: "NOT IN FRAME")
+                        Text("A time-aligned generation mix is not available for this timeline frame, so 50Hz does not project one.")
+                            .font(.caption)
+                            .foregroundStyle(GridTheme.textSecondary)
+                            .padding(12)
+                            .background(GridTheme.surface.opacity(0.7), in: RoundedRectangle(cornerRadius: 10))
+                    }
+                } else {
+                    VStack(alignment: .leading, spacing: 12) {
+                        SectionLabel(
+                            "Generation mix",
+                            trailing: "\((snapshot.totalGenerationMW / 1_000).formatted(.number.precision(.fractionLength(1)))) GW"
+                        )
+                        GenerationMixBar(readings: snapshot.generation, selectedFuel: model.selectedFuel)
+                    }
+
+                    FuelFilter(readings: snapshot.generation, selection: $model.selectedFuel)
+
+                    if let fuel = model.selectedFuel,
+                       let reading = snapshot.reading(for: fuel),
+                       let timeline = model.timeline {
+                        FuelFocusView(reading: reading, timeline: timeline)
+                    }
                 }
 
-                FuelFilter(readings: snapshot.generation, selection: $model.selectedFuel)
-
-                if let fuel = model.selectedFuel,
-                   let reading = snapshot.reading(for: fuel),
-                   let timeline = model.timeline {
-                    FuelFocusView(reading: reading, timeline: timeline)
-                }
-
-                SourceFootnote(snapshot: snapshot)
+                SourceFootnote(snapshot: snapshot, mode: model.timelineModeLabel)
                     .padding(.bottom, 12)
             }
             .padding(.horizontal, GridTheme.horizontalPadding)
@@ -138,21 +149,36 @@ struct LiveView: View {
 
 private struct SourceFootnote: View {
     let snapshot: GridSnapshot
+    let mode: String
 
     var body: some View {
         VStack(alignment: .leading, spacing: 5) {
             Hairline()
                 .padding(.bottom, 4)
-            Text("Observed \(snapshot.timestamp.formatted(.dateTime.hour().minute())) · Retrieved \(snapshot.retrievedAt.formatted(.dateTime.hour().minute().second()))")
+            Text("\(timePrefix) \(snapshot.timestamp.formatted(.dateTime.hour().minute())) · Retrieved \(snapshot.retrievedAt.formatted(.dateTime.hour().minute().second()))")
                 .font(.caption2)
                 .fontDesign(.monospaced)
                 .foregroundStyle(GridTheme.textTertiary)
-            Text(snapshot.sources.map(\.name).uniqued().joined(separator: " · "))
+            if mode == "LIVE" {
+                Text(snapshot.sources.map(\.name).uniqued().joined(separator: " · "))
+                    .font(.caption2)
+                    .foregroundStyle(GridTheme.textTertiary)
+            } else {
+                Text("Timeline frames do not carry time-aligned interconnector or event state; those layers are withheld outside Live.")
+                    .font(.caption2)
+                    .foregroundStyle(GridTheme.textTertiary)
+            }
+            Text("Map flows are illustrative; evidence timing is authoritative.")
                 .font(.caption2)
                 .foregroundStyle(GridTheme.textTertiary)
-            Text("Map flows are illustrative; tap evidence for exact source and timing.")
-                .font(.caption2)
-                .foregroundStyle(GridTheme.textTertiary)
+        }
+    }
+
+    private var timePrefix: String {
+        switch mode {
+        case "FORECAST": "Forecast valid"
+        case "REPLAY": "Observed frame"
+        default: "Observed"
         }
     }
 }

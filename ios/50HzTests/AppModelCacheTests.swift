@@ -16,6 +16,50 @@ final class AppModelCacheTests: XCTestCase {
         XCTAssertEqual(model.lastRefreshError, "There is no reliable network connection.")
     }
 
+    func testForecastFrameNeverCarriesCurrentEventOrInterconnectorState() {
+        var snapshot = makeSnapshot()
+        snapshot.interconnectors = [
+            InterconnectorFlow(id: "ifa", name: "IFA", countryCode: "FR", megawatts: 700, factClass: .observed)
+        ]
+        snapshot.activeEvent = GridEvent(
+            id: "evt_current",
+            title: "Current event",
+            summary: "A current reported event.",
+            severity: "important",
+            evidenceClass: "reported",
+            startedAt: snapshot.timestamp,
+            sourceIDs: ["source"],
+            isAuthoritativelyReported: true
+        )
+        let forecastTime = Date().addingTimeInterval(3_600)
+        let model = AppModel(repository: CacheThenFailureRepository(snapshot: snapshot, timeline: makeTimeline()))
+        model.snapshot = snapshot
+        model.timeline = GridTimeline(
+            sourceResolutionSeconds: 1_800,
+            materialGapSeconds: 2_700,
+            nowBoundary: Date(),
+            samples: [
+                GridTimelineSample(
+                    timestamp: forecastTime,
+                    factClass: .forecast,
+                    demandMW: 24_000,
+                    carbonIntensity: 78,
+                    frequencyHz: nil,
+                    generation: []
+                )
+            ]
+        )
+        model.selectedTime = forecastTime
+
+        let presented = model.presentedSnapshot
+
+        XCTAssertEqual(presented?.demand.factClass, .forecast)
+        XCTAssertEqual(presented?.generation, [])
+        XCTAssertEqual(presented?.interconnectors, [])
+        XCTAssertNil(presented?.activeEvent)
+        XCTAssertEqual(presented?.headline.energyPosition, "Carbon outlook")
+    }
+
     private func makeSnapshot() -> GridSnapshot {
         let timestamp = Date().addingTimeInterval(-600)
         let source = SourceReference(id: "source", name: "Elexon", dataset: "test", observedAt: timestamp, retrievedAt: timestamp, cadenceSeconds: 60)
@@ -69,4 +113,3 @@ private actor CacheThenFailureRepository: GridRepository {
     func currentSnapshot() async throws -> GridSnapshot { throw GridAPIError.transport(.notConnectedToInternet) }
     func timeline() async throws -> GridTimeline { throw GridAPIError.transport(.notConnectedToInternet) }
 }
-

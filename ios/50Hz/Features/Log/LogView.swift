@@ -7,12 +7,24 @@ private struct GridMission: Identifiable {
     let symbol: String
 }
 
+private struct ObservedGridMoment: Identifiable {
+    let id: String
+    let symbol: String
+    let color: Color
+    let title: String
+    let time: Date
+    let evidence: String
+}
+
 struct LogView: View {
     @EnvironmentObject private var model: AppModel
     @AppStorage("log.prediction") private var predictionChoice = ""
     @AppStorage("log.mission.clean") private var cleanMissionDone = false
     @AppStorage("log.mission.connector") private var connectorMissionDone = false
     @AppStorage("log.mission.evidence") private var evidenceMissionDone = false
+    @AppStorage("log.prediction.date") private var predictionDate = ""
+    @AppStorage("log.mission.date") private var missionDate = ""
+    @AppStorage("log.participation.days") private var participationDays = ""
 
     private let missions = [
         GridMission(id: "clean", title: "Find today’s cleanest half-hour", detail: "Open the forecast moment on the Live timeline.", symbol: "leaf"),
@@ -35,6 +47,7 @@ struct LogView: View {
         }
         .scrollIndicators(.hidden)
         .gridPageBackground()
+        .onAppear(perform: normalizeDailyState)
     }
 
     private var header: some View {
@@ -46,7 +59,7 @@ struct LogView: View {
                     .accessibilityAddTraits(.isHeader)
                 Spacer()
                 VStack(alignment: .trailing, spacing: 1) {
-                    Text("4")
+                    Text(currentStreak.formatted())
                         .font(.system(.title2, design: .monospaced, weight: .medium))
                         .foregroundStyle(GridTheme.liveCyan)
                     Text("DAY STREAK")
@@ -70,7 +83,7 @@ struct LogView: View {
                     .tracking(0.7)
                     .foregroundStyle(GridTheme.forecastViolet)
                 Spacer()
-                Text("LOCKS 17:30")
+                Text(predictionLocked ? "LOCKED" : "LOCKS 17:45")
                     .font(.caption2)
                     .fontDesign(.monospaced)
                     .foregroundStyle(GridTheme.textTertiary)
@@ -96,7 +109,12 @@ struct LogView: View {
     private func predictionButton(_ label: String, symbol: String) -> some View {
         let selected = predictionChoice == label
         return Button {
-            withAnimation(.snappy(duration: 0.22)) { predictionChoice = label }
+            guard !predictionLocked else { return }
+            withAnimation(.snappy(duration: 0.22)) {
+                predictionChoice = label
+                predictionDate = todayKey
+                registerParticipation()
+            }
         } label: {
             Label(label, systemImage: symbol)
                 .font(.subheadline.weight(.semibold))
@@ -106,6 +124,7 @@ struct LogView: View {
                 .overlay(RoundedRectangle(cornerRadius: 11).stroke(GridTheme.forecastViolet.opacity(selected ? 0 : 0.18), lineWidth: 1))
         }
         .buttonStyle(.plain)
+        .disabled(predictionLocked)
         .accessibilityAddTraits(selected ? .isSelected : [])
     }
 
@@ -125,7 +144,11 @@ struct LogView: View {
 
     private func missionRow(_ mission: GridMission, isDone: Binding<Bool>) -> some View {
         Button {
-            withAnimation(.snappy(duration: 0.2)) { isDone.wrappedValue.toggle() }
+            withAnimation(.snappy(duration: 0.2)) {
+                isDone.wrappedValue.toggle()
+                missionDate = todayKey
+                registerParticipation()
+            }
         } label: {
             HStack(spacing: 13) {
                 Image(systemName: isDone.wrappedValue ? "checkmark.circle.fill" : mission.symbol)
@@ -155,31 +178,106 @@ struct LogView: View {
 
     private var observedMoments: some View {
         VStack(alignment: .leading, spacing: 12) {
-            SectionLabel("Moments observed", trailing: "3 saved")
-            momentRow(symbol: "wind", color: GridTheme.fuel(.wind), title: "Wind took the lead", time: "09:20", evidence: "Observed")
-            momentRow(symbol: "arrow.left.arrow.right", color: GridTheme.fuel(.imports), title: "Britain began exporting", time: "11:40", evidence: "Observed")
-            momentRow(symbol: "sun.max", color: GridTheme.fuel(.solar), title: "Solar reached 6.3 GW", time: "13:10", evidence: "Estimated")
+            SectionLabel("Moments in view", trailing: observedMomentData.isEmpty ? "NONE" : "\(observedMomentData.count) DATA-BACKED")
+            if observedMomentData.isEmpty {
+                Text("No source-backed grid moments are available in the current snapshot or timeline. 50Hz will not invent notebook entries.")
+                    .font(.caption)
+                    .foregroundStyle(GridTheme.textSecondary)
+                    .padding(.vertical, 8)
+            } else {
+                ForEach(observedMomentData) { moment in
+                    momentRow(moment)
+                }
+            }
         }
     }
 
-    private func momentRow(symbol: String, color: Color, title: String, time: String, evidence: String) -> some View {
+    private func momentRow(_ moment: ObservedGridMoment) -> some View {
         HStack(spacing: 13) {
-            Image(systemName: symbol)
+            Image(systemName: moment.symbol)
                 .font(.subheadline)
-                .foregroundStyle(color)
+                .foregroundStyle(moment.color)
                 .frame(width: 34, height: 34)
-                .background(color.opacity(0.09), in: Circle())
+                .background(moment.color.opacity(0.09), in: Circle())
             VStack(alignment: .leading, spacing: 3) {
-                Text(title).font(.subheadline.weight(.medium))
-                Text(evidence).font(.caption2).foregroundStyle(GridTheme.textTertiary)
+                Text(moment.title).font(.subheadline.weight(.medium))
+                Text(moment.evidence).font(.caption2).foregroundStyle(GridTheme.textTertiary)
             }
             Spacer()
-            Text(time)
+            Text(moment.time.formatted(.dateTime.hour().minute()))
                 .font(.caption)
                 .fontDesign(.monospaced)
                 .foregroundStyle(GridTheme.textTertiary)
         }
         .frame(minHeight: 48)
+    }
+
+    private var observedMomentData: [ObservedGridMoment] {
+        var moments: [ObservedGridMoment] = []
+
+        let reportedEvents = model.events.isEmpty
+            ? model.snapshot?.activeEvent.map { [$0] } ?? []
+            : model.events
+        moments.append(contentsOf: reportedEvents.prefix(2).map { event in
+            ObservedGridMoment(
+                id: "event-\(event.id)",
+                symbol: "exclamationmark.triangle",
+                color: GridTheme.warning,
+                title: event.title,
+                time: event.startedAt,
+                evidence: event.evidenceClass.capitalized
+            )
+        })
+
+        if let snapshot = model.snapshot,
+           let leader = snapshot.generation.max(by: { $0.megawatts < $1.megawatts }) {
+            moments.append(
+                ObservedGridMoment(
+                    id: "leader-\(snapshot.timestamp.timeIntervalSince1970)-\(leader.fuel.rawValue)",
+                    symbol: leader.fuel == .wind ? "wind" : "bolt",
+                    color: GridTheme.fuel(leader.fuel),
+                    title: "\(leader.fuel.displayName) leads at \((leader.megawatts / 1_000).formatted(.number.precision(.fractionLength(1)))) GW",
+                    time: snapshot.timestamp,
+                    evidence: leader.factClass.rawValue.capitalized
+                )
+            )
+        }
+
+        if let snapshot = model.snapshot, !snapshot.interconnectors.isEmpty {
+            let net = snapshot.interconnectors.reduce(0) { $0 + $1.megawatts }
+            let direction = net > 0 ? "Net imports" : (net < 0 ? "Net exports" : "Net interchange")
+            moments.append(
+                ObservedGridMoment(
+                    id: "interconnectors-\(snapshot.timestamp.timeIntervalSince1970)",
+                    symbol: "arrow.left.arrow.right",
+                    color: GridTheme.fuel(.imports),
+                    title: "\(direction) at \(abs(Int(net.rounded())).formatted()) MW",
+                    time: snapshot.timestamp,
+                    evidence: "Observed flows"
+                )
+            )
+        }
+
+        if let solarHigh = model.timeline?.samples
+            .filter({ $0.factClass != .forecast })
+            .compactMap({ sample -> (GridTimelineSample, FuelReading)? in
+                guard let solar = sample.generation.first(where: { $0.fuel == .solar }), solar.megawatts > 0 else { return nil }
+                return (sample, solar)
+            })
+            .max(by: { $0.1.megawatts < $1.1.megawatts }) {
+            moments.append(
+                ObservedGridMoment(
+                    id: "solar-high-\(solarHigh.0.timestamp.timeIntervalSince1970)",
+                    symbol: "sun.max",
+                    color: GridTheme.fuel(.solar),
+                    title: "Solar timeline high: \((solarHigh.1.megawatts / 1_000).formatted(.number.precision(.fractionLength(1)))) GW",
+                    time: solarHigh.0.timestamp,
+                    evidence: solarHigh.1.factClass.rawValue.capitalized
+                )
+            )
+        }
+
+        return Array(moments.prefix(5))
     }
 
     private var notebookNote: some View {
@@ -188,6 +286,64 @@ struct LogView: View {
             Text("Your notebook is stored locally. Streaks reward taking part and learning—not only correct predictions.")
                 .font(.caption2)
                 .foregroundStyle(GridTheme.textTertiary)
+        }
+    }
+
+    private var britishCalendar: Calendar {
+        var calendar = Calendar(identifier: .gregorian)
+        calendar.timeZone = TimeZone(identifier: "Europe/London") ?? .current
+        return calendar
+    }
+
+    private var todayKey: String { dayKey(Date()) }
+
+    private var predictionLocked: Bool {
+        let components = britishCalendar.dateComponents([.year, .month, .day], from: Date())
+        guard let day = britishCalendar.date(from: components),
+              let lock = britishCalendar.date(bySettingHour: 17, minute: 45, second: 0, of: day) else { return false }
+        return Date() >= lock
+    }
+
+    private var currentStreak: Int {
+        let participated = Set(participationDays.split(separator: ",").map(String.init))
+        guard !participated.isEmpty else { return 0 }
+        var cursor = Date()
+        if !participated.contains(dayKey(cursor)) {
+            guard let yesterday = britishCalendar.date(byAdding: .day, value: -1, to: cursor),
+                  participated.contains(dayKey(yesterday)) else { return 0 }
+            cursor = yesterday
+        }
+
+        var count = 0
+        while participated.contains(dayKey(cursor)) {
+            count += 1
+            guard let previous = britishCalendar.date(byAdding: .day, value: -1, to: cursor) else { break }
+            cursor = previous
+        }
+        return count
+    }
+
+    private func dayKey(_ date: Date) -> String {
+        let components = britishCalendar.dateComponents([.year, .month, .day], from: date)
+        return String(format: "%04d-%02d-%02d", components.year ?? 0, components.month ?? 0, components.day ?? 0)
+    }
+
+    private func registerParticipation() {
+        var days = Set(participationDays.split(separator: ",").map(String.init))
+        days.insert(todayKey)
+        participationDays = days.sorted().suffix(90).joined(separator: ",")
+    }
+
+    private func normalizeDailyState() {
+        if predictionDate != todayKey {
+            predictionChoice = ""
+            predictionDate = todayKey
+        }
+        if missionDate != todayKey {
+            cleanMissionDone = false
+            connectorMissionDone = false
+            evidenceMissionDone = false
+            missionDate = todayKey
         }
     }
 }

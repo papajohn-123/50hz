@@ -129,7 +129,7 @@ struct MeasurementRow: View {
             if let frequency = snapshot.frequency, !isForecast {
                 MeasurementCell(label: "Frequency", value: frequency.formatted(decimals: 2), unit: frequency.unit, state: heldLabel)
             } else {
-                MeasurementCell(label: isForecast ? "Position" : "Frequency", value: isForecast ? "Wind-led" : "—", unit: isForecast ? "FCST" : "unavailable", state: heldLabel)
+                MeasurementCell(label: "Frequency", value: "—", unit: isForecast ? "not forecast" : "unavailable", state: heldLabel)
             }
             MeasurementCell(label: "Demand", value: (snapshot.demand.value / 1_000).formatted(.number.precision(.fractionLength(1))), unit: "GW", state: heldLabel)
             MeasurementCell(label: "Carbon", value: snapshot.carbonIntensity.formatted(), unit: "g/kWh", state: heldLabel)

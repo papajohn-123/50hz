@@ -86,6 +86,106 @@ final class HTTPGridRepositoryTests: XCTestCase {
         }
     }
 
+    func testRegionUsesEncodedPostcodeAndPersistsCacheFirstResponse() async throws {
+        let directory = temporaryDirectory()
+        defer { try? FileManager.default.removeItem(at: directory) }
+        let response = Data(
+            """
+            {
+              "name":"London","postcode":"SW1A","carbonIntensity":82,"nationalCarbonIntensity":106,"rating":"low",
+              "cleanestWindowStart":"2026-07-12T01:00:00Z","cleanestWindowEnd":"2026-07-12T02:00:00Z",
+              "chargingWindowStart":"2026-07-12T01:00:00Z","chargingWindowEnd":"2026-07-12T02:00:00Z",
+              "forecastIssuedAt":"2026-07-11T14:00:00Z",
+              "source":{"id":"neso-regional","name":"NESO Carbon Intensity","dataset":"regional","observedAt":"2026-07-11T14:00:00Z","retrievedAt":"2026-07-11T14:01:00Z","cadenceSeconds":1800}
+            }
+            """.utf8
+        )
+        let lock = NSLock()
+        var requestedURL: URL?
+        StubURLProtocol.handler = { request in
+            lock.lock(); requestedURL = request.url; lock.unlock()
+            return (
+                HTTPURLResponse(url: request.url!, statusCode: 200, httpVersion: "HTTP/1.1", headerFields: ["ETag": "\"region-v1\""])!,
+                response
+            )
+        }
+        let repository = HTTPGridRepository(
+            baseURL: URL(string: "https://unit.test")!,
+            session: stubSession(),
+            cache: GridDiskCache(directory: directory)
+        )
+
+        let region = try await repository.region(postcode: "sw1a 1aa")
+        let cached = await repository.cachedRegion(postcode: "SW1A 1AA")
+
+        XCTAssertEqual(region.name, "London")
+        XCTAssertEqual(cached?.carbonIntensity, 82)
+        let absoluteURL = lock.withLock { requestedURL?.absoluteString }
+        XCTAssertTrue(absoluteURL?.contains("/v1/regions/SW1A%201AA") == true)
+    }
+
+    func testAskSendsCamelCaseMapContextAndDecodesResolvedCitations() async throws {
+        let response = Data(
+            """
+            {
+              "answer":"Britain is importing 420 MW in the validated snapshot.",
+              "asOf":"2026-07-11T14:00:00Z","freshness":"fresh","evidenceRefs":["elexon-interconnectors"],
+              "citations":[{"sourceID":"elexon-interconnectors","publisher":"Elexon","title":"Interconnector flows","canonicalURL":"https://bmrs.elexon.co.uk/","publishedAt":"2026-07-11T14:00:00Z"}],
+              "limitations":["Flows can change between published observations."],"suggestedQuestions":["Which link is largest?"]
+            }
+            """.utf8
+        )
+        let lock = NSLock()
+        var body: Data?
+        StubURLProtocol.handler = { request in
+            lock.lock(); body = request.httpBody; lock.unlock()
+            return (HTTPURLResponse(url: request.url!, statusCode: 200, httpVersion: "HTTP/1.1", headerFields: nil)!, response)
+        }
+        let repository = HTTPGridRepository(
+            baseURL: URL(string: "https://unit.test")!,
+            session: stubSession(),
+            cache: GridDiskCache(directory: temporaryDirectory())
+        )
+        let mapTime = Date(timeIntervalSince1970: 1_783_779_600)
+
+        let answer = try await repository.ask(AskGridRequest(question: "Are we importing?", mapTime: mapTime, regionCode: nil))
+
+        let sentBody = lock.withLock { body }
+        let sent = try XCTUnwrap(sentBody)
+        let payload = try XCTUnwrap(JSONSerialization.jsonObject(with: sent) as? [String: Any])
+        XCTAssertEqual(payload["question"] as? String, "Are we importing?")
+        XCTAssertNotNil(payload["mapTime"])
+        XCTAssertNil(payload["map_time"])
+        XCTAssertEqual(answer.citations.first?.publisher, "Elexon")
+        XCTAssertEqual(answer.suggestedQuestions, ["Which link is largest?"])
+    }
+
+    func testEventExplanationDecodesOptionalGroundedFields() async throws {
+        let response = Data(
+            """
+            {
+              "eventID":"evt_123","revision":2,
+              "explanation":{"headline":"A unit reported unavailable","plainLanguage":"The operator reported a reduction.","whyItMatters":null,"caveat":"This does not prove another source responded.","evidenceRefs":["remit"],"suggestedQuestions":[]},
+              "citations":[],"model":"openai/test","usedFallback":false
+            }
+            """.utf8
+        )
+        StubURLProtocol.handler = { request in
+            (HTTPURLResponse(url: request.url!, statusCode: 200, httpVersion: "HTTP/1.1", headerFields: nil)!, response)
+        }
+        let repository = HTTPGridRepository(
+            baseURL: URL(string: "https://unit.test")!,
+            session: stubSession(),
+            cache: GridDiskCache(directory: temporaryDirectory())
+        )
+
+        let result = try await repository.eventExplanation(id: "evt_123")
+
+        XCTAssertEqual(result.revision, 2)
+        XCTAssertNil(result.explanation.whyItMatters)
+        XCTAssertEqual(result.explanation.evidenceRefs, ["remit"])
+    }
+
     @MainActor
     func testSharePayloadUsesFractionalFuelContractAndLocalFacts() {
         let snapshot = makeSnapshot()
