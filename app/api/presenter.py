@@ -19,6 +19,7 @@ from app.persistence.reads import (
     CarbonRead,
     CurrentGridRead,
     DemandRead,
+    ForecastRead,
     FrequencyRead,
     GenerationRead,
     GridTimelineRead,
@@ -249,6 +250,30 @@ def _latest_by_bucket[T](
     return result
 
 
+def _latest_forecasts_by_bucket(
+    readings: Iterable[ForecastRead],
+    resolution_seconds: int,
+    *,
+    metric_type: str,
+    series_keys: set[str],
+) -> dict[datetime, ForecastRead]:
+    result: dict[datetime, ForecastRead] = {}
+    normalized_keys = {key.casefold() for key in series_keys}
+    for reading in readings:
+        if reading.metric_type != metric_type:
+            continue
+        if reading.series_key.casefold() not in normalized_keys:
+            continue
+        key = _bucket(reading.valid_from, resolution_seconds)
+        existing = result.get(key)
+        if existing is None or (reading.issued_at, reading.retrieved_at) > (
+            existing.issued_at,
+            existing.retrieved_at,
+        ):
+            result[key] = reading
+    return result
+
+
 def present_timeline(
     read: GridTimelineRead,
     *,
@@ -262,6 +287,18 @@ def present_timeline(
     demand_by_bucket = _latest_by_bucket(read.demand, resolution, lambda item: item.provenance.observed_at)
     frequency_by_bucket = _latest_by_bucket(read.frequency, resolution, lambda item: item.provenance.observed_at)
     carbon_by_bucket = _latest_by_bucket(read.carbon, resolution, lambda item: item.provenance.observed_at)
+    demand_forecasts = _latest_forecasts_by_bucket(
+        read.forecasts,
+        resolution,
+        metric_type="demand",
+        series_keys={"n", "national", "gb"},
+    )
+    carbon_forecasts = _latest_forecasts_by_bucket(
+        read.forecasts,
+        resolution,
+        metric_type="carbon_intensity",
+        series_keys={"gb", "national"},
+    )
 
     samples: list[GridTimelineSample] = []
     latest_demand: DemandRead | None = None
@@ -290,7 +327,13 @@ def present_timeline(
             ((cursor - instant).total_seconds() for instant in timestamps),
             default=material_gap_seconds + 1,
         )
-        if latest_demand and latest_carbon and latest_generation and newest_required_age <= material_gap_seconds:
+        if (
+            cursor <= now_boundary
+            and latest_demand
+            and latest_carbon
+            and latest_generation
+            and newest_required_age <= material_gap_seconds
+        ):
             generation_mw = _aggregate_generation(latest_generation)
             samples.append(
                 GridTimelineSample(
@@ -308,6 +351,28 @@ def present_timeline(
                 )
             )
         cursor += timedelta(seconds=resolution)
+
+    # Forward samples are emitted only when both national demand and carbon are
+    # available for the same bucket.  Generation stays empty: a wind-only feed
+    # is not a complete generation mix and must never be presented as one.
+    forecast_cursor = _bucket(max(read.window_start, now_boundary), resolution)
+    if forecast_cursor <= now_boundary:
+        forecast_cursor += timedelta(seconds=resolution)
+    while forecast_cursor <= end:
+        demand_forecast = demand_forecasts.get(forecast_cursor)
+        carbon_forecast = carbon_forecasts.get(forecast_cursor)
+        if demand_forecast is not None and carbon_forecast is not None:
+            samples.append(
+                GridTimelineSample(
+                    timestamp=forecast_cursor,
+                    fact_class=FactClass.FORECAST,
+                    demand_mw=demand_forecast.value,
+                    carbon_intensity=carbon_forecast.value,
+                    frequency_hz=None,
+                    generation=[],
+                )
+            )
+        forecast_cursor += timedelta(seconds=resolution)
 
     return GridTimelineResponse(
         source_resolution_seconds=resolution,

@@ -1,13 +1,15 @@
 from datetime import UTC, datetime
 
 from app.api.models import MobileFreshness
-from app.api.presenter import present_current
+from app.api.presenter import present_current, present_timeline
 from app.persistence.reads import (
     CarbonRead,
     CurrentGridRead,
     DemandRead,
     FrequencyRead,
+    ForecastRead,
     GenerationRead,
+    GridTimelineRead,
     InterconnectorRead,
     ReadProvenance,
     SourceMetadataRead,
@@ -52,3 +54,66 @@ def test_present_current_aggregates_fuels_and_preserves_import_sign() -> None:
     assert snapshot.interconnectors[0].country_code == "FR"
     assert snapshot.freshness is MobileFreshness.LIVE
     assert abs(sum(item.share for item in snapshot.generation) - 1) < 0.00001
+
+
+def test_timeline_requires_matching_demand_and_carbon_before_showing_forecast() -> None:
+    forecast_time = datetime(2026, 7, 11, 12, 30, tzinfo=UTC)
+
+    def forecast(metric: str, series: str, value: float) -> ForecastRead:
+        return ForecastRead(
+            metric_type=metric,
+            series_key=series,
+            value=value,
+            unit="MW" if metric == "demand" else "gCO2/kWh",
+            valid_from=forecast_time,
+            valid_to=forecast_time.replace(minute=59),
+            issued_at=OBSERVED,
+            published_at=OBSERVED,
+            retrieved_at=NOW,
+            source_id=f"source.{metric}",
+            source_record_id=None,
+            model_name=None,
+            attributes={},
+        )
+
+    read = GridTimelineRead(
+        window_start=OBSERVED,
+        window_end=datetime(2026, 7, 11, 13, 30, tzinfo=UTC),
+        resolution_seconds=1_800,
+        generation=(),
+        demand=(),
+        frequency=(),
+        interconnectors=(),
+        carbon=(),
+        sources=(),
+        forecasts=(
+            forecast("demand", "n", 28_500),
+            forecast("carbon_intensity", "GB", 72),
+            ForecastRead(
+                metric_type="generation",
+                series_key="wind",
+                value=7_200,
+                unit="MW",
+                valid_from=forecast_time,
+                valid_to=None,
+                issued_at=OBSERVED,
+                published_at=OBSERVED,
+                retrieved_at=NOW,
+                source_id="elexon.windfor",
+                source_record_id=None,
+                model_name=None,
+                attributes={"fuelType": "wind"},
+            ),
+        ),
+    )
+
+    timeline = present_timeline(read, now_boundary=NOW)
+
+    assert len(timeline.samples) == 1
+    sample = timeline.samples[0]
+    assert sample.timestamp == forecast_time
+    assert sample.fact_class.value == "forecast"
+    assert sample.demand_mw == 28_500
+    assert sample.carbon_intensity == 72
+    assert sample.frequency_hz is None
+    assert sample.generation == []
