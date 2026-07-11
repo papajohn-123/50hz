@@ -160,17 +160,30 @@ def present_current(
         generation_mw["imports"] = net_import_mw
     frequency_hz = read.frequency.hertz if read.frequency else None
 
-    required_times = [
-        min(item.provenance.observed_at for item in read.generation),
-        read.demand.provenance.observed_at,
-        read.carbon.provenance.observed_at,
+    required_readings = [
+        *read.generation,
+        read.demand,
+        read.carbon,
     ]
     if read.frequency:
-        required_times.append(read.frequency.provenance.observed_at)
-    age_seconds = max(0, int((read.requested_at - min(required_times)).total_seconds()))
+        required_readings.append(read.frequency)
+    required_times = [item.provenance.observed_at for item in required_readings]
+    age_seconds = max(
+        0,
+        int((read.requested_at - min(required_times)).total_seconds()),
+    )
+    source_metadata = _source_map(read.sources)
+    has_stale_required_fact = any(
+        _reading_is_stale(
+            observed_at=item.provenance.observed_at,
+            source=source_metadata.get(item.provenance.source_id),
+            requested_at=read.requested_at,
+        )
+        for item in required_readings
+    )
     if active_event and active_event.severity in {"material", "critical", "important"}:
         freshness = MobileFreshness.CRITICAL
-    elif age_seconds > 30 * 60:
+    elif has_stale_required_fact:
         freshness = MobileFreshness.STALE
     else:
         freshness = MobileFreshness.LIVE
@@ -227,6 +240,20 @@ def present_current(
         active_event=active_event,
         sources=sources,
     )
+
+
+def _reading_is_stale(
+    *,
+    observed_at: datetime,
+    source: SourceMetadataRead | None,
+    requested_at: datetime,
+) -> bool:
+    cadence_seconds = source.expected_cadence_seconds if source else 300
+    # Interval facts such as INDO and carbon are timestamped at period start,
+    # then published after the period.  Two cadences plus a five-minute grace
+    # captures that contract while still making minute feeds stale promptly.
+    stale_after_seconds = max(600, cadence_seconds * 2 + 300)
+    return (requested_at - observed_at).total_seconds() > stale_after_seconds
 
 
 def _bucket(time: datetime, resolution_seconds: int) -> datetime:

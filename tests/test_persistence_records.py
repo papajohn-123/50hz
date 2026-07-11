@@ -36,6 +36,16 @@ def test_source_metadata_is_dataset_scoped_and_provider_normalized() -> None:
     assert values["attribution"] == "Data supplied by Elexon Limited."
 
 
+def test_indo_metadata_uses_the_source_half_hour_cadence() -> None:
+    values = source_metadata_values(
+        provider="elexon.indo",
+        dataset="INDO",
+        request_url="https://data.elexon.co.uk/bmrs/api/v1/datasets/INDO/stream",
+    )
+
+    assert values["expected_cadence_seconds"] == 1_800
+
+
 def test_long_source_ids_are_stable_and_bounded() -> None:
     first = canonical_source_id("provider", "x" * 100)
     second = canonical_source_id("provider", "x" * 100)
@@ -125,4 +135,3 @@ def test_mapping_rejects_naive_operational_timestamps() -> None:
         map_frequency_record(
             record, source_id="elexon.freq", raw_payload_id=RAW_ID
         )
-

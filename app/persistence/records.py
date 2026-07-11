@@ -58,7 +58,10 @@ SOURCE_PROFILES: dict[str, SourceProfile] = {
 DATASET_CADENCE_SECONDS: dict[tuple[str, str], int] = {
     ("elexon", "FREQ"): 60,
     ("elexon", "FUELINST"): 120,
-    ("elexon", "INDO"): 120,
+    # INDO represents half-hour settlement periods and is published after the
+    # period.  The worker polls more often for low detection latency, but that
+    # polling interval is not the data's actual cadence.
+    ("elexon", "INDO"): 1800,
     ("elexon", "NDF"): 1800,
     ("elexon", "WINDFOR"): 1800,
     ("elexon", "REMIT"): 300,

@@ -69,8 +69,10 @@ def build_headline(
         if net_import_mw > 250
         else "broadly balanced with neighbouring systems"
     )
+    leader_label = leader.replace("_", " ").title()
+    leader_verb = "are" if leader == "imports" else "is"
     interpretation = (
-        f"{leader.replace('_', ' ').title()} is the largest source at {share:.0f}% of generation. "
+        f"{leader_label} {leader_verb} the largest source at {share:.0f}% of generation. "
         f"Britain is {flow_phrase}; demand is {demand_mw / 1_000:.1f} GW."
     )
     return ConditionHeadline(
@@ -79,4 +81,3 @@ def build_headline(
         energy_position=position,
         interpretation=interpretation,
     )
-
