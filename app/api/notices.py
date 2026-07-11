@@ -31,7 +31,12 @@ def reported_notice_to_grid_event(notice: ReportedNoticeRead) -> GridEvent:
         severity = "important"
     else:
         subject = _text(notice.affected_unit) or _text(notice.asset_id) or "Generating unit"
-        title = _text(notice.heading) or f"{subject}: reported unavailability"
+        heading = _text(notice.heading)
+        title = (
+            f"{subject}: reported unavailability"
+            if _is_generic_remit_heading(heading)
+            else heading or f"{subject}: reported unavailability"
+        )
         severity = _remit_severity(notice.unavailable_capacity_mw)
         if (
             notice.unavailable_capacity_mw is not None
@@ -92,3 +97,15 @@ def _format_megawatts(value: float) -> str:
 def _text(value: str | None) -> str | None:
     stripped = value.strip() if value else ""
     return stripped or None
+
+
+def _is_generic_remit_heading(value: str | None) -> bool:
+    if value is None:
+        return True
+    normalized = " ".join(value.casefold().replace("-", " ").split())
+    return normalized in {
+        "remit",
+        "remit information",
+        "unavailability",
+        "unavailability information",
+    }

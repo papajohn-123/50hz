@@ -20,6 +20,8 @@ def notice(
     kind: str = "remit_unavailability",
     revision: int = 1,
     unavailable_mw: float | None = 504,
+    heading: str | None = None,
+    affected_unit: str | None = None,
 ) -> ReportedNoticeRead:
     return ReportedNoticeRead(
         id=f"row-{revision}",
@@ -32,10 +34,10 @@ def notice(
         retrieved_at=NOW - timedelta(minutes=1),
         event_start=NOW - timedelta(hours=1) if kind == "remit_unavailability" else None,
         event_end=NOW + timedelta(hours=1) if kind == "remit_unavailability" else None,
-        heading="Unit unavailability" if kind == "remit_unavailability" else None,
+        heading=(heading or "Unit unavailability") if kind == "remit_unavailability" else None,
         event_type="Unavailability" if kind == "remit_unavailability" else None,
         event_status="Active" if kind == "remit_unavailability" else None,
-        affected_unit="Example Unit 1" if kind == "remit_unavailability" else None,
+        affected_unit=(affected_unit or "Example Unit 1") if kind == "remit_unavailability" else None,
         asset_id="asset-1" if kind == "remit_unavailability" else None,
         fuel_type="nuclear" if kind == "remit_unavailability" else None,
         normal_capacity_mw=610 if kind == "remit_unavailability" else None,
@@ -83,6 +85,14 @@ def test_negative_capacity_field_is_not_presented_as_negative_unavailability() -
     assert event.severity == "info"
     assert "-12 MW" not in event.summary
     assert "do not state a positive unavailable amount" in event.summary
+
+
+def test_generic_remit_heading_uses_the_affected_unit_as_the_public_title() -> None:
+    event = reported_notice_to_grid_event(
+        notice(heading="REMIT Information", affected_unit="DRAXX-4")
+    )
+
+    assert event.title == "DRAXX-4: reported unavailability"
 
 
 class NoticeRepository:
