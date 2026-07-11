@@ -98,11 +98,11 @@ def test_source_aware_poll_and_overlap_policy() -> None:
             timedelta(minutes=10),
         ),
         "neso.carbon.national.current": (
-            timedelta(minutes=15),
+            timedelta(minutes=5),
             timedelta(minutes=5),
         ),
         "neso.carbon.regional.london": (
-            timedelta(minutes=15),
+            timedelta(minutes=5),
             timedelta(minutes=5),
         ),
         "neso.carbon.national.forecast": (
@@ -184,4 +184,3 @@ def test_owned_bundle_creates_distinct_clients_and_closes_as_one_lifecycle() -> 
             assert len(bundle.schedules) == 11
 
     asyncio.run(scenario())
-

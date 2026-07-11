@@ -155,12 +155,14 @@ def build_production_schedules(
             reconcile_every=timedelta(hours=1),
             reconcile_lookback=timedelta(hours=48),
         ),
-        # NESO Carbon Intensity values cover half-hour periods.  The current
-        # endpoints need no historic reconciliation because they expose one slot.
+        # NESO Carbon Intensity values cover half-hour periods but actuals can
+        # appear close to the freshness boundary. A five-minute poll prevents a
+        # normally delayed publication from making the app flap stale for much
+        # of every half-hour. These current endpoints return only one slot.
         PollSchedule(
             job_id="neso.carbon.national.current",
             adapter=NationalCarbonCurrentAdapter(carbon_client),
-            cadence=timedelta(minutes=15),
+            cadence=timedelta(minutes=5),
             overlap=timedelta(minutes=5),
             initial_lookback=timedelta(minutes=30),
             max_incremental_lookback=timedelta(hours=2),
@@ -170,7 +172,7 @@ def build_production_schedules(
         PollSchedule(
             job_id="neso.carbon.regional.london",
             adapter=LondonCarbonIntensityAdapter(carbon_client),
-            cadence=timedelta(minutes=15),
+            cadence=timedelta(minutes=5),
             overlap=timedelta(minutes=5),
             initial_lookback=timedelta(minutes=30),
             max_incremental_lookback=timedelta(hours=2),
@@ -277,4 +279,3 @@ def _floor_half_hour(value: datetime) -> datetime:
     value = value.astimezone(UTC)
     minute = 30 if value.minute >= 30 else 0
     return value.replace(minute=minute, second=0, microsecond=0)
-
