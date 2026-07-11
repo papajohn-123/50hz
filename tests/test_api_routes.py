@@ -9,6 +9,7 @@ from app.persistence.reads import (
     CurrentGridRead,
     DemandRead,
     FrequencyRead,
+    ForecastRead,
     GenerationRead,
     GridTimelineRead,
     InterconnectorRead,
@@ -75,6 +76,16 @@ class FakeRepository:
         as_of: datetime | None = None,
         warning_fresh_for_seconds: int = 900,
     ) -> tuple[ReportedNoticeRead, ...]:
+        return ()
+
+    async def get_carbon_forecast(
+        self,
+        *,
+        region_code: str,
+        window_start: datetime,
+        window_end: datetime,
+        issued_before: datetime | None = None,
+    ) -> tuple[ForecastRead, ...]:
         return ()
 
 
@@ -165,3 +176,13 @@ def test_sources_route_exposes_attribution() -> None:
     app.dependency_overrides.clear()
     assert response.status_code == 200
     assert response.json()[0]["attribution"]
+
+
+def test_daily_game_route_uses_live_data_availability_contract() -> None:
+    with client() as test_client:
+        response = test_client.get("/v1/game/today")
+    app.dependency_overrides.clear()
+
+    assert response.status_code == 200
+    assert len(response.json()["missions"]) == 3
+    assert isinstance(response.json()["source_fresh"], bool)

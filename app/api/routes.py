@@ -6,6 +6,7 @@ from fastapi import APIRouter, Depends, HTTPException, Query, status
 from app.api.dependencies import get_grid_read_repository, get_regional_carbon_provider
 from app.api.models import (
     GridEvent,
+    MobileFreshness,
     GridSnapshotResponse,
     GridTimelineResponse,
     RegionResponse,
@@ -146,18 +147,31 @@ async def daily_game(repository: Repository) -> DailyGame:
     now = datetime.now(UTC)
     try:
         current = await repository.get_current(as_of=now)
-        required = [
-            *(reading.provenance.observed_at for reading in current.generation),
-            *(value.provenance.observed_at for value in (current.demand, current.carbon) if value),
-        ]
-        source_fresh = bool(required) and now - min(required) <= timedelta(minutes=30)
+        notices = await repository.get_active_notices(as_of=now)
+        events = present_reported_notices(notices)
+        snapshot = present_current(
+            current,
+            active_event=events[0] if events else None,
+        )
+        source_fresh = snapshot.freshness not in {
+            MobileFreshness.STALE,
+            MobileFreshness.OFFLINE,
+        }
+        forecasts = await repository.get_carbon_forecast(
+            region_code="GB",
+            window_start=now,
+            window_end=now + timedelta(hours=48),
+            issued_before=now,
+        )
     except Exception:
         source_fresh = False
+        events = []
+        forecasts = ()
     return build_daily_game(
         now=now,
         source_fresh=source_fresh,
-        has_forecast=False,
-        has_events=False,
+        has_forecast=bool(forecasts),
+        has_events=bool(events),
     )
 
 
