@@ -49,7 +49,7 @@ class Provider:
 
 
 @pytest.mark.asyncio
-async def test_ask_runs_bounded_tool_then_returns_cited_answer() -> None:
+async def test_ask_uses_server_citation_when_model_emits_unknown_ref() -> None:
     calls = 0
 
     def handler(request: httpx.Request) -> httpx.Response:
@@ -80,7 +80,7 @@ async def test_ask_runs_bounded_tool_then_returns_cited_answer() -> None:
             "answer": "National demand is 38,400 MW.",
             "as_of": NOW.isoformat(),
             "freshness": "fresh",
-            "evidence_refs": ["elexon"],
+            "evidence_refs": ["model-invented-source"],
             "limitations": [],
             "suggested_questions": ["How has demand changed?"],
         }
