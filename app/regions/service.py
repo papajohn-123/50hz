@@ -11,6 +11,9 @@ from app.sources.neso_carbon import PostcodeCarbonIntensityAdapter, normalize_ou
 from app.sources.types import CarbonIntensityRecord, DataClassification, ObservationWindow
 
 
+MAX_REGIONAL_LAG = timedelta(minutes=90)
+
+
 class RegionalDataUnavailableError(RuntimeError):
     pass
 
@@ -85,14 +88,22 @@ def _current_record(
     as_of: datetime,
 ) -> CarbonIntensityRecord | None:
     current = [record for record in records if record.period_start <= as_of < record.period_end]
-    if not current:
+    candidates = current
+    if not candidates:
+        candidates = [
+            record
+            for record in records
+            if record.period_end <= as_of
+            and as_of - record.period_end <= MAX_REGIONAL_LAG
+        ]
+    if not candidates:
         return None
     # An actual and forecast may describe the same slot.  Prefer the actual fact.
     return sorted(
-        current,
+        candidates,
         key=lambda record: (
+            record.period_end,
             record.classification is DataClassification.OBSERVED,
-            record.period_start,
         ),
         reverse=True,
     )[0]

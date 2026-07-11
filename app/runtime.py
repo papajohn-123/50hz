@@ -1,7 +1,7 @@
 import asyncio
 from contextlib import asynccontextmanager
 from dataclasses import dataclass
-from datetime import timedelta
+from datetime import UTC, datetime, timedelta
 
 from fastapi import FastAPI
 
@@ -18,6 +18,7 @@ class WorkerRuntime:
     stop_event: asyncio.Event
     task: asyncio.Task[None]
     clients: tuple[AsyncJSONClient, ...]
+    started_at: datetime
 
 
 @asynccontextmanager
@@ -54,6 +55,7 @@ async def lifespan(app: FastAPI):
             stop_event=stop_event,
             task=task,
             clients=(elexon_client, carbon_client),
+            started_at=datetime.now(UTC),
         )
         app.state.worker_runtime = runtime
     try:

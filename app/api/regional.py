@@ -14,6 +14,7 @@ from app.sources.types import DataClassification
 
 DEFAULT_CHARGING_WINDOW = timedelta(hours=1)
 FORECAST_HORIZON = timedelta(hours=48)
+MAX_REGIONAL_LAG = timedelta(minutes=90)
 
 
 async def present_region(
@@ -88,6 +89,8 @@ async def present_region(
         carbon_intensity=regional.intensity_gco2_kwh,
         national_carbon_intensity=national_intensity,
         rating=regional.rating,
+        regional_period_end=regional.period_end,
+        regional_is_delayed=regional.period_end <= instant,
         cleanest_window_start=cleanest.start,
         cleanest_window_end=cleanest.end,
         charging_window_start=cleanest.start,
@@ -109,7 +112,10 @@ async def _stored_regional_reading(
     series_keys = (postcode, "region-13") if postcode == "SW1A" else (postcode,)
     for series_key in series_keys:
         actual = await repository.get_latest_regional_carbon(series_key, as_of=as_of)
-        if actual is not None and _is_recent(actual.provenance.observed_at, as_of=as_of):
+        if actual is not None and _is_recent_period(
+            actual.provenance.observed_at,
+            as_of=as_of,
+        ):
             return RegionalCarbonReading(
                 postcode=postcode,
                 name="London" if series_key == "region-13" else postcode,
@@ -129,7 +135,7 @@ async def _stored_regional_reading(
             window_end=as_of + timedelta(minutes=30),
             issued_before=as_of,
         )
-        current = _covering_forecast(forecasts, as_of=as_of)
+        current = _covering_or_recent_forecast(forecasts, as_of=as_of)
         if current is not None:
             fallback_name = "London" if series_key == "region-13" else postcode
             return RegionalCarbonReading(
@@ -153,9 +159,12 @@ def _national_current_intensity(
     *,
     as_of: datetime,
 ) -> float | None:
-    if actual is not None and _is_recent(actual.provenance.observed_at, as_of=as_of):
+    if actual is not None and _is_recent_period(
+        actual.provenance.observed_at,
+        as_of=as_of,
+    ):
         return actual.intensity_gco2_kwh
-    current = _covering_forecast(forecasts, as_of=as_of)
+    current = _covering_or_recent_forecast(forecasts, as_of=as_of)
     return current.value if current is not None else None
 
 
@@ -171,6 +180,28 @@ def _covering_forecast(
         and (item.valid_to is None or as_of < item.valid_to)
     ]
     return max(covering, key=lambda item: (item.issued_at, item.retrieved_at), default=None)
+
+
+def _covering_or_recent_forecast(
+    forecasts: tuple[ForecastRead, ...],
+    *,
+    as_of: datetime,
+) -> ForecastRead | None:
+    covering = _covering_forecast(forecasts, as_of=as_of)
+    if covering is not None:
+        return covering
+    recent = [
+        item
+        for item in forecasts
+        if item.valid_to is not None
+        and item.valid_to <= as_of
+        and as_of - item.valid_to <= MAX_REGIONAL_LAG
+    ]
+    return max(
+        recent,
+        key=lambda item: (item.valid_to, item.issued_at, item.retrieved_at),
+        default=None,
+    )
 
 
 def _source_reference(
@@ -199,9 +230,10 @@ def _rating(intensity: float) -> str:
     return "very high"
 
 
-def _is_recent(observed_at: datetime, *, as_of: datetime) -> bool:
-    age = as_of - observed_at
-    return timedelta(0) <= age <= timedelta(hours=1)
+def _is_recent_period(observed_at: datetime, *, as_of: datetime) -> bool:
+    period_end = observed_at + timedelta(minutes=30)
+    lag = as_of - period_end
+    return lag < timedelta(0) or lag <= MAX_REGIONAL_LAG
 
 
 def _ceil_half_hour(value: datetime) -> datetime:

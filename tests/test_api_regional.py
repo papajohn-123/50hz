@@ -11,8 +11,9 @@ from app.persistence.reads import (
     SourceMetadataRead,
 )
 from app.regions import RegionalCarbonReading
+from app.regions.service import _current_record
 from app.sources.exceptions import SourceUnavailableError
-from app.sources.types import DataClassification
+from app.sources.types import CarbonIntensityRecord, DataClassification
 
 
 def ceil_half_hour(value: datetime) -> datetime:
@@ -116,18 +117,24 @@ class RegionRepository:
 
 
 class RegionProvider:
-    def __init__(self) -> None:
+    def __init__(self, *, period_lag: timedelta | None = None) -> None:
         self.calls = 0
+        self.period_lag = period_lag
 
     async def fetch(self, postcode: str, *, as_of: datetime) -> RegionalCarbonReading:
         self.calls += 1
+        period_end = (
+            as_of - self.period_lag
+            if self.period_lag is not None
+            else as_of + timedelta(minutes=25)
+        )
         return RegionalCarbonReading(
             postcode=postcode,
             name="London",
             intensity_gco2_kwh=81,
             rating="low",
-            period_start=as_of - timedelta(minutes=5),
-            period_end=as_of + timedelta(minutes=25),
+            period_start=period_end - timedelta(minutes=30),
+            period_end=period_end,
             retrieved_at=as_of,
             source_id=f"neso.carbon.postcode.{postcode}",
             dataset="carbon_intensity_regional",
@@ -162,6 +169,7 @@ def test_postcode_route_falls_back_to_bounded_regional_provider() -> None:
     assert payload["postcode"] == "SW1A"
     assert payload["carbonIntensity"] == 81
     assert payload["nationalCarbonIntensity"] == 88
+    assert payload["regionalIsDelayed"] is False
     assert payload["chargingWindowEnd"] > payload["chargingWindowStart"]
     assert payload["source"]["id"] == "neso.carbon.postcode.SW1A"
     assert provider.calls == 1
@@ -178,6 +186,37 @@ def test_postcode_route_prefers_recent_stored_region() -> None:
     assert payload["carbonIntensity"] == 72
     assert payload["source"]["id"] == "neso.carbon.regional"
     assert provider.calls == 0
+
+
+def test_recently_ended_regional_period_is_returned_as_delayed_source_data() -> None:
+    now = datetime(2026, 7, 11, 13, 49, tzinfo=UTC)
+    record = CarbonIntensityRecord(
+        source_key="regional:lagged",
+        period_start=now - timedelta(minutes=49),
+        period_end=now - timedelta(minutes=19),
+        retrieved_at=now,
+        intensity_g_co2_per_kwh=74,
+        classification=DataClassification.FORECAST,
+        index="low",
+        region_name="London",
+        postcode="SW1A",
+    )
+
+    assert _current_record((record,), as_of=now) == record
+    assert _current_record(
+        (record,),
+        as_of=now + timedelta(hours=2),
+    ) is None
+
+
+def test_region_contract_marks_a_recently_ended_period_as_delayed() -> None:
+    provider = RegionProvider(period_lag=timedelta(minutes=19))
+
+    status, payload = request(RegionRepository(), provider, "/v1/regions/SW1A")
+
+    assert status == 200
+    assert payload["regionalIsDelayed"] is True
+    assert payload["regionalPeriodEnd"] < payload["forecastIssuedAt"]
 
 
 def test_invalid_postcode_is_422_without_upstream_lookup() -> None:

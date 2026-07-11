@@ -697,7 +697,11 @@ def _latest_frequency_statement(as_of: datetime) -> Select:
     )
 
 
-def _latest_interconnector_statement(as_of: datetime) -> Select:
+def _latest_interconnector_statement(
+    as_of: datetime,
+    *,
+    max_age: timedelta = timedelta(minutes=30),
+) -> Select:
     rank = func.row_number().over(
         partition_by=InterconnectorObservation.connector_code,
         order_by=(
@@ -708,7 +712,10 @@ def _latest_interconnector_statement(as_of: datetime) -> Select:
     ).label("observation_rank")
     ranked = (
         select(InterconnectorObservation, rank)
-        .where(InterconnectorObservation.observed_at <= as_of)
+        .where(
+            InterconnectorObservation.observed_at <= as_of,
+            InterconnectorObservation.observed_at >= as_of - max_age,
+        )
         .subquery()
     )
     latest = aliased(InterconnectorObservation, ranked)
@@ -818,7 +825,7 @@ def _notice_is_active(
     if notice.notice_kind == "system_warning":
         return (
             notice.published_at <= as_of
-            and notice.retrieved_at >= as_of - warning_fresh_for
+            and notice.published_at >= as_of - warning_fresh_for
         )
     if notice.notice_kind != "remit_unavailability":
         return False

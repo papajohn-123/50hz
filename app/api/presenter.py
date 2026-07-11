@@ -83,7 +83,7 @@ def _source_reference(
     )
 
 
-def _aggregate_generation(readings: Iterable[GenerationRead]) -> dict[str, float]:
+def aggregate_generation(readings: Iterable[GenerationRead]) -> dict[str, float]:
     result: dict[str, float] = defaultdict(float)
     for reading in readings:
         result[_mobile_fuel(reading.fuel_type)] += max(0.0, reading.megawatts)
@@ -152,16 +152,20 @@ def present_current(
     retrieved_at = read.retrieved_at
     if effective_at is None or retrieved_at is None:
         raise GridDataUnavailableError("Grid observations have no usable timestamps")
-    generation_mw = _aggregate_generation(read.generation)
-    previous = previous_generation_mw or {}
-    changes = {fuel: value - previous.get(fuel, value) for fuel, value in generation_mw.items()}
+    generation_mw = aggregate_generation(read.generation)
     net_import_mw = sum(flow.megawatts for flow in read.interconnectors)
     if net_import_mw > 0:
         generation_mw["imports"] = net_import_mw
+    previous = previous_generation_mw or {}
+    changes = {
+        fuel: value - previous.get(fuel, value)
+        for fuel, value in generation_mw.items()
+    }
     frequency_hz = read.frequency.hertz if read.frequency else None
 
     required_readings = [
         *read.generation,
+        *read.interconnectors,
         read.demand,
         read.carbon,
     ]
@@ -181,7 +185,11 @@ def present_current(
         )
         for item in required_readings
     )
-    if active_event and active_event.severity in {"material", "critical", "important"}:
+    # Reported plant unavailability and general SYSWARN publications remain
+    # visible events, but they do not by themselves mean the live national
+    # system is in a critical state. Only an explicitly classified critical
+    # incident may promote the whole instrument to its red state.
+    if active_event and active_event.severity == "critical":
         freshness = MobileFreshness.CRITICAL
     elif has_stale_required_fact:
         freshness = MobileFreshness.STALE
@@ -361,7 +369,7 @@ def present_timeline(
             and latest_generation
             and newest_required_age <= material_gap_seconds
         ):
-            generation_mw = _aggregate_generation(latest_generation)
+            generation_mw = aggregate_generation(latest_generation)
             samples.append(
                 GridTimelineSample(
                     timestamp=cursor,

@@ -137,6 +137,8 @@ class RegionResponse(MobileModel):
     carbon_intensity: float = Field(ge=0)
     national_carbon_intensity: float = Field(ge=0)
     rating: str
+    regional_period_end: AwareDatetime
+    regional_is_delayed: bool
     cleanest_window_start: AwareDatetime
     cleanest_window_end: AwareDatetime
     charging_window_start: AwareDatetime

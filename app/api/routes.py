@@ -13,7 +13,12 @@ from app.api.models import (
     SourceMetadataResponse,
 )
 from app.api.notices import present_reported_notices
-from app.api.presenter import GridDataUnavailableError, present_current, present_timeline
+from app.api.presenter import (
+    GridDataUnavailableError,
+    aggregate_generation,
+    present_current,
+    present_timeline,
+)
 from app.api.regional import present_region
 from app.game.models import DailyGame
 from app.game.service import build_daily_game
@@ -35,10 +40,24 @@ RegionalProvider = Annotated[
 async def current_grid(repository: Repository) -> GridSnapshotResponse:
     try:
         read = await repository.get_current()
+        previous_at = read.requested_at - timedelta(hours=1)
+        previous_generation = aggregate_generation(
+            await repository.get_latest_generation(as_of=previous_at)
+        )
+        previous_net_import = sum(
+            flow.megawatts
+            for flow in await repository.get_latest_interconnectors(as_of=previous_at)
+        )
+        if previous_net_import > 0:
+            previous_generation["imports"] = previous_net_import
         events = present_reported_notices(
             await repository.get_active_notices(as_of=read.requested_at)
         )
-        return present_current(read, active_event=events[0] if events else None)
+        return present_current(
+            read,
+            active_event=events[0] if events else None,
+            previous_generation_mw=previous_generation,
+        )
     except GridDataUnavailableError as error:
         raise HTTPException(
             status_code=status.HTTP_503_SERVICE_UNAVAILABLE,

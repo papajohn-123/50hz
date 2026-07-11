@@ -136,11 +136,16 @@ def remit(revision: int = 4, *, status: str = "Active") -> RemitUnavailabilityRe
     )
 
 
-def warning(text: str, *, retrieved_at: datetime = NOW) -> SystemWarningRecord:
+def warning(
+    text: str,
+    *,
+    retrieved_at: datetime = NOW,
+    published_at: datetime | None = None,
+) -> SystemWarningRecord:
     digest = hashlib.sha256(f"System Warning\0{text}".encode()).hexdigest()
     return SystemWarningRecord(
         source_key=f"elexon:SYSWARN:{NOW.isoformat()}:{digest[:16]}",
-        published_at=NOW - timedelta(minutes=5),
+        published_at=published_at or NOW - timedelta(minutes=5),
         retrieved_at=retrieved_at,
         warning_type="System Warning",
         warning_text=text,
@@ -363,7 +368,11 @@ def test_forecast_and_active_notice_reads_are_source_neutral() -> None:
     cancelled = reported_notice(remit(revision=5, status="Cancelled"), external_id="mrid-2")
     fresh_warning = reported_notice_from_warning(warning("A current warning"))
     stale_warning = reported_notice_from_warning(
-        warning("An old warning", retrieved_at=NOW - timedelta(hours=1))
+        warning(
+            "An old warning",
+            retrieved_at=NOW,
+            published_at=NOW - timedelta(hours=1),
+        )
     )
     notice_session = FakeSession(
         [FakeResult([active_remit, cancelled, fresh_warning, stale_warning])]

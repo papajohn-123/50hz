@@ -55,6 +55,7 @@ async def test_ask_uses_server_citation_when_model_emits_unknown_ref() -> None:
     def handler(request: httpx.Request) -> httpx.Response:
         nonlocal calls
         calls += 1
+        assert json.loads(request.content)["provider"] == {"zdr": True}
         if calls == 1:
             return httpx.Response(
                 200,
@@ -151,6 +152,54 @@ async def test_daily_budget_counts_every_openrouter_round_trip() -> None:
 
 
 @pytest.mark.asyncio
+async def test_ask_rejects_causality_without_an_explicit_reported_cause() -> None:
+    client = OpenRouterAskClient(
+        api_key="temporary",
+        model="test",
+        base_url="https://openrouter.test",
+        public_base_url="https://50hz.test",
+        timeout_seconds=1,
+        budget=DailyCallBudget(1),
+        provider=Provider(),
+    )
+    envelope = EvidenceEnvelope(
+        as_of=NOW,
+        freshness="fresh",
+        evidence_class="observed",
+        facts=[
+            EvidenceFact(
+                fact_id="wind",
+                metric="wind_mw",
+                label="wind generation",
+                value=5_000,
+                unit="MW",
+                observed_at=NOW,
+                source_record_ids=["fuelinst:1"],
+            )
+        ],
+        source_refs={
+            "elexon": SourceCitation(
+                source_id="elexon",
+                publisher="Elexon",
+                title="Generation mix",
+                canonical_url="https://bmrs.elexon.co.uk/",
+            )
+        },
+    )
+    content = json.dumps(
+        {
+            "answer": "Wind rose because a nuclear outage caused it.",
+            "evidence_refs": ["elexon"],
+            "suggested_questions": [],
+        }
+    )
+
+    with pytest.raises(AskUnavailableError, match="unsupported causal claim"):
+        client._validate_final(content, [envelope], AskRequest(question="Why did wind rise?"))
+    await client.close()
+
+
+@pytest.mark.asyncio
 async def test_ask_rejects_a_number_not_present_in_evidence() -> None:
     calls = 0
 
@@ -202,7 +251,7 @@ async def test_ask_rejects_a_number_not_present_in_evidence() -> None:
         transport=httpx.MockTransport(handler),
     )
     with pytest.raises(AskUnavailableError, match="unsupported numerical claim"):
-        await client.ask(AskRequest(question="What is demand?"))
+        await client.ask(AskRequest(question="Is demand 99,999 MW?"))
     await client.close()
 
 

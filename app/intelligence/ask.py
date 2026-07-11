@@ -124,6 +124,7 @@ _MAX_TOTAL_TOOL_CALLS = 6
 _NUMBER_RE = re.compile(r"(?<![\w])[-+]?\d+(?:,\d{3})*(?:\.\d+)?")
 _FACT_NUMBER_RE = re.compile(r"[-+]?\d+(?:,\d{3})*(?:\.\d+)?")
 _FRESHNESS_ORDER = {"fresh": 0, "delayed": 1, "stale": 2, "unavailable": 3}
+_CAUSAL_PHRASES = (" caused ", " because ", " led to ", " as a result ", " triggered ")
 
 
 def _safe_arguments(name: str, arguments: dict[str, Any]) -> dict[str, Any]:
@@ -217,6 +218,7 @@ class OpenRouterAskClient:
                 "messages": messages,
                 "tools": TOOLS,
                 "tool_choice": "auto",
+                "provider": {"zdr": True},
                 "max_tokens": 700,
             }
             if gathered:
@@ -321,17 +323,21 @@ class OpenRouterAskClient:
             for fact in envelope.facts
         ):
             allowed_numbers.add(Decimal("50"))
-        # Repeating a range supplied by the user (for example, "24 hours") is
-        # safe, while introducing a new grid number is not.
-        allowed_numbers.update(
-            number
-            for raw in _NUMBER_RE.findall(request.question)
-            if (number := _normalise_number(raw)) is not None
-        )
         for raw in _NUMBER_RE.findall(authored.answer):
             number = _normalise_number(raw)
             if number not in allowed_numbers:
                 raise AskUnavailableError("The answer contains an unsupported numerical claim")
+
+        lowered_answer = f" {authored.answer.casefold()} "
+        has_reported_cause = any(
+            fact.metric == "reported_cause" and str(fact.value).strip()
+            for envelope in envelopes
+            for fact in envelope.facts
+        )
+        if not has_reported_cause and any(
+            phrase in lowered_answer for phrase in _CAUSAL_PHRASES
+        ):
+            raise AskUnavailableError("The answer contains an unsupported causal claim")
 
         as_of = min(envelope.as_of for envelope in envelopes)
         freshness = max(

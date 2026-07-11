@@ -1,3 +1,4 @@
+import json
 from datetime import UTC, datetime
 
 import httpx
@@ -91,6 +92,7 @@ def test_validation_allows_time_tokens_present_in_string_evidence() -> None:
 @pytest.mark.asyncio
 async def test_client_falls_back_on_invalid_model_output() -> None:
     def handler(request: httpx.Request) -> httpx.Response:
+        assert json.loads(request.content)["provider"] == {"zdr": True}
         return httpx.Response(
             200,
             json={

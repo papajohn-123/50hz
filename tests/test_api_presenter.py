@@ -56,9 +56,15 @@ def test_present_current_aggregates_fuels_and_preserves_import_sign() -> None:
             source("neso.carbon-national", "CARBON"),
         ),
     )
-    snapshot = present_current(read)
+    snapshot = present_current(
+        read,
+        previous_generation_mw={"gas": 2_000, "wind": 3_500, "imports": 500},
+    )
     gas = next(reading for reading in snapshot.generation if reading.fuel == "gas")
+    imports = next(reading for reading in snapshot.generation if reading.fuel == "imports")
     assert gas.megawatts == 2_500
+    assert gas.change_one_hour == 500
+    assert imports.change_one_hour == 200
     assert snapshot.interconnectors[0].megawatts == 700
     assert snapshot.interconnectors[0].country_code == "FR"
     assert snapshot.freshness is MobileFreshness.LIVE

@@ -46,6 +46,7 @@ class OpenRouterExplanationClient:
         schema = GroundedExplanation.model_json_schema()
         payload = {
             "model": self.model,
+            "provider": {"zdr": True},
             "messages": [
                 {
                     "role": "system",
@@ -84,4 +85,3 @@ class OpenRouterExplanationClient:
             )
         except (httpx.HTTPError, KeyError, TypeError, ValueError, json.JSONDecodeError, ExplanationValidationError):
             return ExplanationResult(explanation=fallback, model="deterministic", used_fallback=True)
-

@@ -77,6 +77,14 @@ def test_system_warning_sorts_ahead_of_small_unavailability() -> None:
     assert events[0].severity == "important"
 
 
+def test_negative_capacity_field_is_not_presented_as_negative_unavailability() -> None:
+    event = reported_notice_to_grid_event(notice(unavailable_mw=-12))
+
+    assert event.severity == "info"
+    assert "-12 MW" not in event.summary
+    assert "do not state a positive unavailable amount" in event.summary
+
+
 class NoticeRepository:
     async def get_active_notices(self, **_: object) -> tuple[ReportedNoticeRead, ...]:
         return (notice(),)

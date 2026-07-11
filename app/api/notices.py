@@ -33,9 +33,17 @@ def reported_notice_to_grid_event(notice: ReportedNoticeRead) -> GridEvent:
         subject = _text(notice.affected_unit) or _text(notice.asset_id) or "Generating unit"
         title = _text(notice.heading) or f"{subject}: reported unavailability"
         severity = _remit_severity(notice.unavailable_capacity_mw)
-        if notice.unavailable_capacity_mw is not None:
+        if (
+            notice.unavailable_capacity_mw is not None
+            and notice.unavailable_capacity_mw > 0
+        ):
             capacity = _format_megawatts(notice.unavailable_capacity_mw)
             summary = f"{subject} has a reported unavailability of {capacity} MW."
+        elif notice.unavailable_capacity_mw is not None:
+            summary = (
+                f"{subject} has a reported unavailability notice. "
+                "Its capacity fields do not state a positive unavailable amount."
+            )
         else:
             summary = f"{subject} has a reported unavailability."
         if cause := _text(notice.reported_cause):
@@ -68,6 +76,8 @@ def present_reported_notices(notices: tuple[ReportedNoticeRead, ...]) -> list[Gr
 def _remit_severity(unavailable_capacity_mw: float | None) -> str:
     if unavailable_capacity_mw is None:
         return "notable"
+    if unavailable_capacity_mw <= 0:
+        return "info"
     if unavailable_capacity_mw >= 500:
         return "important"
     if unavailable_capacity_mw >= 100:

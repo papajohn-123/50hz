@@ -53,6 +53,16 @@ class FakeRepository:
     async def get_current(self, *, as_of: datetime | None = None, carbon_region: str = "GB") -> CurrentGridRead:
         return self.current(as_of or RETRIEVED)
 
+    async def get_latest_generation(
+        self, *, as_of: datetime | None = None
+    ) -> tuple[GenerationRead, ...]:
+        return self.current(as_of or RETRIEVED).generation
+
+    async def get_latest_interconnectors(
+        self, *, as_of: datetime | None = None
+    ) -> tuple[InterconnectorRead, ...]:
+        return self.current(as_of or RETRIEVED).interconnectors
+
     async def get_timeline(self, *, window_start: datetime, window_end: datetime, resolution_seconds: int, carbon_region: str = "GB") -> GridTimelineRead:
         current = self.current(window_end)
         return GridTimelineRead(
@@ -152,7 +162,7 @@ def test_current_route_includes_highest_priority_reported_event() -> None:
     event = response.json()["activeEvent"]
     assert event["title"] == "System Warning"
     assert event["evidenceClass"] == "reported"
-    assert response.json()["freshness"] == "critical"
+    assert response.json()["freshness"] == "live"
 
 
 def test_timeline_route_accepts_native_query_contract() -> None:
