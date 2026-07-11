@@ -34,20 +34,59 @@ jobs:
       - name: Select an available iOS simulator
         id: simulator
         run: |
-          udid="$(xcrun simctl list devices available -j | python3 -c 'import json,sys; data=json.load(sys.stdin); print(next(device["udid"] for runtime,devices in data["devices"].items() if "SimRuntime.iOS-" in runtime for device in devices if device.get("isAvailable")))')"
+          xcrun simctl list devices available -j > /tmp/50hz-simulators.json
+          udid="$(python3 - <<'PY'
+          import json
+          import re
+
+          with open('/tmp/50hz-simulators.json', encoding='utf-8') as handle:
+              data = json.load(handle)
+          candidates = []
+          for runtime, devices in data['devices'].items():
+              match = re.search(r'SimRuntime\.iOS-(\d+(?:-\d+)*)$', runtime)
+              if match is None:
+                  continue
+              version = tuple(int(part) for part in match.group(1).split('-'))
+              for device in devices:
+                  if device.get('isAvailable'):
+                      candidates.append((version, device['name'].startswith('iPhone'), device['udid']))
+          if not candidates:
+              raise SystemExit('No available iOS simulator')
+          print(max(candidates)[2])
+          PY
+          )"
           test -n "$udid"
           echo "udid=$udid" >> "$GITHUB_OUTPUT"
+          xcrun simctl boot "$udid"
+          xcrun simctl bootstatus "$udid" -b
       - name: Run iOS unit tests
-        run: >-
-          xcodebuild -quiet
-          -project ios/50Hz.xcodeproj
-          -scheme 50Hz
-          -configuration Debug
-          -sdk iphonesimulator
-          -destination 'platform=iOS Simulator,id=${{ steps.simulator.outputs.udid }}'
-          -derivedDataPath /tmp/50hz-derived
-          CODE_SIGNING_ALLOWED=NO
-          test
+        run: |
+          set -o pipefail
+          set +e
+          xcodebuild \
+            -project ios/50Hz.xcodeproj \
+            -scheme 50Hz \
+            -configuration Debug \
+            -sdk iphonesimulator \
+            -destination 'platform=iOS Simulator,id=${{ steps.simulator.outputs.udid }}' \
+            -derivedDataPath /tmp/50hz-derived \
+            -resultBundlePath /tmp/50HzTests.xcresult \
+            CODE_SIGNING_ALLOWED=NO \
+            test 2>&1 | tee /tmp/50hz-xcode-test.log
+          status="${PIPESTATUS[0]}"
+          set -e
+          if [ "$status" -ne 0 ]; then
+            diagnostic="$(grep -E '(^| )error:|Test Case .* failed|XCTAssert|Testing failed:' /tmp/50hz-xcode-test.log | tail -20 | tr '\n' ' ' | cut -c1-1800)"
+            echo "::error title=iOS test diagnostics::${diagnostic:-xcodebuild failed without a parsed diagnostic; inspect the test log artifact}"
+            exit "$status"
+          fi
+      - name: Upload iOS test log
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: ios-test-log
+          path: /tmp/50hz-xcode-test.log
+          retention-days: 7
       - name: Build unsigned release archive
         run: >-
           xcodebuild -quiet
