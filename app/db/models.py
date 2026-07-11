@@ -629,3 +629,63 @@ class EventExplanation(Base):
         CheckConstraint("cost_usd IS NULL OR cost_usd >= 0", name="nonnegative_cost"),
         Index("ix_event_explanations_event_generated", "event_id", "generated_at"),
     )
+
+
+class ReportedNoticeExplanation(Base):
+    """Validated LLM copy cached against a stable public notice revision."""
+
+    __tablename__ = "reported_notice_explanations"
+
+    id: Mapped[uuid.UUID] = mapped_column(Uuid, primary_key=True, default=uuid.uuid4)
+    public_event_id: Mapped[str] = mapped_column(String(80), nullable=False)
+    notice_revision_key: Mapped[str] = mapped_column(String(128), nullable=False)
+    notice_revision_number: Mapped[int | None] = mapped_column(Integer)
+    provider: Mapped[str] = mapped_column(String(80), nullable=False)
+    model: Mapped[str] = mapped_column(String(160), nullable=False)
+    prompt_version: Mapped[str] = mapped_column(String(80), nullable=False)
+    locale: Mapped[str] = mapped_column(
+        String(20), nullable=False, default="en-GB", server_default="en-GB"
+    )
+    status: Mapped[str] = mapped_column(String(32), nullable=False)
+    explanation: Mapped[str | None] = mapped_column(Text)
+    structured_response: Mapped[dict[str, Any] | None] = mapped_column(JSON_DOCUMENT)
+    error: Mapped[dict[str, Any] | None] = mapped_column(JSON_DOCUMENT)
+    input_tokens: Mapped[int | None] = mapped_column(Integer)
+    output_tokens: Mapped[int | None] = mapped_column(Integer)
+    cost_usd: Mapped[Decimal | None] = mapped_column(Numeric(12, 8))
+    generated_at: Mapped[datetime] = mapped_column(
+        DateTime(timezone=True), nullable=False, server_default=func.now()
+    )
+
+    __table_args__ = (
+        UniqueConstraint(
+            "public_event_id",
+            "notice_revision_key",
+            "provider",
+            "model",
+            "prompt_version",
+            "locale",
+            name="uq_reported_notice_explanation_cache_key",
+        ),
+        CheckConstraint(
+            "notice_revision_number IS NULL OR notice_revision_number > 0",
+            name="positive_notice_explanation_revision_number",
+        ),
+        CheckConstraint(
+            "input_tokens IS NULL OR input_tokens >= 0",
+            name="nonnegative_notice_explanation_input_tokens",
+        ),
+        CheckConstraint(
+            "output_tokens IS NULL OR output_tokens >= 0",
+            name="nonnegative_notice_explanation_output_tokens",
+        ),
+        CheckConstraint(
+            "cost_usd IS NULL OR cost_usd >= 0",
+            name="nonnegative_notice_explanation_cost",
+        ),
+        Index(
+            "ix_reported_notice_explanations_event_generated",
+            "public_event_id",
+            "generated_at",
+        ),
+    )

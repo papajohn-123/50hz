@@ -127,6 +127,9 @@ class _NoEventResult:
 
 
 class _NoEventSession:
+    def __init__(self):
+        self.added = []
+
     async def __aenter__(self):
         return self
 
@@ -135,6 +138,15 @@ class _NoEventSession:
 
     async def execute(self, statement):
         return _NoEventResult()
+
+    def add(self, row):
+        self.added.append(row)
+
+    async def commit(self):
+        return None
+
+    async def rollback(self):
+        return None
 
 
 def _reported_notice(cause: str | None) -> ReportedNoticeRead:
