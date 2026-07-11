@@ -122,7 +122,7 @@ actor HTTPGridRepository: GridRepository {
     }
 
     func cachedRegion(postcode: String) async -> RegionalGridContext? {
-        let key = GridCacheKey.region(postcode)
+        let key = GridCacheKey.region(Self.normalizedPostcode(postcode))
         guard let entry = await cache.entry(for: key) else { return nil }
         do {
             return try GridJSON.decoder.decode(RegionalGridContext.self, from: entry.data)

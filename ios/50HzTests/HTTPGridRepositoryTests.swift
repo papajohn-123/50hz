@@ -142,7 +142,7 @@ final class HTTPGridRepositoryTests: XCTestCase {
         let lock = NSLock()
         var body: Data?
         StubURLProtocol.handler = { request in
-            lock.lock(); body = request.httpBody; lock.unlock()
+            lock.lock(); body = request.materializedHTTPBody; lock.unlock()
             return (HTTPURLResponse(url: request.url!, statusCode: 200, httpVersion: "HTTP/1.1", headerFields: nil)!, response)
         }
         let repository = HTTPGridRepository(
@@ -162,6 +162,14 @@ final class HTTPGridRepositoryTests: XCTestCase {
         XCTAssertNil(payload["map_time"])
         XCTAssertEqual(answer.citations.first?.publisher, "Elexon")
         XCTAssertEqual(answer.suggestedQuestions, ["Which link is largest?"])
+    }
+
+    func testTransportAssertionMaterializesStreamedRequestBody() throws {
+        let expected = Data("{\"question\":\"Are we importing?\"}".utf8)
+        var request = URLRequest(url: URL(string: "https://unit.test/v1/ask")!)
+        request.httpBodyStream = InputStream(data: expected)
+
+        XCTAssertEqual(request.materializedHTTPBody, expected)
     }
 
     func testDailyGameUsesBackendRouteAndPersistsCache() async throws {
@@ -310,4 +318,23 @@ private final class StubURLProtocol: URLProtocol {
     }
 
     override func stopLoading() {}
+}
+
+private extension URLRequest {
+    var materializedHTTPBody: Data? {
+        if let httpBody { return httpBody }
+        guard let httpBodyStream else { return nil }
+
+        httpBodyStream.open()
+        defer { httpBodyStream.close() }
+
+        var data = Data()
+        var buffer = [UInt8](repeating: 0, count: 4_096)
+        while true {
+            let count = httpBodyStream.read(&buffer, maxLength: buffer.count)
+            if count < 0 { return nil }
+            if count == 0 { return data }
+            data.append(contentsOf: buffer.prefix(count))
+        }
+    }
 }
