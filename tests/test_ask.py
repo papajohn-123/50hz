@@ -55,7 +55,9 @@ async def test_ask_uses_server_citation_when_model_emits_unknown_ref() -> None:
     def handler(request: httpx.Request) -> httpx.Response:
         nonlocal calls
         calls += 1
-        assert json.loads(request.content)["provider"] == {"zdr": True}
+        request_body = json.loads(request.content)
+        assert request_body["provider"] == {"zdr": True}
+        assert "Prefer exact evidence values" in request_body["messages"][0]["content"]
         if calls == 1:
             return httpx.Response(
                 200,
@@ -102,6 +104,93 @@ async def test_ask_uses_server_citation_when_model_emits_unknown_ref() -> None:
     assert calls == 2
     assert answer.evidence_refs == ["elexon"]
     assert answer.citations[0].source_id == "elexon"
+
+
+def power_envelope() -> EvidenceEnvelope:
+    return EvidenceEnvelope(
+        as_of=NOW,
+        freshness="fresh",
+        evidence_class="observed",
+        facts=[
+            EvidenceFact(
+                fact_id="wind",
+                metric="wind_mw",
+                label="wind generation",
+                value=7_188,
+                unit="MW",
+                observed_at=NOW,
+                source_record_ids=["fuelinst:wind:1"],
+            )
+        ],
+        source_refs={
+            "elexon": SourceCitation(
+                source_id="elexon",
+                publisher="Elexon",
+                title="Generation mix",
+                canonical_url="https://bmrs.elexon.co.uk/",
+            )
+        },
+    )
+
+
+@pytest.mark.asyncio
+async def test_ask_allows_deterministically_rounded_megawatt_to_gigawatt_value() -> None:
+    client = OpenRouterAskClient(
+        api_key="temporary",
+        model="test",
+        base_url="https://openrouter.test",
+        public_base_url="https://50hz.test",
+        timeout_seconds=1,
+        budget=DailyCallBudget(1),
+        provider=Provider(),
+    )
+    content = json.dumps(
+        {
+            "answer": "Wind is generating 7.2 GW.",
+            "suggested_questions": [],
+        }
+    )
+
+    result = client._validate_final(
+        content,
+        [power_envelope()],
+        AskRequest(question="What is happening on the grid?"),
+    )
+    await client.close()
+    assert result.answer == "Wind is generating 7.2 GW."
+
+
+@pytest.mark.parametrize(
+    "claim",
+    (
+        "Wind is generating 7.2 MW.",
+        "Wind is generating 7.2 Hz.",
+        "Wind is generating 7.2.",
+        "Wind is generating 7.3 GW.",
+    ),
+)
+@pytest.mark.asyncio
+async def test_ask_rejects_converted_value_with_wrong_unit_or_value(
+    claim: str,
+) -> None:
+    client = OpenRouterAskClient(
+        api_key="temporary",
+        model="test",
+        base_url="https://openrouter.test",
+        public_base_url="https://50hz.test",
+        timeout_seconds=1,
+        budget=DailyCallBudget(1),
+        provider=Provider(),
+    )
+    content = json.dumps({"answer": claim, "suggested_questions": []})
+
+    with pytest.raises(AskUnavailableError, match="unsupported numerical claim"):
+        client._validate_final(
+            content,
+            [power_envelope()],
+            AskRequest(question="What is happening on the grid?"),
+        )
+    await client.close()
 
 
 @pytest.mark.asyncio
