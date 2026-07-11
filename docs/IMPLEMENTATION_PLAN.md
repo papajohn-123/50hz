@@ -27,6 +27,22 @@ The guiding product rule is:
 - User preferences and game progress: stored locally on device
 - Core product remains usable when OpenRouter is unavailable
 
+## UI reference integration
+
+The Claude concept archive supplied on 11 July 2026 is adopted as the visual north star. Its detailed native translation, design tokens, screen states and data-trust corrections are recorded in [UI_DIRECTION.md](UI_DIRECTION.md).
+
+Key decisions added to this plan:
+
+- Four primary tabs: Live, Today, Mine and Log.
+- Ask the Grid is a contextual analysis inspector rather than a fifth tab or generic chatbot.
+- The timeline is the persistent anchor of the Live screen.
+- Cyan denotes observed/live energy, while violet plus texture distinguishes forecast/replay.
+- Loading, stale, offline and critical-event states belong in the first Live milestone.
+- Fuel selection focuses the map and adds a compact history/detail mode.
+- Red is reserved for validated material system events.
+- The concept's approximate Britain canvas will be re-authored as a native stylized vector.
+- Prototype copy and values are illustrative; source cadence, causal claims, regional estimates and forecast availability must come from the data contracts.
+
 ## System architecture
 
 ```text
@@ -94,6 +110,9 @@ This phase lands first because it allows safe parallel development.
 - Define `Codable`, `Sendable` domain models and separate API DTOs.
 - Add a deterministic app clock so live, scrubbed and replay modes are testable.
 - Check in matching snapshot and timeline JSON fixtures.
+- Land the shared design tokens and native component contracts from `UI_DIRECTION.md`.
+- Establish the four-tab shell with a contextual Ask inspector route.
+- Build explicit loading, stale, offline and critical state fixtures.
 
 ### Acceptance gate
 
@@ -101,6 +120,7 @@ This phase lands first because it allows safe parallel development.
 - The iOS app decodes that same fixture.
 - DST and import/export contract tests pass.
 - Each fact contains source, timing, freshness and observed/derived/forecast classification.
+- The app can render every reference state from fixtures without fabricated data.
 
 ## Phase 1 — live national grid
 
@@ -154,6 +174,8 @@ The current endpoint reads a compact denormalized snapshot rather than performin
 - Keep warnings, outages and other discrete facts stepwise.
 - Never interpolate across a material data gap.
 - Clearly mark the boundary between observed and forecast data.
+- Preserve the concept's cyan observed treatment and violet-plus-texture forecast treatment.
+- Replace forecast frequency with metrics that have defensible forecast sources.
 
 ### Acceptance gate
 
@@ -193,6 +215,7 @@ Accessibility is part of the renderer milestone:
 - VoiceOver navigates meaningful assets and events, never particles.
 - Reduce Motion replaces continuous particles with directional strokes.
 - Shape, texture and labels supplement colour.
+- Compact visual chips retain 44-point native hit areas and semantic Dynamic Type styles.
 
 ### Acceptance gate
 
@@ -200,6 +223,8 @@ Accessibility is part of the renderer milestone:
 - The scene remains responsive during scrubbing.
 - Reduce Motion and VoiceOver alternatives are complete.
 - The map explicitly identifies flows as illustrative rather than literal transmission routes.
+- The Live screen matches the hierarchy and interaction states documented in `UI_DIRECTION.md`.
+- Loading, stale, offline and critical-event states pass the same accessibility review as the live state.
 
 ## Phase 3 — carbon, forecasts and personal context
 
@@ -313,6 +338,8 @@ The assistant receives a narrow read-only tool registry, never SQL access:
 - Historical ranking.
 - Source metadata.
 
+The native presentation follows the analysis-inspector concept: bounded answer, evidence rows, freshness, qualification, follow-up prompts and links back to the relevant map time/asset.
+
 Limits:
 
 - Maximum four tool rounds.
@@ -419,7 +446,7 @@ The first implementation session will do the following:
 2. Land the canonical timestamp, provenance and snapshot schemas.
 3. Check in captured Elexon fixtures for generation, demand, frequency and interconnectors.
 4. Add settlement/DST and sign-convention tests.
-5. Create the iOS Xcode project with matching fixture DTOs and a basic dark national-grid screen.
+5. Create the iOS Xcode project with matching fixture DTOs, the adopted design tokens, four-tab shell and Live reference states.
 6. Start the Railway worker as a second service using the same repository/image.
 7. In parallel, implement the first four source adapters and the iOS fixture-driven timeline shell.
 8. Integrate one real end-to-end snapshot and verify it from source through the deployed API into the simulator.
@@ -438,3 +465,4 @@ The initial build milestone is complete when:
 - The UI survives stale/missing data without presenting it as live.
 - Source and observation times are visible.
 - Automated tests cover DST, corrections, gaps and interconnector sign conventions.
+- The native Live hierarchy, fuel-selected mode, forecast treatment and failure states conform to `UI_DIRECTION.md`.
