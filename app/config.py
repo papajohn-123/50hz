@@ -5,7 +5,10 @@ from pydantic_settings import BaseSettings, SettingsConfigDict
 
 class Settings(BaseSettings):
     app_env: str = "development"
+    service_role: str = "api"
     database_url: str | None = None
+    elexon_base_url: str = "https://data.elexon.co.uk/bmrs/api/v1"
+    carbon_intensity_base_url: str = "https://api.carbonintensity.org.uk"
     openrouter_api_key: str | None = None
     openrouter_model: str = "openai/gpt-5.4-mini"
     openrouter_base_url: str = "https://openrouter.ai/api/v1"
