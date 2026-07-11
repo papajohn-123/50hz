@@ -149,7 +149,7 @@ class SourceMetadataResponse(MobileModel):
     id: str
     publisher: str
     dataset: str
-    documentation_url: str
+    documentation_url: str | None = None
     licence_url: str | None = None
     attribution: str
     expected_cadence_seconds: int
