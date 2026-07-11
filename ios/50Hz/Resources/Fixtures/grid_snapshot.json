@@ -1,0 +1,82 @@
+{
+  "timestamp": "2026-07-11T14:00:00Z",
+  "retrievedAt": "2026-07-11T14:01:00Z",
+  "freshness": "live",
+  "freshnessAgeSeconds": 60,
+  "headline": {
+    "cleanliness": "Clean",
+    "balance": "Comfortable",
+    "energyPosition": "Exporting",
+    "interpretation": "Strong wind is carrying the afternoon while Britain sends a modest surplus to its neighbours."
+  },
+  "frequency": {
+    "value": 50.02,
+    "unit": "Hz",
+    "factClass": "observed",
+    "sourceID": "elexon-freq"
+  },
+  "demand": {
+    "value": 29800,
+    "unit": "MW",
+    "factClass": "observed",
+    "sourceID": "elexon-indo"
+  },
+  "carbonIntensity": {
+    "value": 118,
+    "unit": "gCO2/kWh",
+    "factClass": "estimated",
+    "sourceID": "neso-carbon"
+  },
+  "generation": [
+    { "fuel": "wind", "megawatts": 10500, "share": 0.318, "changeOneHour": 610, "rank": 1, "factClass": "observed" },
+    { "fuel": "gas", "megawatts": 8700, "share": 0.264, "changeOneHour": -350, "rank": 2, "factClass": "observed" },
+    { "fuel": "nuclear", "megawatts": 5500, "share": 0.167, "changeOneHour": 20, "rank": 3, "factClass": "observed" },
+    { "fuel": "solar", "megawatts": 4300, "share": 0.130, "changeOneHour": -280, "rank": 4, "factClass": "estimated" },
+    { "fuel": "biomass", "megawatts": 1800, "share": 0.055, "changeOneHour": 10, "rank": 5, "factClass": "observed" },
+    { "fuel": "imports", "megawatts": 1200, "share": 0.036, "changeOneHour": -240, "rank": 6, "factClass": "observed" },
+    { "fuel": "hydro", "megawatts": 700, "share": 0.021, "changeOneHour": 35, "rank": 7, "factClass": "observed" },
+    { "fuel": "storage", "megawatts": 300, "share": 0.009, "changeOneHour": -90, "rank": 8, "factClass": "observed" }
+  ],
+  "interconnectors": [
+    { "id": "ifa", "name": "IFA", "countryCode": "FR", "megawatts": -800, "factClass": "observed" },
+    { "id": "nsl", "name": "North Sea Link", "countryCode": "NO", "megawatts": 600, "factClass": "observed" },
+    { "id": "britned", "name": "BritNed", "countryCode": "NL", "megawatts": -300, "factClass": "observed" },
+    { "id": "ewic", "name": "East-West", "countryCode": "IE", "megawatts": -500, "factClass": "observed" }
+  ],
+  "activeEvent": null,
+  "sources": [
+    {
+      "id": "elexon-fuelinst",
+      "name": "Elexon Insights",
+      "dataset": "FUELINST",
+      "observedAt": "2026-07-11T14:00:00Z",
+      "retrievedAt": "2026-07-11T14:01:00Z",
+      "cadenceSeconds": 300
+    },
+    {
+      "id": "elexon-freq",
+      "name": "Elexon Insights",
+      "dataset": "FREQ",
+      "observedAt": "2026-07-11T14:00:00Z",
+      "retrievedAt": "2026-07-11T14:01:00Z",
+      "cadenceSeconds": 60
+    },
+    {
+      "id": "elexon-indo",
+      "name": "Elexon Insights",
+      "dataset": "INDO",
+      "observedAt": "2026-07-11T14:00:00Z",
+      "retrievedAt": "2026-07-11T14:01:00Z",
+      "cadenceSeconds": 300
+    },
+    {
+      "id": "neso-carbon",
+      "name": "NESO Carbon Intensity",
+      "dataset": "National intensity",
+      "observedAt": "2026-07-11T14:00:00Z",
+      "retrievedAt": "2026-07-11T14:01:00Z",
+      "cadenceSeconds": 1800
+    }
+  ]
+}
+

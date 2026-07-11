@@ -1,0 +1,125 @@
+{
+  "sourceResolutionSeconds": 7200,
+  "materialGapSeconds": 9000,
+  "nowBoundary": "2026-07-11T14:00:00Z",
+  "samples": [
+    {
+      "timestamp": "2026-07-11T06:00:00Z", "factClass": "observed", "demandMW": 24200, "carbonIntensity": 144, "frequencyHz": 49.99,
+      "generation": [
+        { "fuel": "wind", "megawatts": 9000, "share": 0.355, "changeOneHour": 100, "rank": 1, "factClass": "observed" },
+        { "fuel": "gas", "megawatts": 6500, "share": 0.256, "changeOneHour": 140, "rank": 2, "factClass": "observed" },
+        { "fuel": "nuclear", "megawatts": 5500, "share": 0.217, "changeOneHour": 0, "rank": 3, "factClass": "observed" },
+        { "fuel": "biomass", "megawatts": 1800, "share": 0.071, "changeOneHour": 20, "rank": 4, "factClass": "observed" },
+        { "fuel": "solar", "megawatts": 800, "share": 0.032, "changeOneHour": 400, "rank": 5, "factClass": "estimated" },
+        { "fuel": "imports", "megawatts": 800, "share": 0.032, "changeOneHour": 0, "rank": 6, "factClass": "observed" },
+        { "fuel": "hydro", "megawatts": 650, "share": 0.026, "changeOneHour": 10, "rank": 7, "factClass": "observed" },
+        { "fuel": "storage", "megawatts": 300, "share": 0.012, "changeOneHour": 100, "rank": 8, "factClass": "observed" }
+      ]
+    },
+    {
+      "timestamp": "2026-07-11T08:00:00Z", "factClass": "observed", "demandMW": 26800, "carbonIntensity": 150, "frequencyHz": 50.00,
+      "generation": [
+        { "fuel": "wind", "megawatts": 9200, "share": 0.325, "changeOneHour": 160, "rank": 1, "factClass": "observed" },
+        { "fuel": "gas", "megawatts": 7600, "share": 0.269, "changeOneHour": 600, "rank": 2, "factClass": "observed" },
+        { "fuel": "nuclear", "megawatts": 5500, "share": 0.194, "changeOneHour": 0, "rank": 3, "factClass": "observed" },
+        { "fuel": "solar", "megawatts": 2200, "share": 0.078, "changeOneHour": 700, "rank": 4, "factClass": "estimated" },
+        { "fuel": "biomass", "megawatts": 1800, "share": 0.064, "changeOneHour": 0, "rank": 5, "factClass": "observed" },
+        { "fuel": "imports", "megawatts": 1100, "share": 0.039, "changeOneHour": 200, "rank": 6, "factClass": "observed" },
+        { "fuel": "hydro", "megawatts": 650, "share": 0.023, "changeOneHour": 0, "rank": 7, "factClass": "observed" },
+        { "fuel": "storage", "megawatts": 250, "share": 0.009, "changeOneHour": -50, "rank": 8, "factClass": "observed" }
+      ]
+    },
+    {
+      "timestamp": "2026-07-11T10:00:00Z", "factClass": "observed", "demandMW": 29200, "carbonIntensity": 139, "frequencyHz": 50.01,
+      "generation": [
+        { "fuel": "wind", "megawatts": 9800, "share": 0.306, "changeOneHour": 320, "rank": 1, "factClass": "observed" },
+        { "fuel": "gas", "megawatts": 8200, "share": 0.256, "changeOneHour": 300, "rank": 2, "factClass": "observed" },
+        { "fuel": "nuclear", "megawatts": 5500, "share": 0.172, "changeOneHour": 0, "rank": 3, "factClass": "observed" },
+        { "fuel": "solar", "megawatts": 4500, "share": 0.141, "changeOneHour": 900, "rank": 4, "factClass": "estimated" },
+        { "fuel": "biomass", "megawatts": 1800, "share": 0.056, "changeOneHour": 0, "rank": 5, "factClass": "observed" },
+        { "fuel": "imports", "megawatts": 1200, "share": 0.038, "changeOneHour": 40, "rank": 6, "factClass": "observed" },
+        { "fuel": "hydro", "megawatts": 700, "share": 0.022, "changeOneHour": 20, "rank": 7, "factClass": "observed" },
+        { "fuel": "storage", "megawatts": 300, "share": 0.009, "changeOneHour": 0, "rank": 8, "factClass": "observed" }
+      ]
+    },
+    {
+      "timestamp": "2026-07-11T12:00:00Z", "factClass": "observed", "demandMW": 30300, "carbonIntensity": 125, "frequencyHz": 49.98,
+      "generation": [
+        { "fuel": "wind", "megawatts": 10100, "share": 0.286, "changeOneHour": 100, "rank": 1, "factClass": "observed" },
+        { "fuel": "gas", "megawatts": 8500, "share": 0.241, "changeOneHour": 150, "rank": 2, "factClass": "observed" },
+        { "fuel": "solar", "megawatts": 6300, "share": 0.178, "changeOneHour": 700, "rank": 3, "factClass": "estimated" },
+        { "fuel": "nuclear", "megawatts": 5500, "share": 0.156, "changeOneHour": 0, "rank": 4, "factClass": "observed" },
+        { "fuel": "biomass", "megawatts": 1800, "share": 0.051, "changeOneHour": 0, "rank": 5, "factClass": "observed" },
+        { "fuel": "imports", "megawatts": 1300, "share": 0.037, "changeOneHour": 30, "rank": 6, "factClass": "observed" },
+        { "fuel": "hydro", "megawatts": 700, "share": 0.020, "changeOneHour": 0, "rank": 7, "factClass": "observed" },
+        { "fuel": "storage", "megawatts": 1100, "share": 0.031, "changeOneHour": 200, "rank": 8, "factClass": "observed" }
+      ]
+    },
+    {
+      "timestamp": "2026-07-11T14:00:00Z", "factClass": "observed", "demandMW": 29800, "carbonIntensity": 118, "frequencyHz": 50.02,
+      "generation": [
+        { "fuel": "wind", "megawatts": 10500, "share": 0.318, "changeOneHour": 610, "rank": 1, "factClass": "observed" },
+        { "fuel": "gas", "megawatts": 8700, "share": 0.264, "changeOneHour": -350, "rank": 2, "factClass": "observed" },
+        { "fuel": "nuclear", "megawatts": 5500, "share": 0.167, "changeOneHour": 20, "rank": 3, "factClass": "observed" },
+        { "fuel": "solar", "megawatts": 4300, "share": 0.130, "changeOneHour": -280, "rank": 4, "factClass": "estimated" },
+        { "fuel": "biomass", "megawatts": 1800, "share": 0.055, "changeOneHour": 10, "rank": 5, "factClass": "observed" },
+        { "fuel": "imports", "megawatts": 1200, "share": 0.036, "changeOneHour": -240, "rank": 6, "factClass": "observed" },
+        { "fuel": "hydro", "megawatts": 700, "share": 0.021, "changeOneHour": 35, "rank": 7, "factClass": "observed" },
+        { "fuel": "storage", "megawatts": 300, "share": 0.009, "changeOneHour": -90, "rank": 8, "factClass": "observed" }
+      ]
+    },
+    {
+      "timestamp": "2026-07-11T16:00:00Z", "factClass": "forecast", "demandMW": 31200, "carbonIntensity": 111, "frequencyHz": null,
+      "generation": [
+        { "fuel": "wind", "megawatts": 11700, "share": 0.344, "changeOneHour": 600, "rank": 1, "factClass": "forecast" },
+        { "fuel": "gas", "megawatts": 8500, "share": 0.250, "changeOneHour": -100, "rank": 2, "factClass": "forecast" },
+        { "fuel": "nuclear", "megawatts": 5500, "share": 0.162, "changeOneHour": 0, "rank": 3, "factClass": "forecast" },
+        { "fuel": "solar", "megawatts": 3000, "share": 0.088, "changeOneHour": -650, "rank": 4, "factClass": "forecast" },
+        { "fuel": "biomass", "megawatts": 1800, "share": 0.053, "changeOneHour": 0, "rank": 5, "factClass": "forecast" },
+        { "fuel": "imports", "megawatts": 2100, "share": 0.062, "changeOneHour": 300, "rank": 6, "factClass": "forecast" },
+        { "fuel": "hydro", "megawatts": 800, "share": 0.024, "changeOneHour": 50, "rank": 7, "factClass": "forecast" },
+        { "fuel": "storage", "megawatts": 600, "share": 0.018, "changeOneHour": 150, "rank": 8, "factClass": "forecast" }
+      ]
+    },
+    {
+      "timestamp": "2026-07-11T18:00:00Z", "factClass": "forecast", "demandMW": 35800, "carbonIntensity": 124, "frequencyHz": null,
+      "generation": [
+        { "fuel": "wind", "megawatts": 12600, "share": 0.332, "changeOneHour": 450, "rank": 1, "factClass": "forecast" },
+        { "fuel": "gas", "megawatts": 10100, "share": 0.266, "changeOneHour": 800, "rank": 2, "factClass": "forecast" },
+        { "fuel": "nuclear", "megawatts": 5500, "share": 0.145, "changeOneHour": 0, "rank": 3, "factClass": "forecast" },
+        { "fuel": "biomass", "megawatts": 1900, "share": 0.050, "changeOneHour": 50, "rank": 4, "factClass": "forecast" },
+        { "fuel": "imports", "megawatts": 2800, "share": 0.074, "changeOneHour": 350, "rank": 5, "factClass": "forecast" },
+        { "fuel": "solar", "megawatts": 1200, "share": 0.032, "changeOneHour": -900, "rank": 6, "factClass": "forecast" },
+        { "fuel": "hydro", "megawatts": 900, "share": 0.024, "changeOneHour": 50, "rank": 7, "factClass": "forecast" },
+        { "fuel": "storage", "megawatts": 2900, "share": 0.077, "changeOneHour": 1000, "rank": 8, "factClass": "forecast" }
+      ]
+    },
+    {
+      "timestamp": "2026-07-11T20:00:00Z", "factClass": "forecast", "demandMW": 33700, "carbonIntensity": 104, "frequencyHz": null,
+      "generation": [
+        { "fuel": "wind", "megawatts": 14200, "share": 0.397, "changeOneHour": 800, "rank": 1, "factClass": "forecast" },
+        { "fuel": "gas", "megawatts": 8200, "share": 0.229, "changeOneHour": -950, "rank": 2, "factClass": "forecast" },
+        { "fuel": "nuclear", "megawatts": 5500, "share": 0.154, "changeOneHour": 0, "rank": 3, "factClass": "forecast" },
+        { "fuel": "imports", "megawatts": 2800, "share": 0.078, "changeOneHour": 0, "rank": 4, "factClass": "forecast" },
+        { "fuel": "biomass", "megawatts": 1900, "share": 0.053, "changeOneHour": 0, "rank": 5, "factClass": "forecast" },
+        { "fuel": "hydro", "megawatts": 900, "share": 0.025, "changeOneHour": 0, "rank": 6, "factClass": "forecast" },
+        { "fuel": "storage", "megawatts": 2200, "share": 0.061, "changeOneHour": -350, "rank": 7, "factClass": "forecast" },
+        { "fuel": "solar", "megawatts": 100, "share": 0.003, "changeOneHour": -550, "rank": 8, "factClass": "forecast" }
+      ]
+    },
+    {
+      "timestamp": "2026-07-11T22:00:00Z", "factClass": "forecast", "demandMW": 28900, "carbonIntensity": 96, "frequencyHz": null,
+      "generation": [
+        { "fuel": "wind", "megawatts": 15100, "share": 0.459, "changeOneHour": 450, "rank": 1, "factClass": "forecast" },
+        { "fuel": "gas", "megawatts": 6000, "share": 0.182, "changeOneHour": -1100, "rank": 2, "factClass": "forecast" },
+        { "fuel": "nuclear", "megawatts": 5500, "share": 0.167, "changeOneHour": 0, "rank": 3, "factClass": "forecast" },
+        { "fuel": "imports", "megawatts": 2600, "share": 0.079, "changeOneHour": -100, "rank": 4, "factClass": "forecast" },
+        { "fuel": "biomass", "megawatts": 1900, "share": 0.058, "changeOneHour": 0, "rank": 5, "factClass": "forecast" },
+        { "fuel": "hydro", "megawatts": 900, "share": 0.027, "changeOneHour": 0, "rank": 6, "factClass": "forecast" },
+        { "fuel": "storage", "megawatts": 900, "share": 0.027, "changeOneHour": -650, "rank": 7, "factClass": "forecast" },
+        { "fuel": "solar", "megawatts": 0, "share": 0.000, "changeOneHour": -50, "rank": 8, "factClass": "forecast" }
+      ]
+    }
+  ]
+}
+

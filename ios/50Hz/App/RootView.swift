@@ -1,0 +1,95 @@
+import SwiftUI
+
+struct RootView: View {
+    @EnvironmentObject private var model: AppModel
+
+    var body: some View {
+        TabView(selection: $model.selectedTab) {
+            LiveView()
+                .tabItem { Label("Live", systemImage: "waveform.path.ecg") }
+                .tag(AppTab.live)
+
+            TodayView()
+                .tabItem { Label("Today", systemImage: "clock") }
+                .tag(AppTab.today)
+
+            MineView()
+                .tabItem { Label("Mine", systemImage: "location") }
+                .tag(AppTab.mine)
+
+            LogView()
+                .tabItem { Label("Log", systemImage: "book.closed") }
+                .tag(AppTab.log)
+        }
+        .tint(GridTheme.liveCyan)
+        .toolbarBackground(GridTheme.background.opacity(0.96), for: .tabBar)
+        .toolbarBackground(.visible, for: .tabBar)
+        .toolbarColorScheme(.dark, for: .tabBar)
+    }
+}
+
+#if DEBUG
+private struct PreviewRoot: View {
+    @StateObject private var model: AppModel
+    let shouldLoad: Bool
+
+    init(state: FreshnessState = .live, shouldLoad: Bool = true) {
+        _model = StateObject(wrappedValue: AppModel(repository: PreviewGridRepository(state: state)))
+        self.shouldLoad = shouldLoad
+    }
+
+    var body: some View {
+        RootView()
+            .environmentObject(model)
+            .task {
+                if shouldLoad { await model.load() }
+            }
+            .preferredColorScheme(.dark)
+    }
+}
+
+private struct PreviewGridRepository: GridRepository {
+    let state: FreshnessState
+
+    func currentSnapshot() async throws -> GridSnapshot {
+        var snapshot = try await FixtureGridRepository().currentSnapshot()
+        snapshot.freshness = state
+        if state == .stale { snapshot.freshnessAgeSeconds = 17 * 60 }
+        if state == .offline { snapshot.freshnessAgeSeconds = 68 * 60 }
+        if state == .critical {
+            snapshot.activeEvent = GridEvent(
+                id: "preview-critical-event",
+                title: "Reported interconnector outage",
+                summary: "An authoritative REMIT notice reports a 700 MW unavailability on an interconnector.",
+                severity: "material",
+                evidenceClass: "reported outage",
+                startedAt: snapshot.timestamp.addingTimeInterval(-900),
+                sourceIDs: ["remit-preview-441"],
+                isAuthoritativelyReported: true
+            )
+        }
+        return snapshot
+    }
+
+    func timeline() async throws -> GridTimeline {
+        try await FixtureGridRepository().timeline()
+    }
+}
+
+struct RootView_Previews: PreviewProvider {
+    static var previews: some View {
+        Group {
+            PreviewRoot()
+                .previewDisplayName("Live")
+            PreviewRoot(shouldLoad: false)
+                .previewDisplayName("Loading")
+            PreviewRoot(state: .stale)
+                .previewDisplayName("Stale")
+            PreviewRoot(state: .offline)
+                .previewDisplayName("Offline")
+            PreviewRoot(state: .critical)
+                .previewDisplayName("Critical event")
+        }
+    }
+}
+#endif
