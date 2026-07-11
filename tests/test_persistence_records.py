@@ -32,7 +32,7 @@ def test_source_metadata_is_dataset_scoped_and_provider_normalized() -> None:
     assert values["provider"] == "elexon"
     assert values["dataset"] == "FUELINST"
     assert values["base_url"] == "https://data.elexon.co.uk"
-    assert values["expected_cadence_seconds"] == 120
+    assert values["expected_cadence_seconds"] == 300
     assert values["attribution"] == "Data supplied by Elexon Limited."
 
 
