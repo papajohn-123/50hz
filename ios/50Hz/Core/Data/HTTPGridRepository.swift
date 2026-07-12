@@ -2,6 +2,7 @@ import Foundation
 
 enum GridAPIError: LocalizedError, Sendable {
     case invalidBaseURL
+    case invalidPostcode
     case invalidResponse
     case notModifiedWithoutCache
     case responseTooLarge
@@ -14,6 +15,8 @@ enum GridAPIError: LocalizedError, Sendable {
         switch self {
         case .invalidBaseURL:
             return "The 50Hz API address is invalid."
+        case .invalidPostcode:
+            return "Enter a valid UK outward or full postcode."
         case .invalidResponse:
             return "The grid service returned an unreadable response."
         case .notModifiedWithoutCache:
@@ -56,6 +59,7 @@ actor HTTPGridRepository: GridRepository {
         case events
         case dailyGame
         case region(String)
+        case localWindows(postcode: String, durationMinutes: Int)
 
         var cacheKey: GridCacheKey {
             switch self {
@@ -64,6 +68,8 @@ actor HTTPGridRepository: GridRepository {
             case .events: .events
             case .dailyGame: .dailyGame
             case .region(let postcode): .region(postcode)
+            case .localWindows(let postcode, let durationMinutes):
+                .localWindows(postcode: postcode, durationMinutes: durationMinutes)
             }
         }
     }
@@ -76,6 +82,7 @@ actor HTTPGridRepository: GridRepository {
     private var eventsTask: Task<[GridEvent], Error>?
     private var dailyGameTask: Task<DailyGame, Error>?
     private var regionTasks: [String: Task<RegionalGridContext, Error>] = [:]
+    private var localWindowsTasks: [LocalWindowsRequest: Task<LocalWindowsResponse, Error>] = [:]
 
     init(
         baseURL: URL = HTTPGridRepository.productionBaseURL,
@@ -122,10 +129,32 @@ actor HTTPGridRepository: GridRepository {
     }
 
     func cachedRegion(postcode: String) async -> RegionalGridContext? {
-        let key = GridCacheKey.region(Self.normalizedPostcode(postcode))
+        guard let outward = PostcodePrivacy.validatedOutwardCode(from: postcode) else { return nil }
+        let key = GridCacheKey.region(outward)
         guard let entry = await cache.entry(for: key) else { return nil }
         do {
             return try GridJSON.decoder.decode(RegionalGridContext.self, from: entry.data)
+        } catch {
+            await cache.remove(key)
+            return nil
+        }
+    }
+
+    func cachedLocalWindows(postcode: String, durationMinutes: Int) async -> LocalWindowsResponse? {
+        guard let outward = PostcodePrivacy.validatedOutwardCode(from: postcode) else { return nil }
+        let request = LocalWindowsRequest(postcode: outward, durationMinutes: durationMinutes)
+        let key = GridCacheKey.localWindows(
+            postcode: request.outwardPostcode,
+            durationMinutes: request.durationMinutes
+        )
+        guard let entry = await cache.entry(for: key) else { return nil }
+        do {
+            let decoded = try GridJSON.decoder.decode(LocalWindowsResponse.self, from: entry.data)
+            guard Self.matches(decoded, request: request) else {
+                await cache.remove(key)
+                return nil
+            }
+            return decoded
         } catch {
             await cache.remove(key)
             return nil
@@ -197,7 +226,9 @@ actor HTTPGridRepository: GridRepository {
     }
 
     func region(postcode: String) async throws -> RegionalGridContext {
-        let normalized = Self.normalizedPostcode(postcode)
+        guard let normalized = PostcodePrivacy.validatedOutwardCode(from: postcode) else {
+            throw GridAPIError.invalidPostcode
+        }
         if let task = regionTasks[normalized] { return try await task.value }
 
         let task = Task<RegionalGridContext, Error> {
@@ -211,6 +242,41 @@ actor HTTPGridRepository: GridRepository {
         }
         regionTasks[normalized] = task
         defer { regionTasks[normalized] = nil }
+
+        return try await withTaskCancellationHandler {
+            try await task.value
+        } onCancel: {
+            task.cancel()
+        }
+    }
+
+    func localWindows(postcode: String, durationMinutes: Int) async throws -> LocalWindowsResponse {
+        guard let outward = PostcodePrivacy.validatedOutwardCode(from: postcode) else {
+            throw GridAPIError.invalidPostcode
+        }
+        let request = LocalWindowsRequest(postcode: outward, durationMinutes: durationMinutes)
+        if let task = localWindowsTasks[request] { return try await task.value }
+
+        let task = Task<LocalWindowsResponse, Error> {
+            let endpoint = Endpoint.localWindows(
+                postcode: request.outwardPostcode,
+                durationMinutes: request.durationMinutes
+            )
+            let response = try await Self.fetch(
+                endpoint: endpoint,
+                requestURL: try Self.localWindowsURL(baseURL: baseURL, request: request),
+                session: session,
+                cache: cache,
+                as: LocalWindowsResponse.self
+            )
+            guard Self.matches(response, request: request) else {
+                await cache.remove(endpoint.cacheKey)
+                throw GridAPIError.decoding("Local window response did not match its request.")
+            }
+            return response
+        }
+        localWindowsTasks[request] = task
+        defer { localWindowsTasks[request] = nil }
 
         return try await withTaskCancellationHandler {
             try await task.value
@@ -307,36 +373,33 @@ actor HTTPGridRepository: GridRepository {
         return url
     }
 
-    private nonisolated static func normalizedPostcode(_ postcode: String) -> String {
-        let value = postcode
-            .trimmingCharacters(in: .whitespacesAndNewlines)
-            .uppercased()
-            .filter { $0.isLetter || $0.isNumber }
-        guard !value.isEmpty else { return "SW1A" }
-
-        // Only the outward code is needed by the NESO endpoint. Strip a valid
-        // inward suffix before constructing the URL so a full postcode does not
-        // enter Railway or upstream HTTP logs.
-        if value.count >= 5 {
-            let suffix = value.suffix(3)
-            let suffixCharacters = Array(suffix)
-            if suffixCharacters[0].isNumber,
-               suffixCharacters[1].isLetter,
-               suffixCharacters[2].isLetter {
-                let outward = String(value.dropLast(3))
-                if outward.range(
-                    of: #"^[A-Z]{1,2}[0-9][A-Z0-9]?$"#,
-                    options: .regularExpression
-                ) != nil {
-                    return outward
-                }
-            }
-        }
-        return value
-    }
-
     private nonisolated static func regionURL(baseURL: URL, postcode: String) -> URL {
         baseURL.appendingPathComponent("v1/regions").appendingPathComponent(postcode)
+    }
+
+    private nonisolated static func localWindowsURL(
+        baseURL: URL,
+        request: LocalWindowsRequest
+    ) throws -> URL {
+        let endpoint = regionURL(
+            baseURL: baseURL,
+            postcode: request.outwardPostcode
+        ).appendingPathComponent("windows")
+        guard var components = URLComponents(url: endpoint, resolvingAgainstBaseURL: false) else {
+            throw GridAPIError.invalidBaseURL
+        }
+        components.queryItems = [
+            URLQueryItem(name: "durationMinutes", value: String(request.durationMinutes))
+        ]
+        guard let url = components.url else { throw GridAPIError.invalidBaseURL }
+        return url
+    }
+
+    private nonisolated static func matches(
+        _ response: LocalWindowsResponse,
+        request: LocalWindowsRequest
+    ) -> Bool {
+        response.matches(request)
     }
 
     private nonisolated static func eventsURL(baseURL: URL) -> URL {
@@ -477,6 +540,31 @@ actor HTTPGridRepository: GridRepository {
 private struct APIErrorBody: Decodable {
     let detail: String?
     let message: String?
+
+    private struct ValidationIssue: Decodable {
+        let msg: String?
+    }
+
+    private enum CodingKeys: String, CodingKey {
+        case detail, message
+    }
+
+    init(from decoder: Decoder) throws {
+        let container = try decoder.container(keyedBy: CodingKeys.self)
+        message = try? container.decode(String.self, forKey: .message)
+        if let text = try? container.decode(String.self, forKey: .detail) {
+            detail = text
+        } else if let issues = try? container.decode([ValidationIssue].self, forKey: .detail) {
+            let messages = issues
+                .compactMap(\.msg)
+                .map { $0.trimmingCharacters(in: .whitespacesAndNewlines) }
+                .filter { !$0.isEmpty }
+                .prefix(2)
+            detail = messages.isEmpty ? nil : messages.joined(separator: " ")
+        } else {
+            detail = nil
+        }
+    }
 
     var safeMessage: String? {
         let raw = detail ?? message

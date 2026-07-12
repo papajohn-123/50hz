@@ -9,8 +9,13 @@ struct GridCacheKey: Hashable, Sendable {
     static let dailyGame = GridCacheKey(rawValue: "game-today")
 
     static func region(_ postcode: String) -> GridCacheKey {
-        let normalized = postcode.lowercased().filter { $0.isLetter || $0.isNumber }
-        return GridCacheKey(rawValue: "region-\(normalized.isEmpty ? "default" : normalized)")
+        let outward = PostcodePrivacy.outwardCode(from: postcode).lowercased()
+        return GridCacheKey(rawValue: "region-\(outward)")
+    }
+
+    static func localWindows(postcode: String, durationMinutes: Int) -> GridCacheKey {
+        let outward = PostcodePrivacy.outwardCode(from: postcode).lowercased()
+        return GridCacheKey(rawValue: "local-windows-\(outward)-\(durationMinutes)")
     }
 }
 

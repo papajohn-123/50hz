@@ -4,11 +4,13 @@ protocol GridRepository: Sendable {
     func cachedSnapshot() async -> GridSnapshot?
     func cachedTimeline() async -> GridTimeline?
     func cachedRegion(postcode: String) async -> RegionalGridContext?
+    func cachedLocalWindows(postcode: String, durationMinutes: Int) async -> LocalWindowsResponse?
     func cachedEvents() async -> [GridEvent]?
     func cachedDailyGame() async -> DailyGame?
     func currentSnapshot() async throws -> GridSnapshot
     func timeline() async throws -> GridTimeline
     func region(postcode: String) async throws -> RegionalGridContext
+    func localWindows(postcode: String, durationMinutes: Int) async throws -> LocalWindowsResponse
     func events() async throws -> [GridEvent]
     func dailyGame() async throws -> DailyGame
     func event(id: String) async throws -> GridEvent
@@ -20,11 +22,16 @@ extension GridRepository {
     func cachedSnapshot() async -> GridSnapshot? { nil }
     func cachedTimeline() async -> GridTimeline? { nil }
     func cachedRegion(postcode: String) async -> RegionalGridContext? { nil }
+    func cachedLocalWindows(postcode: String, durationMinutes: Int) async -> LocalWindowsResponse? { nil }
     func cachedEvents() async -> [GridEvent]? { nil }
     func cachedDailyGame() async -> DailyGame? { nil }
 
     func region(postcode: String) async throws -> RegionalGridContext {
         throw GridRepositoryError.unsupportedFeature("Regional data")
+    }
+
+    func localWindows(postcode: String, durationMinutes: Int) async throws -> LocalWindowsResponse {
+        throw GridRepositoryError.unsupportedFeature("Local flexible-use windows")
     }
 
     func events() async throws -> [GridEvent] { [] }

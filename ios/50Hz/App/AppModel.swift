@@ -27,6 +27,12 @@ final class AppModel: ObservableObject {
     @Published var lastSuccessfulRefreshAt: Date?
     @Published var regionLoadPhase: LoadPhase = .loading
     @Published var regionError: String?
+    @Published var localWindows: LocalWindowsResponse?
+    @Published var localWindowsLoadPhase: LoadPhase = .loading
+    @Published var localWindowsError: String?
+    @Published var localWindowsRequest: LocalWindowsRequest?
+    @Published var localWindowsIsFromCache = false
+    @Published var isRefreshingLocalWindows = false
     @Published var eventsError: String?
     @Published var gameLoadPhase: LoadPhase = .loading
     @Published var gameRefreshError: String?
@@ -146,8 +152,12 @@ final class AppModel: ObservableObject {
     }
 
     func loadRegion(postcode: String) async {
-        let normalized = postcode.trimmingCharacters(in: .whitespacesAndNewlines).uppercased()
-        let requested = normalized.isEmpty ? "SW1A 1AA" : normalized
+        guard let requested = PostcodePrivacy.validatedOutwardCode(from: postcode) else {
+            let message = GridAPIError.invalidPostcode.localizedDescription
+            regionError = message
+            regionLoadPhase = regionalContext == nil ? .failed(message) : .loaded
+            return
+        }
         regionError = nil
 
         if regionalContext?.postcode.caseInsensitiveCompare(requested) != .orderedSame {
@@ -167,6 +177,74 @@ final class AppModel: ObservableObject {
             guard !Task.isCancelled else { return }
             regionError = error.localizedDescription
             regionLoadPhase = regionalContext == nil ? .failed(error.localizedDescription) : .loaded
+        }
+    }
+
+    func loadLocalWindows(postcode: String, durationMinutes: Int) async {
+        guard let outward = PostcodePrivacy.validatedOutwardCode(from: postcode) else {
+            let message = GridAPIError.invalidPostcode.localizedDescription
+            localWindowsError = message
+            localWindowsLoadPhase = localWindows == nil ? .failed(message) : .loaded
+            return
+        }
+        guard (30...720).contains(durationMinutes), durationMinutes.isMultiple(of: 30) else {
+            let message = "Choose a duration from 30 minutes to 12 hours, in 30-minute steps."
+            localWindowsError = message
+            localWindowsLoadPhase = .failed(message)
+            return
+        }
+
+        let request = LocalWindowsRequest(postcode: outward, durationMinutes: durationMinutes)
+        localWindowsRequest = request
+        localWindowsError = nil
+        isRefreshingLocalWindows = true
+        defer {
+            if localWindowsRequest == request {
+                isRefreshingLocalWindows = false
+            }
+        }
+
+        if !Self.matches(localWindows, request: request) {
+            localWindows = nil
+            localWindowsIsFromCache = false
+            localWindowsLoadPhase = .loading
+
+            if let cached = await repository.cachedLocalWindows(
+                postcode: request.outwardPostcode,
+                durationMinutes: request.durationMinutes
+            ) {
+                guard !Task.isCancelled, localWindowsRequest == request else { return }
+                if Self.matches(cached, request: request) {
+                    localWindows = cached
+                    localWindowsIsFromCache = true
+                    localWindowsLoadPhase = .loaded
+                }
+            }
+        } else {
+            localWindowsLoadPhase = .loaded
+        }
+
+        guard !Task.isCancelled, localWindowsRequest == request else { return }
+
+        do {
+            let refreshed = try await repository.localWindows(
+                postcode: request.outwardPostcode,
+                durationMinutes: request.durationMinutes
+            )
+            guard !Task.isCancelled, localWindowsRequest == request else { return }
+            guard Self.matches(refreshed, request: request) else {
+                throw GridAPIError.decoding("Local window response did not match its request.")
+            }
+            localWindows = refreshed
+            localWindowsIsFromCache = false
+            localWindowsLoadPhase = .loaded
+            localWindowsError = nil
+        } catch {
+            guard !Task.isCancelled,
+                  localWindowsRequest == request,
+                  !Self.isCancellation(error) else { return }
+            localWindowsError = error.localizedDescription
+            localWindowsLoadPhase = localWindows == nil ? .failed(error.localizedDescription) : .loaded
         }
     }
 
@@ -363,6 +441,14 @@ final class AppModel: ObservableObject {
         if error is CancellationError { return true }
         if let apiError = error as? GridAPIError, case .cancelled = apiError { return true }
         return false
+    }
+
+    private static func matches(
+        _ response: LocalWindowsResponse?,
+        request: LocalWindowsRequest
+    ) -> Bool {
+        guard let response else { return false }
+        return response.matches(request)
     }
 }
 
