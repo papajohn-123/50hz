@@ -134,7 +134,8 @@ class VerificationReport:
 
     @property
     def exit_code(self) -> int:
-        return 1 if any(item.status is RunStatus.FAILED for item in self.outcomes) else 0
+        incomplete = {RunStatus.FAILED, RunStatus.SKIPPED_LOCKED}
+        return 1 if any(item.status in incomplete for item in self.outcomes) else 0
 
 
 class InputRepository(Protocol):

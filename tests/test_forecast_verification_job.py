@@ -22,6 +22,7 @@ from app.forecast_verification.job import (
     VerificationDateRange,
     VerificationRequest,
     _append_pairs,
+    render_report,
 )
 
 
@@ -120,6 +121,8 @@ async def test_dry_run_is_planning_only_and_completed_checkpoint_resumes() -> No
 
     assert planned.outcomes[0].status is RunStatus.PLANNED
     assert resumed.outcomes[0].status is RunStatus.SKIPPED_COMPLETED
+    assert resumed.exit_code == 0
+    assert "status: complete" in render_report(resumed)
     assert loader.calls == []
     assert store.started == []
     assert locks.requested == [
@@ -150,6 +153,28 @@ async def test_force_refresh_uses_global_and_source_locks_then_persists() -> Non
         "50hz:ingest:elexon.ndf",
         "50hz:ingest:elexon.indo",
     }
+
+
+@pytest.mark.parametrize(
+    "denied_lock",
+    (
+        "50hz:forecast:verify:2026-07-12.forecast-verification.1",
+        "50hz:ingest:elexon.indo",
+    ),
+)
+@pytest.mark.asyncio
+async def test_locked_run_is_incomplete_and_returns_nonzero(denied_lock: str) -> None:
+    report = await ForecastVerificationRunner(
+        loader=FakeLoader(),
+        store=FakeStore(),
+        locks=FakeLocks(denied={denied_lock}),
+        clock=lambda: NOW,
+    ).run(request())
+
+    assert report.outcomes[0].status is RunStatus.SKIPPED_LOCKED
+    assert report.exit_code == 1
+    assert "skipped_locked=1" in render_report(report)
+    assert "status: incomplete" in render_report(report)
 
 
 @pytest.mark.asyncio
