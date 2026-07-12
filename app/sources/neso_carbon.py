@@ -4,7 +4,7 @@ from __future__ import annotations
 
 import math
 import re
-from datetime import UTC, datetime
+from datetime import UTC, datetime, timedelta
 from typing import Any, Mapping
 
 from app.sources.client import AsyncJSONClient
@@ -98,6 +98,62 @@ class NationalCarbonForecastAdapter(_CarbonAdapter):
             parser="national",
             include_actual=False,
             include_forecast=True,
+        )
+
+
+class NationalCarbonHistoryAdapter(_CarbonAdapter):
+    """Historical national carbon estimates over a bounded range.
+
+    NESO calls the field ``actual``, but it is an estimate derived from metered
+    generation.  Keeping only that field here prevents a backfill from silently
+    mixing forecast vintages into the estimated-history series.
+    """
+
+    source_id = "neso.carbon.national.history"
+    dataset = "carbon_intensity_national"
+    endpoint = "intensity/{from}/{to}"
+    max_window = timedelta(days=30)
+
+    async def fetch(
+        self,
+        window: ObservationWindow,
+    ) -> AdapterResult[CarbonIntensityRecord]:
+        if window.end - window.start > self.max_window:
+            raise ValueError("national carbon history windows cannot exceed 30 days")
+        path = f"intensity/{_path_datetime(window.start)}/{_path_datetime(window.end)}"
+        result = await self._fetch_path(
+            path,
+            window,
+            parser="national",
+            include_actual=True,
+            include_forecast=False,
+        )
+        # The range endpoint may treat its upper bound as inclusive.  The
+        # internal ObservationWindow contract is half-open, so remove any
+        # boundary row while retaining the complete raw response for audit.
+        records = tuple(
+            record
+            for record in result.records
+            if window.start <= record.period_start < window.end
+        )
+        removed = len(result.records) - len(records)
+        warnings = result.warnings
+        if removed:
+            warnings += (f"ignored {removed} period(s) outside the requested window",)
+        return AdapterResult(
+            source_id=result.source_id,
+            dataset=result.dataset,
+            endpoint=result.endpoint,
+            window=result.window,
+            retrieved_at=result.retrieved_at,
+            request_url=result.request_url,
+            records=records,
+            raw_payload=result.raw_payload,
+            raw_body=result.raw_body,
+            checksum_sha256=result.checksum_sha256,
+            content_type=result.content_type,
+            metadata=result.metadata,
+            warnings=warnings,
         )
 
 

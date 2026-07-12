@@ -14,6 +14,7 @@ from app.sources.neso_carbon import (
     LondonCarbonIntensityAdapter,
     NationalCarbonCurrentAdapter,
     NationalCarbonForecastAdapter,
+    NationalCarbonHistoryAdapter,
     PostcodeCarbonIntensityAdapter,
     normalize_outward_postcode,
 )
@@ -92,6 +93,71 @@ def test_national_forecast_uses_requested_range_and_never_emits_actuals() -> Non
         record.classification is DataClassification.FORECAST
         for record in result.records
     )
+
+
+def test_national_history_uses_range_and_never_emits_forecasts() -> None:
+    payload = {
+        "data": [
+            {
+                "from": "2026-07-11T12:00Z",
+                "to": "2026-07-11T12:30Z",
+                "intensity": {"forecast": 63, "actual": 67, "index": "low"},
+            },
+            {
+                "from": "2026-07-11T12:30Z",
+                "to": "2026-07-11T13:00Z",
+                "intensity": {"forecast": 61, "actual": 65, "index": "low"},
+            },
+            {
+                # Some range endpoints include the upper bound. The internal
+                # history window is half-open, so this row must be retained only
+                # in the following chunk.
+                "from": "2026-07-11T13:30Z",
+                "to": "2026-07-11T14:00Z",
+                "intensity": {"forecast": 57, "actual": 60, "index": "low"},
+            },
+        ]
+    }
+
+    result, requests = run_adapter(NationalCarbonHistoryAdapter, payload)
+
+    assert requests[0].url.path == (
+        "/intensity/2026-07-11T12:00Z/2026-07-11T13:30Z"
+    )
+    assert [record.intensity_g_co2_per_kwh for record in result.records] == [67, 65]
+    assert all(
+        record.classification is DataClassification.ESTIMATED
+        for record in result.records
+    )
+    assert any("outside the requested window" in warning for warning in result.warnings)
+
+
+def test_national_history_rejects_more_than_thirty_days_before_http() -> None:
+    requests: list[httpx.Request] = []
+
+    def handler(request: httpx.Request) -> httpx.Response:
+        requests.append(request)
+        return httpx.Response(200, json={"data": []}, request=request)
+
+    async def scenario() -> None:
+        client = AsyncJSONClient(
+            base_url=DEFAULT_NESO_CARBON_BASE_URL,
+            transport=httpx.MockTransport(handler),
+        )
+        try:
+            adapter = NationalCarbonHistoryAdapter(client)
+            await adapter.fetch(
+                ObservationWindow(
+                    start=datetime(2026, 1, 1, tzinfo=UTC),
+                    end=datetime(2026, 2, 1, tzinfo=UTC),
+                )
+            )
+        finally:
+            await client.aclose()
+
+    with pytest.raises(ValueError, match="cannot exceed 30 days"):
+        asyncio.run(scenario())
+    assert requests == []
 
 
 def test_london_region_preserves_forecast_mix_and_region_provenance() -> None:

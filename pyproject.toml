@@ -17,6 +17,9 @@ dependencies = [
   "uvicorn[standard]>=0.35,<1",
 ]
 
+[project.scripts]
+50hz-history-backfill = "app.history.backfill:main"
+
 [project.optional-dependencies]
 dev = [
   "pytest>=8.4,<9",
