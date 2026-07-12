@@ -424,6 +424,47 @@ def test_forecast_and_active_notice_reads_are_source_neutral() -> None:
     assert notices[0].reported_cause is not None
 
 
+def test_briefing_notice_read_includes_bounded_upcoming_remit_only() -> None:
+    active = reported_notice(remit())
+    upcoming_record = remit(revision=6)
+    upcoming_values = map_remit_notice_record(
+        upcoming_record,
+        source_id="elexon.remit",
+        raw_payload_id=RAW_ID,
+    )
+    upcoming_values["external_id"] = "mrid-upcoming"
+    upcoming_values["event_start"] = NOW + timedelta(hours=4)
+    upcoming_values["event_end"] = NOW + timedelta(hours=6)
+    upcoming = ReportedNotice(id=UUID(int=600), **upcoming_values)
+
+    too_late_values = dict(upcoming_values)
+    too_late_values["external_id"] = "mrid-too-late"
+    too_late_values["event_start"] = NOW + timedelta(hours=25)
+    too_late_values["event_end"] = NOW + timedelta(hours=27)
+    too_late = ReportedNotice(id=UUID(int=601), **too_late_values)
+
+    cancelled_values = dict(upcoming_values)
+    cancelled_values["external_id"] = "mrid-cancelled"
+    cancelled_values["event_status"] = "Cancelled"
+    cancelled = ReportedNotice(id=UUID(int=602), **cancelled_values)
+
+    session = FakeSession([FakeResult([active, upcoming, too_late, cancelled])])
+    notices = asyncio.run(
+        GridReadRepository(lambda: session).get_briefing_notices(
+            as_of=NOW,
+            upcoming_until=NOW + timedelta(hours=24),
+        )
+    )
+
+    assert {notice.external_id for notice in notices} == {
+        "mrid-1",
+        "mrid-upcoming",
+    }
+    statement_text = str(session.executed[0])
+    assert "event_start" in statement_text
+    assert "published_at" in statement_text
+
+
 def reported_notice(
     record: RemitUnavailabilityRecord, *, external_id: str | None = None
 ) -> ReportedNotice:

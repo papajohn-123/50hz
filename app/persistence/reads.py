@@ -429,6 +429,55 @@ class GridReadRepository:
             )
         )
 
+    async def get_briefing_notices(
+        self,
+        *,
+        as_of: datetime,
+        upcoming_until: datetime,
+        warning_fresh_for_seconds: int = 900,
+    ) -> tuple[ReportedNoticeRead, ...]:
+        """Return active and next-24-hour reported notices for a briefing.
+
+        Unlike ``get_active_notices``, this bounded reader includes future REMIT
+        windows that have already been published. SYSWARN records have no future
+        window and retain the same short publication freshness rule.
+        """
+
+        cutoff = as_utc(as_of, field_name="as_of")
+        horizon = as_utc(upcoming_until, field_name="upcoming_until")
+        if horizon <= cutoff:
+            raise ValueError("upcoming_until must follow as_of")
+        if horizon - cutoff > timedelta(hours=24):
+            raise ValueError("briefing notice horizon cannot exceed 24 hours")
+        if warning_fresh_for_seconds <= 0:
+            raise ValueError("warning_fresh_for_seconds must be positive")
+        warning_fresh_for = timedelta(seconds=warning_fresh_for_seconds)
+        async with self._session_factory() as session:
+            rows = (
+                await session.execute(
+                    _briefing_notice_revisions_statement(
+                        cutoff,
+                        upcoming_until=horizon,
+                        warning_fresh_for=warning_fresh_for,
+                    )
+                )
+            ).scalars().all()
+        notices = tuple(map_reported_notice_read(row) for row in rows)
+        return tuple(
+            notice
+            for notice in notices
+            if _notice_is_active(
+                notice,
+                as_of=cutoff,
+                warning_fresh_for=warning_fresh_for,
+            )
+            or _notice_is_upcoming(
+                notice,
+                as_of=cutoff,
+                upcoming_until=horizon,
+            )
+        )
+
     async def get_reported_notice_revisions(
         self,
         external_id: str,
@@ -888,6 +937,57 @@ def _latest_notice_revisions_statement(as_of: datetime) -> Select:
     )
 
 
+def _briefing_notice_revisions_statement(
+    as_of: datetime,
+    *,
+    upcoming_until: datetime,
+    warning_fresh_for: timedelta,
+) -> Select:
+    """Rank revisions first, then bound current/upcoming candidate windows."""
+
+    rank = func.row_number().over(
+        partition_by=(
+            ReportedNotice.source_id,
+            ReportedNotice.notice_kind,
+            ReportedNotice.external_id,
+        ),
+        order_by=(
+            ReportedNotice.revision_number.desc().nullslast(),
+            ReportedNotice.published_at.desc(),
+            ReportedNotice.retrieved_at.desc(),
+            ReportedNotice.revision_key.desc(),
+        ),
+    ).label("notice_rank")
+    ranked = (
+        select(ReportedNotice, rank)
+        .where(ReportedNotice.published_at <= as_of)
+        .subquery()
+    )
+    latest = aliased(ReportedNotice, ranked)
+    return (
+        select(latest)
+        .where(
+            ranked.c.notice_rank == 1,
+            or_(
+                and_(
+                    latest.notice_kind == "system_warning",
+                    latest.published_at >= as_of - warning_fresh_for,
+                ),
+                and_(
+                    latest.notice_kind == "remit_unavailability",
+                    latest.event_start.is_not(None),
+                    latest.event_start <= upcoming_until,
+                    or_(
+                        latest.event_end.is_(None),
+                        latest.event_end > as_of,
+                    ),
+                ),
+            ),
+        )
+        .order_by(latest.notice_kind, latest.published_at.desc())
+    )
+
+
 def _notice_is_active(
     notice: ReportedNoticeRead,
     *,
@@ -904,6 +1004,28 @@ def _notice_is_active(
     if notice.event_start is None or notice.event_start > as_of:
         return False
     if notice.event_end is not None and notice.event_end <= as_of:
+        return False
+    status = (notice.event_status or "").strip().casefold().replace(" ", "_")
+    return status not in {
+        "cancelled",
+        "canceled",
+        "dismissed",
+        "withdrawn",
+        "inactive",
+    }
+
+
+def _notice_is_upcoming(
+    notice: ReportedNoticeRead,
+    *,
+    as_of: datetime,
+    upcoming_until: datetime,
+) -> bool:
+    if notice.notice_kind != "remit_unavailability":
+        return False
+    if notice.event_start is None or not as_of < notice.event_start <= upcoming_until:
+        return False
+    if notice.event_end is not None and notice.event_end <= notice.event_start:
         return False
     status = (notice.event_status or "").strip().casefold().replace(" ", "_")
     return status not in {

@@ -15,8 +15,21 @@ DISPLAY_TIMEZONE = "Europe/London"
 MAX_SECTION_ITEMS = 3
 
 
+def _to_camel(value: str) -> str:
+    head, *tail = value.split("_")
+    return head + "".join(word.capitalize() for word in tail)
+
+
 class BriefingModel(BaseModel):
-    model_config = ConfigDict(extra="forbid", frozen=True)
+    # Briefing models are also the public mobile API contract.  Field names stay
+    # idiomatic snake_case inside Python while FastAPI can serialize the aliases
+    # as consistent lower camelCase at the boundary.
+    model_config = ConfigDict(
+        alias_generator=_to_camel,
+        populate_by_name=True,
+        extra="forbid",
+        frozen=True,
+    )
 
 
 class BriefingStatus(StrEnum):

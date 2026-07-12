@@ -4,6 +4,7 @@ from typing import Annotated
 from fastapi import APIRouter, Depends, HTTPException, Query, status
 
 from app.api.dependencies import get_grid_read_repository, get_regional_carbon_provider
+from app.api.briefing import present_today_briefing
 from app.api.metrics import present_metric_registry
 from app.api.local_windows import (
     LocalWindowsUnavailableError,
@@ -20,6 +21,7 @@ from app.api.models import (
     RegionResponse,
     SourceMetadataResponse,
 )
+from app.briefing import Briefing
 from app.api.notices import present_reported_notices
 from app.api.presenter import (
     GridDataUnavailableError,
@@ -72,6 +74,20 @@ async def current_grid(repository: Repository) -> GridSnapshotResponse:
             detail=str(error),
             headers={"Retry-After": "60"},
         ) from error
+
+
+@router.get(
+    "/briefing/today",
+    response_model=Briefing,
+    tags=["briefing"],
+)
+async def today_briefing(repository: Repository) -> Briefing:
+    return await present_today_briefing(
+        repository,
+        # Match the endpoint's 60-second cache contract so two reads in the
+        # same public cache window have a stable representation and ETag.
+        as_of=datetime.now(UTC).replace(second=0, microsecond=0),
+    )
 
 
 @router.get("/events", response_model=list[GridEvent], tags=["events"])
