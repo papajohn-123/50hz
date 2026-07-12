@@ -140,9 +140,15 @@ Requirements: Python 3.12 and PostgreSQL.
 ```bash
 python3.12 -m venv .venv
 source .venv/bin/activate
-pip install -e '.[dev]'
+pip install --requirement requirements-dev.lock
+pip install --no-deps --editable .
 cp .env.example .env
 ```
+
+Runtime and development dependencies are pinned in `requirements.lock` and
+`requirements-dev.lock`. When `pyproject.toml` changes, install
+`pip-tools>=7.5,<8`, regenerate both lock files using the commands in their
+headers, review the diff, and run the full test suite before committing.
 
 Set `DATABASE_URL` in `.env` to a disposable local database, then migrate and
 serve the API:

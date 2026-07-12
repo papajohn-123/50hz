@@ -33,12 +33,16 @@ jobs:
         with:
           python-version: "3.12"
           cache: pip
-      - run: pip install -e '.[dev]'
+          cache-dependency-path: requirements-dev.lock
+      - run: pip install --requirement requirements-dev.lock
+      - run: pip install --no-deps --editable .
       - run: pytest -q
       - name: Validate migrations
         env:
           DATABASE_URL: postgresql://postgres:postgres@localhost/50hz
         run: alembic upgrade head --sql > /tmp/50hz-migrations.sql
+      - name: Build production image
+        run: docker build --tag fifty-hz-api:ci .
 
   ios:
     name: iOS tests and release archive
