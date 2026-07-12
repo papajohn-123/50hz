@@ -98,7 +98,7 @@ jobs:
           fi
       - name: Upload iOS test log
         if: always()
-        uses: actions/upload-artifact@v4
+        uses: actions/upload-artifact@v7
         with:
           name: ios-test-log
           path: /tmp/50hz-xcode-test.log
