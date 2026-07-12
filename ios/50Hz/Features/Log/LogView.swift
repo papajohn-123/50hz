@@ -58,6 +58,7 @@ struct LogView: View {
                         .tracking(0.7)
                         .foregroundStyle(GridTheme.textTertiary)
                 }
+                GlobalInfoButton()
             }
             Text("Observe. Predict. Learn how Britain’s grid changes.")
                 .font(.subheadline)

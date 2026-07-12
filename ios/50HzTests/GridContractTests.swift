@@ -2,6 +2,12 @@ import XCTest
 @testable import FiftyHz
 
 final class GridContractTests: XCTestCase {
+    func testWelcomePresentationIsFirstRunOnlyAndSkippable() {
+        XCTAssertTrue(WelcomePresentationPolicy.shouldPresent(hasCompletedWelcome: false))
+        XCTAssertFalse(WelcomePresentationPolicy.shouldPresent(hasCompletedWelcome: true))
+        XCTAssertEqual(AppVersionText.make(version: "1.0", build: "7"), "Version 1.0 (7)")
+    }
+
     func testCarbonIntensityWordingUsesComparativeBands() {
         XCTAssertEqual(CarbonIntensityWording.label(for: 99.9), "Lower carbon")
         XCTAssertEqual(CarbonIntensityWording.label(for: 100), "Typical carbon")
@@ -172,6 +178,162 @@ final class GridContractTests: XCTestCase {
         XCTAssertEqual(snapshot.sources.first?.cadenceSeconds, 60)
         XCTAssertEqual(snapshot.interconnectors.first?.directionLabel, "Exporting")
         XCTAssertEqual(snapshot.generation.first?.factClass, .observed)
+        XCTAssertNil(snapshot.dataStatus)
+        XCTAssertNil(snapshot.supply)
+    }
+
+    func testSnapshotDecodesAdditiveDataStatusAndPartialSupplyAccounting() throws {
+        let json = """
+        {
+          "timestamp":"2026-07-11T14:00:00Z",
+          "retrievedAt":"2026-07-11T14:01:00Z",
+          "freshness":"live",
+          "freshnessAgeSeconds":300,
+          "headline":{"cleanliness":"Typical carbon","balance":"Comfortable","energyPosition":"Import-dependent","interpretation":"Wind leads."},
+          "frequency":{"value":50.02,"unit":"Hz","factClass":"observed","sourceID":"elexon.fuelinst"},
+          "demand":{"value":29800,"unit":"MW","factClass":"observed","sourceID":"elexon.fuelinst"},
+          "carbonIntensity":{"value":118,"unit":"gCO2/kWh","factClass":"estimated","sourceID":"elexon.fuelinst"},
+          "generation":[{"fuel":"wind","megawatts":10500,"share":0.70,"changeOneHour":610,"rank":1,"factClass":"observed"},{"fuel":"imports","megawatts":4500,"share":0.30,"changeOneHour":100,"rank":2,"factClass":"observed"}],
+          "interconnectors":[],
+          "activeEvent":null,
+          "sources":[{"id":"elexon.fuelinst","name":"Elexon Insights","dataset":"FUELINST","observedAt":"2026-07-11T13:55:00Z","retrievedAt":"2026-07-11T14:00:00Z","cadenceSeconds":300}],
+          "dataStatus":[{
+            "family":"generation",
+            "metricIDs":["generation.transmission_visible_by_fuel"],
+            "sourceIDs":["elexon.fuelinst"],
+            "sourceRecordIDs":["fuel:1"],
+            "requiredForSnapshot":true,
+            "evaluatedAt":"2026-07-11T14:00:00Z",
+            "deliveryState":"healthy",
+            "factState":"live",
+            "observedAt":"2026-07-11T13:55:00Z",
+            "publishedAt":"2026-07-11T13:55:30Z",
+            "retrievedAt":"2026-07-11T14:00:00Z",
+            "validTo":"2026-07-11T14:00:00Z",
+            "observationAgeSeconds":300,
+            "retrievalAgeSeconds":0,
+            "expectedCadenceSeconds":300,
+            "deliveryHealthySeconds":300,
+            "deliveryStaleSeconds":600,
+            "factLiveSeconds":600,
+            "factStaleSeconds":900,
+            "seriesCount":8
+          }],
+          "supply":{
+            "methodologyVersion":"supply-accounting-v1",
+            "boundary":"Transmission-visible generation and represented interconnectors.",
+            "isComplete":false,
+            "generationDataAvailable":true,
+            "interconnectorDataAvailable":true,
+            "domesticGenerationMW":10500,
+            "grossImportsMW":1200,
+            "grossExportsMW":1700,
+            "netImportsMW":-500,
+            "storageGenerationMW":200,
+            "storageChargingMW":null,
+            "legacyDisplayedGenerationMW":10500,
+            "legacyMixBasis":"positive generation plus positive net imports",
+            "note":"Not a complete Great Britain supply balance."
+          }
+        }
+        """
+
+        let snapshot = try GridJSON.decoder.decode(GridSnapshot.self, from: Data(json.utf8))
+
+        XCTAssertEqual(snapshot.dataStatus?.first?.family, .generation)
+        XCTAssertEqual(snapshot.dataStatus?.first?.deliveryState, .healthy)
+        XCTAssertEqual(snapshot.dataStatus?.first?.factState, .live)
+        XCTAssertEqual(snapshot.dataStatus?.first?.publishedAt, Date(timeIntervalSince1970: 1_783_778_130))
+        XCTAssertEqual(snapshot.supply?.isComplete, false)
+        XCTAssertEqual(snapshot.supply?.generationDataAvailable, true)
+        XCTAssertEqual(snapshot.supply?.interconnectorDataAvailable, true)
+        XCTAssertEqual(snapshot.supply?.grossExportsMW, 1_700)
+        XCTAssertEqual(snapshot.supply?.netImportsMW, -500)
+        XCTAssertNil(snapshot.supply?.storageChargingMW)
+    }
+
+    func testDataStatusToleratesFutureEnumValues() throws {
+        let json = """
+        {
+          "family":"weather",
+          "metricIDs":["future.metric"],
+          "sourceIDs":[],
+          "sourceRecordIDs":[],
+          "requiredForSnapshot":false,
+          "evaluatedAt":"2026-07-11T14:00:00Z",
+          "deliveryState":"paused",
+          "factState":"revised",
+          "observedAt":null,
+          "publishedAt":null,
+          "retrievedAt":null,
+          "validTo":null,
+          "observationAgeSeconds":null,
+          "retrievalAgeSeconds":null,
+          "expectedCadenceSeconds":300,
+          "deliveryHealthySeconds":300,
+          "deliveryStaleSeconds":600,
+          "factLiveSeconds":600,
+          "factStaleSeconds":900,
+          "seriesCount":0
+        }
+        """
+
+        let status = try GridJSON.decoder.decode(DataFamilyStatus.self, from: Data(json.utf8))
+        XCTAssertEqual(status.family, .other)
+        XCTAssertEqual(status.deliveryState, .unknown)
+        XCTAssertEqual(status.factState, .unknown)
+    }
+
+    func testCurrentDataSummarySeparatesCurrentDelayedAndOfflineStates() {
+        let current = CurrentDataSummary.resolve(
+            freshness: .critical,
+            fallbackAgeSeconds: 30,
+            statuses: [familyStatus(delivery: .healthy, fact: .live, observationAgeSeconds: 240)]
+        )
+        XCTAssertEqual(current, CurrentDataSummary(state: .current, observationAgeSeconds: 240))
+
+        let delayed = CurrentDataSummary.resolve(
+            freshness: .live,
+            fallbackAgeSeconds: 30,
+            statuses: [familyStatus(delivery: .delayed, fact: .live, observationAgeSeconds: 360)]
+        )
+        XCTAssertEqual(delayed, CurrentDataSummary(state: .delayed, observationAgeSeconds: 360))
+
+        let offline = CurrentDataSummary.resolve(
+            freshness: .live,
+            fallbackAgeSeconds: 30,
+            statuses: [familyStatus(delivery: .unavailable, fact: .unavailable, observationAgeSeconds: nil)]
+        )
+        XCTAssertEqual(offline, CurrentDataSummary(state: .offline, observationAgeSeconds: 30))
+
+        let legacy = CurrentDataSummary.resolve(freshness: .stale, fallbackAgeSeconds: 1_200, statuses: nil)
+        XCTAssertEqual(legacy, CurrentDataSummary(state: .delayed, observationAgeSeconds: 1_200))
+
+        let agedCache = CurrentDataSummary.resolve(
+            freshness: .offline,
+            fallbackAgeSeconds: 7_200,
+            statuses: [familyStatus(delivery: .healthy, fact: .live, observationAgeSeconds: 240)]
+        )
+        XCTAssertEqual(agedCache, CurrentDataSummary(state: .offline, observationAgeSeconds: 7_200))
+    }
+
+    func testFamilyStatusRecomputesDeliveryAndFactStateAtInspectionTime() {
+        let captured = familyStatus(delivery: .healthy, fact: .live, observationAgeSeconds: 60)
+        let inspectedAt = Date(timeIntervalSince1970: 1_700)
+
+        let resolved = captured.resolved(at: inspectedAt)
+        XCTAssertEqual(resolved.deliveryState, .stale)
+        XCTAssertEqual(resolved.factState, .delayed)
+        XCTAssertEqual(resolved.observationAgeSeconds, 700)
+        XCTAssertEqual(resolved.retrievalAgeSeconds, 700)
+
+        let summary = CurrentDataSummary.resolve(
+            freshness: .live,
+            fallbackAgeSeconds: 60,
+            statuses: [captured],
+            evaluatedAt: inspectedAt
+        )
+        XCTAssertEqual(summary, CurrentDataSummary(state: .delayed, observationAgeSeconds: 700))
     }
 
     func testTimelineInterpolatesContinuousValues() {
@@ -260,6 +422,37 @@ final class GridContractTests: XCTestCase {
             carbonIntensity: carbon,
             frequencyHz: frequency,
             generation: [FuelReading(fuel: .wind, megawatts: wind, share: 0.4, changeOneHour: 0, rank: 1, factClass: .observed)]
+        )
+    }
+
+    private func familyStatus(
+        delivery: DataDeliveryState,
+        fact: DataFactState,
+        observationAgeSeconds: Int?
+    ) -> DataFamilyStatus {
+        let available = delivery != .unavailable && fact != .unavailable
+        let date = Date(timeIntervalSince1970: 1_000)
+        return DataFamilyStatus(
+            family: .generation,
+            metricIDs: ["generation.transmission_visible_by_fuel"],
+            sourceIDs: available ? ["elexon.fuelinst"] : [],
+            sourceRecordIDs: available ? ["fuel:1"] : [],
+            requiredForSnapshot: true,
+            evaluatedAt: date,
+            deliveryState: delivery,
+            factState: fact,
+            observedAt: available ? date : nil,
+            publishedAt: available ? date : nil,
+            retrievedAt: available ? date : nil,
+            validTo: available ? date.addingTimeInterval(300) : nil,
+            observationAgeSeconds: observationAgeSeconds,
+            retrievalAgeSeconds: available ? 0 : nil,
+            expectedCadenceSeconds: 300,
+            deliveryHealthySeconds: 300,
+            deliveryStaleSeconds: 600,
+            factLiveSeconds: 600,
+            factStaleSeconds: 900,
+            seriesCount: available ? 1 : 0
         )
     }
 }

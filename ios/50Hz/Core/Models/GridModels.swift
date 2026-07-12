@@ -81,6 +81,194 @@ struct SourceReference: Codable, Hashable, Sendable, Identifiable {
     let cadenceSeconds: Int
 }
 
+enum GridDataFamily: String, Codable, Hashable, Sendable, Identifiable {
+    case generation
+    case demand
+    case frequency
+    case interconnectors
+    case carbon
+    case other
+
+    var id: String { rawValue }
+
+    init(from decoder: Decoder) throws {
+        let container = try decoder.singleValueContainer()
+        self = GridDataFamily(rawValue: try container.decode(String.self)) ?? .other
+    }
+
+    func encode(to encoder: Encoder) throws {
+        var container = encoder.singleValueContainer()
+        try container.encode(rawValue)
+    }
+}
+
+enum DataDeliveryState: String, Codable, Hashable, Sendable {
+    case healthy
+    case delayed
+    case stale
+    case unavailable
+    case unknown
+
+    init(from decoder: Decoder) throws {
+        let container = try decoder.singleValueContainer()
+        self = DataDeliveryState(rawValue: try container.decode(String.self)) ?? .unknown
+    }
+
+    func encode(to encoder: Encoder) throws {
+        var container = encoder.singleValueContainer()
+        try container.encode(rawValue)
+    }
+}
+
+enum DataFactState: String, Codable, Hashable, Sendable {
+    case live
+    case delayed
+    case stale
+    case unavailable
+    case unknown
+
+    init(from decoder: Decoder) throws {
+        let container = try decoder.singleValueContainer()
+        self = DataFactState(rawValue: try container.decode(String.self)) ?? .unknown
+    }
+
+    func encode(to encoder: Encoder) throws {
+        var container = encoder.singleValueContainer()
+        try container.encode(rawValue)
+    }
+}
+
+struct DataFamilyStatus: Codable, Hashable, Sendable, Identifiable {
+    var id: String { metricIDs.joined(separator: "|") }
+    let family: GridDataFamily
+    let metricIDs: [String]
+    let sourceIDs: [String]
+    let sourceRecordIDs: [String]
+    let requiredForSnapshot: Bool
+    let evaluatedAt: Date
+    let deliveryState: DataDeliveryState
+    let factState: DataFactState
+    let observedAt: Date?
+    let publishedAt: Date?
+    let retrievedAt: Date?
+    let validTo: Date?
+    let observationAgeSeconds: Int?
+    let retrievalAgeSeconds: Int?
+    let expectedCadenceSeconds: Int
+    let deliveryHealthySeconds: Int
+    let deliveryStaleSeconds: Int
+    let factLiveSeconds: Int
+    let factStaleSeconds: Int
+    let seriesCount: Int
+
+    func resolved(at date: Date) -> ResolvedDataFamilyStatus {
+        guard seriesCount > 0, let observedAt, let retrievedAt else {
+            return ResolvedDataFamilyStatus(
+                deliveryState: .unavailable,
+                factState: .unavailable,
+                observationAgeSeconds: nil,
+                retrievalAgeSeconds: nil
+            )
+        }
+
+        let observationAge = max(0, Int(date.timeIntervalSince(observedAt)))
+        let retrievalAge = max(0, Int(date.timeIntervalSince(retrievedAt)))
+        let resolvedDelivery: DataDeliveryState = if retrievalAge <= deliveryHealthySeconds {
+            .healthy
+        } else if retrievalAge < deliveryStaleSeconds {
+            .delayed
+        } else {
+            .stale
+        }
+        let resolvedFact: DataFactState = if observationAge <= factLiveSeconds {
+            .live
+        } else if observationAge < factStaleSeconds {
+            .delayed
+        } else {
+            .stale
+        }
+
+        return ResolvedDataFamilyStatus(
+            deliveryState: resolvedDelivery,
+            factState: resolvedFact,
+            observationAgeSeconds: observationAge,
+            retrievalAgeSeconds: retrievalAge
+        )
+    }
+}
+
+struct ResolvedDataFamilyStatus: Equatable, Sendable {
+    let deliveryState: DataDeliveryState
+    let factState: DataFactState
+    let observationAgeSeconds: Int?
+    let retrievalAgeSeconds: Int?
+}
+
+struct SupplyAccounting: Codable, Hashable, Sendable {
+    let methodologyVersion: String
+    let boundary: String
+    let isComplete: Bool
+    let generationDataAvailable: Bool
+    let interconnectorDataAvailable: Bool
+    let domesticGenerationMW: Double
+    let grossImportsMW: Double
+    let grossExportsMW: Double
+    let netImportsMW: Double
+    let storageGenerationMW: Double
+    let storageChargingMW: Double?
+    let legacyDisplayedGenerationMW: Double
+    let legacyMixBasis: String
+    let note: String
+}
+
+enum CurrentDataState: String, Hashable, Sendable {
+    case current
+    case delayed
+    case offline
+
+    var displayName: String { rawValue.capitalized }
+}
+
+struct CurrentDataSummary: Equatable, Sendable {
+    let state: CurrentDataState
+    let observationAgeSeconds: Int
+
+    static func resolve(
+        freshness: FreshnessState,
+        fallbackAgeSeconds: Int,
+        statuses: [DataFamilyStatus]?,
+        evaluatedAt: Date? = nil
+    ) -> CurrentDataSummary {
+        let required = statuses?.filter(\.requiredForSnapshot) ?? []
+        let resolved = required.map { status in
+            evaluatedAt.map { status.resolved(at: $0) }
+                ?? ResolvedDataFamilyStatus(
+                    deliveryState: status.deliveryState,
+                    factState: status.factState,
+                    observationAgeSeconds: status.observationAgeSeconds,
+                    retrievalAgeSeconds: status.retrievalAgeSeconds
+                )
+        }
+        let familyObservationAge = resolved.compactMap(\.observationAgeSeconds).max() ?? 0
+        let observationAge = max(familyObservationAge, max(fallbackAgeSeconds, 0))
+
+        if freshness == .offline || resolved.contains(where: {
+            $0.deliveryState == .unavailable || $0.factState == .unavailable
+        }) {
+            return CurrentDataSummary(state: .offline, observationAgeSeconds: observationAge)
+        }
+
+        if freshness == .stale || resolved.contains(where: {
+            [.delayed, .stale].contains($0.deliveryState)
+                || [.delayed, .stale].contains($0.factState)
+        }) {
+            return CurrentDataSummary(state: .delayed, observationAgeSeconds: observationAge)
+        }
+
+        return CurrentDataSummary(state: .current, observationAgeSeconds: observationAge)
+    }
+}
+
 struct GridMetric: Codable, Hashable, Sendable {
     let value: Double
     let unit: String
@@ -168,6 +356,8 @@ struct GridSnapshot: Codable, Hashable, Sendable {
     var interconnectors: [InterconnectorFlow]
     var activeEvent: GridEvent?
     let sources: [SourceReference]
+    var dataStatus: [DataFamilyStatus]? = nil
+    var supply: SupplyAccounting? = nil
 
     var totalGenerationMW: Double {
         generation.reduce(0) { $0 + $1.megawatts }

@@ -3,6 +3,7 @@ import SwiftUI
 struct LiveView: View {
     @EnvironmentObject private var model: AppModel
     @State private var sharePayload: GridShareCardPayload?
+    @State private var isDataDetailsPresented = false
 
     var body: some View {
         ZStack {
@@ -46,6 +47,14 @@ struct LiveView: View {
                 .presentationDragIndicator(.visible)
                 .presentationBackground(GridTheme.surface)
         }
+        .sheet(isPresented: $isDataDetailsPresented) {
+            if let snapshot = model.snapshot {
+                DataDetailsSheet(snapshot: snapshot, mode: model.timelineModeLabel)
+                    .presentationDetents([.large])
+                    .presentationDragIndicator(.visible)
+                    .presentationBackground(GridTheme.background)
+            }
+        }
     }
 
     private func loadedContent(snapshot: GridSnapshot, model: AppModel) -> some View {
@@ -57,7 +66,8 @@ struct LiveView: View {
                     BrandHeader(
                         snapshot: snapshot,
                         mode: model.timelineModeLabel,
-                        onShare: { sharePayload = .current(snapshot) }
+                        onShare: { sharePayload = .current(snapshot) },
+                        onStatusTap: { isDataDetailsPresented = true }
                     )
                         .padding(.top, 8)
 

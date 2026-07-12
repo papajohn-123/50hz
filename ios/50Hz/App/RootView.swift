@@ -2,6 +2,10 @@ import SwiftUI
 
 struct RootView: View {
     @EnvironmentObject private var model: AppModel
+    @AppStorage("onboarding.welcome.complete") private var hasCompletedWelcome = false
+    @State private var isWelcomePresented = false
+    @State private var isInfoPresented = false
+    @State private var replayWelcomeAfterInfo = false
 
     var body: some View {
         TabView(selection: $model.selectedTab) {
@@ -25,6 +29,36 @@ struct RootView: View {
         .toolbarBackground(GridTheme.background.opacity(0.96), for: .tabBar)
         .toolbarBackground(.visible, for: .tabBar)
         .toolbarColorScheme(.dark, for: .tabBar)
+        .environment(\.openInfo, OpenInfoAction { isInfoPresented = true })
+        .sheet(isPresented: $isWelcomePresented, onDismiss: {
+            hasCompletedWelcome = true
+        }) {
+            WelcomeSheet {
+                hasCompletedWelcome = true
+                isWelcomePresented = false
+            }
+            .presentationDetents([.large])
+            .presentationDragIndicator(.hidden)
+            .presentationBackground(GridTheme.background)
+        }
+        .sheet(isPresented: $isInfoPresented, onDismiss: {
+            guard replayWelcomeAfterInfo else { return }
+            replayWelcomeAfterInfo = false
+            isWelcomePresented = true
+        }) {
+            InfoHelpSheet {
+                replayWelcomeAfterInfo = true
+                isInfoPresented = false
+            }
+            .presentationDetents([.large])
+            .presentationDragIndicator(.visible)
+            .presentationBackground(GridTheme.background)
+        }
+        .onAppear {
+            if WelcomePresentationPolicy.shouldPresent(hasCompletedWelcome: hasCompletedWelcome) {
+                isWelcomePresented = true
+            }
+        }
     }
 }
 

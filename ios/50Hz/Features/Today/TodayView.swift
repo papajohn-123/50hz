@@ -48,6 +48,7 @@ struct TodayView: View {
                         .font(.caption)
                         .fontDesign(.monospaced)
                         .foregroundStyle(GridTheme.textTertiary)
+                    GlobalInfoButton()
                 }
                 .padding(.bottom, 6)
 

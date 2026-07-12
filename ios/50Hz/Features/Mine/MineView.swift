@@ -53,10 +53,14 @@ struct MineView: View {
 
     private var header: some View {
         VStack(alignment: .leading, spacing: 7) {
-            Text("Local")
-                .font(.system(.largeTitle, design: .rounded, weight: .medium))
-                .tracking(-1.2)
-                .accessibilityAddTraits(.isHeader)
+            HStack {
+                Text("Local")
+                    .font(.system(.largeTitle, design: .rounded, weight: .medium))
+                    .tracking(-1.2)
+                    .accessibilityAddTraits(.isHeader)
+                Spacer()
+                GlobalInfoButton()
+            }
             HStack(spacing: 7) {
                 Image(systemName: "location.circle.fill")
                     .foregroundStyle(GridTheme.liveCyan)

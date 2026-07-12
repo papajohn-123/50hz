@@ -4,11 +4,18 @@ struct BrandHeader: View {
     let snapshot: GridSnapshot?
     let mode: String
     let onShare: (() -> Void)?
+    let onStatusTap: (() -> Void)?
 
-    init(snapshot: GridSnapshot?, mode: String, onShare: (() -> Void)? = nil) {
+    init(
+        snapshot: GridSnapshot?,
+        mode: String,
+        onShare: (() -> Void)? = nil,
+        onStatusTap: (() -> Void)? = nil
+    ) {
         self.snapshot = snapshot
         self.mode = mode
         self.onShare = onShare
+        self.onStatusTap = onStatusTap
     }
 
     var body: some View {
@@ -20,6 +27,8 @@ struct BrandHeader: View {
                 .accessibilityAddTraits(.isHeader)
 
             Spacer()
+
+            GlobalInfoButton()
 
             if let onShare {
                 Button(action: onShare) {
@@ -33,7 +42,7 @@ struct BrandHeader: View {
                 .accessibilityLabel("Share this grid state")
             }
 
-            StatusLabel(snapshot: snapshot, mode: mode)
+            StatusLabel(snapshot: snapshot, mode: mode, onTap: onStatusTap)
         }
     }
 }
@@ -41,30 +50,58 @@ struct BrandHeader: View {
 struct StatusLabel: View {
     let snapshot: GridSnapshot?
     let mode: String
+    let onTap: (() -> Void)?
+
+    private var summary: CurrentDataSummary? {
+        snapshot.map {
+            CurrentDataSummary.resolve(
+                freshness: $0.freshness,
+                fallbackAgeSeconds: $0.freshnessAgeSeconds,
+                statuses: $0.dataStatus,
+                evaluatedAt: Date()
+            )
+        }
+    }
 
     private var color: Color {
-        guard let snapshot else { return GridTheme.textTertiary }
+        guard snapshot != nil else { return GridTheme.textTertiary }
         if mode == "FORECAST" { return GridTheme.forecastViolet }
         if mode == "REPLAY" { return GridTheme.liveCyan.opacity(0.75) }
-        return switch snapshot.freshness {
-        case .live: GridTheme.liveCyan
-        case .stale, .offline: GridTheme.staleAmber
-        case .critical: GridTheme.warning
+        return switch summary?.state {
+        case .current: GridTheme.liveCyan
+        case .delayed, .offline: GridTheme.staleAmber
+        case nil: GridTheme.textTertiary
         }
     }
 
     private var label: String {
-        guard let snapshot else { return "CONNECTING" }
-        if mode != "LIVE" { return mode }
-        return switch snapshot.freshness {
-        case .live: "LIVE · \(max(snapshot.freshnessAgeSeconds / 60, 1))m"
-        case .stale: "STALE · \(max(snapshot.freshnessAgeSeconds / 60, 1))m"
-        case .offline: "OFFLINE"
-        case .critical: "REPORTED EVENT"
-        }
+        guard let summary else { return "Connecting" }
+        if mode == "FORECAST" { return "Forecast frame" }
+        if mode == "REPLAY" { return "Replay frame" }
+        return "\(summary.state.displayName) · observed \(compactAge(summary.observationAgeSeconds))"
+    }
+
+    private var spokenLabel: String {
+        guard let summary else { return "Data status, connecting" }
+        if mode == "FORECAST" { return "Data status, forecast frame" }
+        if mode == "REPLAY" { return "Data status, observed replay frame" }
+        return "Data status, \(summary.state.displayName.lowercased()). Observed age is \(spokenAge(summary.observationAgeSeconds)) old."
     }
 
     var body: some View {
+        if let onTap {
+            Button(action: onTap) { content }
+                .buttonStyle(.plain)
+                .accessibilityLabel(spokenLabel)
+                .accessibilityHint("Opens data details")
+        } else {
+            content
+                .accessibilityElement(children: .combine)
+                .accessibilityLabel(spokenLabel)
+        }
+    }
+
+    private var content: some View {
         HStack(spacing: 7) {
             Circle()
                 .fill(color)
@@ -73,15 +110,32 @@ struct StatusLabel: View {
             Text(label)
                 .font(.caption2.weight(.semibold))
                 .fontDesign(.monospaced)
-                .tracking(0.8)
+                .tracking(0.3)
+                .lineLimit(1)
+                .minimumScaleFactor(0.72)
         }
         .foregroundStyle(color)
-        .padding(.horizontal, 10)
-        .frame(minHeight: 32)
+        .padding(.horizontal, 9)
+        .frame(minHeight: 44)
         .background(GridTheme.surface.opacity(0.72), in: Capsule())
         .overlay(Capsule().stroke(color.opacity(0.18), lineWidth: 1))
-        .accessibilityElement(children: .combine)
-        .accessibilityLabel("Data status, \(label)")
+        .contentShape(Capsule())
+    }
+
+    private func compactAge(_ seconds: Int) -> String {
+        if seconds < 60 { return "<1m" }
+        if seconds < 3_600 { return "\(seconds / 60)m" }
+        return "\(seconds / 3_600)h"
+    }
+
+    private func spokenAge(_ seconds: Int) -> String {
+        if seconds < 60 { return "less than one minute" }
+        if seconds < 3_600 {
+            let minutes = seconds / 60
+            return "\(minutes) minute\(minutes == 1 ? "" : "s")"
+        }
+        let hours = seconds / 3_600
+        return "\(hours) hour\(hours == 1 ? "" : "s")"
     }
 }
 
