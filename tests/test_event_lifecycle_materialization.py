@@ -336,3 +336,33 @@ def test_publication_after_terminal_state_is_not_appended() -> None:
     assert outcome.deltas == 0
     assert outcome.skipped == 1
     assert len(session.executed) == 1
+
+
+def test_invalid_lifecycle_projection_does_not_block_normalized_ingestion() -> None:
+    invalid = notice(checksum="not-a-sha256")
+    session = FakeSession([])
+
+    outcome = asyncio.run(materialize_reported_notice_rows(session, [invalid]))
+
+    assert outcome.revisions == 0
+    assert outcome.deltas == 0
+    assert outcome.unchanged == 0
+    assert outcome.skipped == 1
+    assert session.executed == []
+
+
+def test_one_invalid_revision_does_not_block_other_event_lifecycles() -> None:
+    invalid = notice(status="Superseded", evidence={"classification": "reported"})
+    valid = warning_notice(
+        checksum="c" * 64,
+        warning_text="A valid independently reported warning",
+        retrieved_at=NOW,
+    )
+    session = FakeSession([FakeResult(), FakeResult()])
+
+    outcome = asyncio.run(materialize_reported_notice_rows(session, [invalid, valid]))
+
+    assert outcome.revisions == 1
+    assert outcome.deltas == 0
+    assert outcome.skipped == 1
+    assert len(session.executed) == 2

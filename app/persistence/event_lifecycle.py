@@ -85,10 +85,30 @@ async def materialize_reported_notice_rows(
     if not rows:
         return EventLifecycleMaterializationOutcome()
 
-    grouped: dict[str, list[Mapping[str, Any]]] = defaultdict(list)
+    revisions_written = 0
+    deltas_written = 0
+    unchanged = 0
+    skipped = 0
+    grouped: dict[
+        str,
+        list[tuple[tuple[Any, ...], str, Mapping[str, Any]]],
+    ] = defaultdict(list)
     for row in rows:
-        event_id = _event_id(row)
-        grouped[event_id].append(row)
+        try:
+            event_id = _event_id(row)
+            checksum = _checksum(row)
+            order = _source_order(row)
+        except (KeyError, TypeError, ValueError):
+            # The normalized source row remains authoritative and commits with
+            # the ingestion transaction. One row that cannot satisfy the
+            # stricter lifecycle projection must not roll back its entire
+            # publication window.
+            skipped += 1
+            continue
+        grouped[event_id].append((order, checksum, row))
+
+    if not grouped:
+        return EventLifecycleMaterializationOutcome(skipped=skipped)
 
     existing_result = await session.execute(
         select(EventLifecycleRevision)
@@ -113,20 +133,14 @@ async def materialize_reported_notice_rows(
                 latest_source_order.get(stored.event_id, order),
             )
 
-    revisions_written = 0
-    deltas_written = 0
-    unchanged = 0
-    skipped = 0
     for event_id in sorted(grouped):
-        notices = sorted(grouped[event_id], key=_source_order)
+        notices = sorted(grouped[event_id], key=lambda item: item[0])
         history = histories[event_id]
-        for notice in notices:
-            checksum = _checksum(notice)
+        for order, checksum, notice in notices:
             if checksum in seen_checksums[event_id]:
                 unchanged += 1
                 continue
 
-            order = _source_order(notice)
             if order < latest_source_order.get(event_id, order):
                 # An older, previously unseen publication cannot be inserted
                 # into an already immutable sequence. Its normalized source
@@ -150,9 +164,10 @@ async def materialize_reported_notice_rows(
                     previous=previous,
                 )
                 delta = diff_revisions(previous, revision) if previous else None
-            except _LifecycleEvidenceGap:
-                # Keep source ingestion available when an isolated notice lacks
-                # the evidence required by the stricter lifecycle contract.
+            except ValueError:
+                # Keep source ingestion available when an isolated notice is
+                # malformed or lacks the evidence required by the stricter
+                # lifecycle contract. SQL/database failures still abort.
                 skipped += 1
                 continue
 
