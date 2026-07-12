@@ -129,6 +129,20 @@ struct MineView: View {
                     postcodeButton
                 }
             }
+            if PostcodePrivacy.outwardCode(from: postcode) != PostcodePrivacy.defaultOutwardCode {
+                Button {
+                    postcode = PostcodePrivacy.defaultOutwardCode
+                    draftPostcode = PostcodePrivacy.defaultOutwardCode
+                    postcodeInputError = nil
+                    postcodeFocused = false
+                } label: {
+                    Label("Use Central London", systemImage: "location.fill")
+                        .font(.caption.weight(.semibold))
+                        .foregroundStyle(GridTheme.liveCyan)
+                        .frame(minHeight: 44)
+                }
+                .buttonStyle(.plain)
+            }
             Text("Stored on this device. Only the outward code is sent. Location permission is not used; the planner itself uses a GB national forecast.")
                 .font(.caption2)
                 .foregroundStyle(GridTheme.textTertiary)
@@ -141,7 +155,7 @@ struct MineView: View {
     }
 
     private var postcodeField: some View {
-        TextField("Outward postcode", text: $draftPostcode)
+        TextField("Postcode or outward code", text: $draftPostcode)
             .textInputAutocapitalization(.characters)
             .autocorrectionDisabled()
             .focused($postcodeFocused)
@@ -151,7 +165,7 @@ struct MineView: View {
             .frame(maxWidth: .infinity, minHeight: 48)
             .background(GridTheme.surface, in: RoundedRectangle(cornerRadius: 11))
             .overlay(RoundedRectangle(cornerRadius: 11).stroke(GridTheme.hairline, lineWidth: 1))
-            .accessibilityLabel("Outward postcode")
+            .accessibilityLabel("Postcode or outward code")
             .onChange(of: draftPostcode) { _, _ in
                 postcodeInputError = nil
             }
