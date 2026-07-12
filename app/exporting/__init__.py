@@ -7,6 +7,8 @@ from app.exporting.models import (
     ExportResponse,
     ExportRow,
     ExportRowStatus,
+    ExportMetricSchema,
+    ExportSchemaResponse,
 )
 from app.exporting.service import build_export, render_csv
 
@@ -17,6 +19,8 @@ __all__ = [
     "ExportResponse",
     "ExportRow",
     "ExportRowStatus",
+    "ExportMetricSchema",
+    "ExportSchemaResponse",
     "build_export",
     "render_csv",
 ]

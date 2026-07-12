@@ -6,9 +6,12 @@ import io
 from datetime import UTC, datetime, timedelta
 
 import pytest
+from fastapi import FastAPI
+from fastapi.testclient import TestClient
 from pydantic import ValidationError
 
 from app.exporting import ExportFormat, ExportRequest, build_export, render_csv
+from app.exporting.api import get_export_history_repository, router
 from app.history import RawMetricObservation, RawMetricSeries
 from app.history.repository import HistoryMetric
 
@@ -148,3 +151,106 @@ def test_export_format_is_closed_and_serializable() -> None:
     assert request(format=ExportFormat.CSV).format is ExportFormat.CSV
     with pytest.raises(ValidationError):
         request(format="xlsx")
+
+
+def export_client(series: RawMetricSeries) -> tuple[TestClient, FakeHistoryRepository]:
+    repository = FakeHistoryRepository(series)
+    application = FastAPI()
+    application.include_router(router)
+    application.dependency_overrides[get_export_history_repository] = lambda: repository
+    return TestClient(application), repository
+
+
+def test_export_schema_is_machine_readable_and_closed() -> None:
+    client, _ = export_client(carbon_series())
+    response = client.get("/v1/metadata/export-schema")
+
+    assert response.status_code == 200
+    payload = response.json()
+    assert payload["maxWindowDays"] == 31
+    assert payload["resolutionsSeconds"] == [1_800]
+    assert payload["formats"] == ["json", "csv"]
+    generation = next(
+        item
+        for item in payload["metrics"]
+        if item["metric"] == "generation.transmission_visible_by_fuel"
+    )
+    assert generation["selectorRequired"] is True
+    assert "WIND" in generation["allowedSelectors"]
+
+
+def test_export_routes_are_registered_in_the_production_openapi() -> None:
+    from app.main import app
+
+    schema = app.openapi()
+    assert "/v1/export" in schema["paths"]
+    assert "/v1/metadata/export-schema" in schema["paths"]
+
+
+def test_json_export_route_returns_camel_case_rows_and_gap_coverage() -> None:
+    client, repository = export_client(carbon_series(missing_second=True))
+    response = client.get(
+        "/v1/export",
+        params={
+            "metric": "carbon.intensity.national",
+            "from": START.isoformat(),
+            "to": (START + timedelta(hours=1)).isoformat(),
+            "format": "json",
+        },
+    )
+
+    assert response.status_code == 200
+    payload = response.json()
+    assert payload["metricID"] == "carbon.intensity.national"
+    assert payload["coverage"]["missingIntervalCount"] == 1
+    assert payload["rows"][1]["status"] == "insufficient_data"
+    assert payload["rows"][1]["value"] is None
+    assert repository.requests[0].start == START
+
+
+def test_csv_export_route_sets_download_and_coverage_headers() -> None:
+    client, _ = export_client(carbon_series())
+    response = client.get(
+        "/v1/export",
+        params={
+            "metric": "carbon.intensity.national",
+            "from": START.isoformat(),
+            "to": (START + timedelta(hours=1)).isoformat(),
+            "format": "csv",
+        },
+    )
+
+    assert response.status_code == 200
+    assert response.headers["content-type"].startswith("text/csv")
+    assert response.headers["x-50hz-expected-rows"] == "2"
+    assert response.headers["x-50hz-missing-rows"] == "0"
+    assert "50hz-carbon-intensity-national.csv" in response.headers[
+        "content-disposition"
+    ]
+    assert "source_record_ids" in response.text.splitlines()[0]
+
+
+def test_export_route_rejects_unbounded_or_incompatible_requests() -> None:
+    client, repository = export_client(carbon_series())
+    too_long = client.get(
+        "/v1/export",
+        params={
+            "metric": "carbon.intensity.national",
+            "from": START.isoformat(),
+            "to": (START + timedelta(days=32)).isoformat(),
+        },
+    )
+    missing_selector = client.get(
+        "/v1/export",
+        params={
+            "metric": "generation.transmission_visible_by_fuel",
+            "from": START.isoformat(),
+            "to": (START + timedelta(hours=1)).isoformat(),
+        },
+    )
+
+    assert too_long.status_code == 422
+    assert "31 days" in too_long.text
+    assert missing_selector.status_code == 422
+    assert "selector" in missing_selector.text
+    assert repository.requests == []

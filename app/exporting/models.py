@@ -128,3 +128,27 @@ class ExportResponse(ExportModel):
         if len(self.rows) != self.coverage.expected_interval_count:
             raise ValueError("export row count does not match expected coverage")
         return self
+
+
+class ExportMetricSchema(ExportModel):
+    metric: HistoryMetric
+    selector_required: bool
+    allowed_selectors: list[str] = Field(default_factory=list)
+
+
+class ExportSchemaResponse(ExportModel):
+    schema_version: str = "1.0"
+    max_window_days: int = 31
+    max_row_count: int = 1_488
+    resolutions_seconds: list[int] = Field(default_factory=lambda: [1_800])
+    formats: list[ExportFormat] = Field(
+        default_factory=lambda: [ExportFormat.JSON, ExportFormat.CSV]
+    )
+    timestamp_policy: str = (
+        "Bounds and rows are timezone-aware UTC instants on exact half-hour boundaries."
+    )
+    missing_data_policy: str = (
+        "Missing intervals are emitted as insufficient_data rows with no value; "
+        "values are never filled, shifted, or treated as zero."
+    )
+    metrics: list[ExportMetricSchema] = Field(min_length=1)

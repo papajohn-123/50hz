@@ -9,6 +9,7 @@ from app.api.models import MobileFreshness
 from app.api.presenter import present_current
 from app.config import get_settings
 from app.db import database_session, get_session_factory
+from app.exporting.api import router as export_router
 from app.http_cache import ConditionalJSONMiddleware
 from app.intelligence.api import router as intelligence_router
 from app.legal import router as legal_router
@@ -25,6 +26,7 @@ app = FastAPI(
 )
 app.include_router(api_router)
 app.include_router(intelligence_router)
+app.include_router(export_router)
 app.include_router(legal_router)
 app.add_middleware(ConditionalJSONMiddleware)
 app.add_middleware(GZipMiddleware, minimum_size=1_000)

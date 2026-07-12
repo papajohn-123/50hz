@@ -35,6 +35,7 @@ DEFAULT_POLICIES = (
     RateLimitPolicy("GET", "/v1/events/", per_client=12, global_limit=60),
     RateLimitPolicy("GET", "/v1/regions/", per_client=30, global_limit=120),
     RateLimitPolicy("GET", "/v1/grid/timeline", per_client=60, global_limit=300),
+    RateLimitPolicy("GET", "/v1/export", per_client=6, global_limit=30),
 )
 
 

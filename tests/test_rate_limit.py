@@ -1,7 +1,12 @@
 from fastapi import FastAPI
 from fastapi.testclient import TestClient
 
-from app.rate_limit import RateLimitMiddleware, RateLimitPolicy, _client_key
+from app.rate_limit import (
+    DEFAULT_POLICIES,
+    RateLimitMiddleware,
+    RateLimitPolicy,
+    _client_key,
+)
 
 
 def test_expensive_endpoint_is_burst_limited_but_other_routes_are_not() -> None:
@@ -47,3 +52,12 @@ def test_railway_real_ip_is_preferred_over_proxy_chain_and_socket() -> None:
     }
 
     assert _client_key(scope) == "203.0.113.8"
+
+
+def test_bounded_export_has_a_separate_conservative_default_limit() -> None:
+    policy = next(
+        item for item in DEFAULT_POLICIES if item.path_prefix == "/v1/export"
+    )
+    assert policy.method == "GET"
+    assert policy.per_client == 6
+    assert policy.global_limit == 30
