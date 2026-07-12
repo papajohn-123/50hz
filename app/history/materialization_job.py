@@ -317,7 +317,6 @@ class CoverageWrite:
     is_sufficient: bool
     missing_starts: tuple[str, ...]
     content_sha256: str
-    attributes: dict[str, Any]
 
 
 @dataclass(frozen=True, slots=True)
@@ -562,11 +561,6 @@ def build_materialized_chunk(
                     value.astimezone(UTC).isoformat() for value in coverage.missing_starts
                 ),
                 content_sha256=coverage_sha,
-                attributes={
-                    "identityVersion": IDENTITY_VERSION,
-                    "sourceEvidenceSha256": _checksum(interval_evidence),
-                    "missingIntervalCount": len(coverage.missing_starts),
-                },
             )
         )
         day_start = expected[0].start.astimezone(UTC)
@@ -1039,24 +1033,12 @@ async def _append_materialized_rows(
             unchanged += 1
             continue
         session.add(
-            ObservationCoverageDaily(
-                id=_row_id("coverage", target.key, write.settlement_date.isoformat(), revision),
-                metric_id=definition_id,
-                series_key=target.series_key,
-                geography="GB",
-                settlement_date=write.settlement_date,
-                expected_interval_count=write.expected_interval_count,
-                observed_interval_count=write.observed_interval_count,
-                duplicate_interval_count=write.duplicate_interval_count,
-                source_record_count=write.source_record_count,
-                coverage_fraction=write.coverage_fraction,
-                is_sufficient=write.is_sufficient,
-                missing_starts=list(write.missing_starts),
-                methodology_version=MATERIALIZATION_COVERAGE_VERSION,
+            _coverage_row(
+                definition_id=definition_id,
+                target=target,
+                write=write,
                 revision=revision,
-                content_sha256=write.content_sha256,
                 source_watermark_at=watermark,
-                attributes=write.attributes,
             )
         )
         inserted += 1
@@ -1122,6 +1104,34 @@ async def _append_materialized_rows(
         )
         inserted += 1
     return inserted, unchanged
+
+
+def _coverage_row(
+    *,
+    definition_id: str,
+    target: MaterializationTarget,
+    write: CoverageWrite,
+    revision: int,
+    source_watermark_at: datetime | None,
+) -> ObservationCoverageDaily:
+    return ObservationCoverageDaily(
+        id=_row_id("coverage", target.key, write.settlement_date.isoformat(), revision),
+        metric_id=definition_id,
+        series_key=target.series_key,
+        geography="GB",
+        settlement_date=write.settlement_date,
+        expected_interval_count=write.expected_interval_count,
+        observed_interval_count=write.observed_interval_count,
+        duplicate_interval_count=write.duplicate_interval_count,
+        source_record_count=write.source_record_count,
+        coverage_fraction=write.coverage_fraction,
+        is_sufficient=write.is_sufficient,
+        missing_starts=list(write.missing_starts),
+        methodology_version=MATERIALIZATION_COVERAGE_VERSION,
+        revision=revision,
+        content_sha256=write.content_sha256,
+        source_watermark_at=source_watermark_at,
+    )
 
 
 def _latest_by(rows: Sequence[Any], key: Callable[[Any], Any]) -> dict[Any, Any]:
