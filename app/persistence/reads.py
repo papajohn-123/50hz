@@ -29,7 +29,7 @@ from app.events.revisions import (
     EventRevisionDelta,
     RevisionFieldDelta,
 )
-from app.persistence.records import PUBLIC_SOURCE_PROVIDERS
+from app.persistence.records import PUBLIC_SOURCE_IDS, PUBLIC_SOURCE_PROVIDERS
 from app.sources.types import as_utc
 
 
@@ -861,6 +861,7 @@ def _public_sources_statement() -> Select[tuple[SourceMetadata]]:
         .where(
             SourceMetadata.active.is_(True),
             SourceMetadata.provider.in_(PUBLIC_SOURCE_PROVIDERS),
+            SourceMetadata.id.in_(PUBLIC_SOURCE_IDS),
         )
         .order_by(SourceMetadata.id)
     )

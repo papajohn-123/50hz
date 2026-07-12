@@ -52,11 +52,17 @@ def test_operational_failure_metadata_is_not_a_public_active_source() -> None:
         "history-backfill-v1:elexon.fuelinst:20260701T2300Z:20260702T2300Z"
     )
     live = job_source_metadata_values("elexon.fuelinst")
+    operational_alias = job_source_metadata_values("elexon.interconnectors")
+    forecast_alias = job_source_metadata_values("neso.carbon-national-forecast")
 
     assert backfill["provider"].startswith("history-backfill-v1")
     assert backfill["active"] is False
     assert live["provider"] == "elexon"
     assert live["active"] is True
+    assert operational_alias["provider"] == "elexon"
+    assert operational_alias["active"] is False
+    assert forecast_alias["provider"] == "neso"
+    assert forecast_alias["active"] is False
 
 
 def test_long_source_ids_are_stable_and_bounded() -> None:

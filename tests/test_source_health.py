@@ -308,9 +308,12 @@ def test_public_source_queries_exclude_internal_operational_providers() -> None:
     for statement in (health_sql, grid_sql):
         assert "source_metadata.active is true" in statement
         assert "source_metadata.provider in" in statement
+        assert "source_metadata.id in" in statement
         assert "elexon" in statement
         assert "neso" in statement
         assert "history-backfill-v1" not in statement
+        assert "elexon.interconnectors" not in statement
+        assert "neso.carbon-national-forecast" not in statement
 
 
 class FakeHealthRepository:

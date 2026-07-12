@@ -9,7 +9,7 @@ from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.db.models import IngestionRun, SourceMetadata
 from app.domain.enums import IngestionRunStatus
-from app.persistence.records import PUBLIC_SOURCE_PROVIDERS
+from app.persistence.records import PUBLIC_SOURCE_IDS, PUBLIC_SOURCE_PROVIDERS
 
 
 SessionFactory = Callable[[], AsyncSession]
@@ -87,6 +87,7 @@ def _public_sources_statement() -> Select[tuple[SourceMetadata]]:
         .where(
             SourceMetadata.active.is_(True),
             SourceMetadata.provider.in_(PUBLIC_SOURCE_PROVIDERS),
+            SourceMetadata.id.in_(PUBLIC_SOURCE_IDS),
         )
         .order_by(SourceMetadata.provider, SourceMetadata.dataset)
     )

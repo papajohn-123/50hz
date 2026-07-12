@@ -58,6 +58,17 @@ SOURCE_PROFILES: dict[str, SourceProfile] = {
 # placeholder metadata (for example one failed history chunk) must never become
 # a new user-facing publisher merely because it has a source_metadata row.
 PUBLIC_SOURCE_PROVIDERS = tuple(sorted(SOURCE_PROFILES))
+PUBLIC_SOURCE_IDS = (
+    "elexon.freq",
+    "elexon.fuelinst",
+    "elexon.indo",
+    "elexon.ndf",
+    "elexon.remit",
+    "elexon.syswarn",
+    "elexon.windfor",
+    "neso.carbon-intensity-national",
+    "neso.carbon-intensity-regional",
+)
 
 
 DATASET_CADENCE_SECONDS: dict[tuple[str, str], int] = {
@@ -154,7 +165,6 @@ def job_source_metadata_values(job_id: str) -> dict[str, Any]:
     provider, separator, dataset = base_job.partition(".")
     if not separator:
         provider, dataset = "worker", base_job
-    profile = SOURCE_PROFILES.get(provider.lower())
     base_url = {
         "elexon": "https://data.elexon.co.uk",
         "neso": "https://api.carbonintensity.org.uk",
@@ -164,7 +174,7 @@ def job_source_metadata_values(job_id: str) -> dict[str, Any]:
         dataset=dataset,
         request_url=base_url,
     )
-    if profile is None:
+    if values["id"] not in PUBLIC_SOURCE_IDS:
         values["display_name"] = f"50Hz worker — {dataset.upper()}"
         values["active"] = False
     return values
