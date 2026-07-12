@@ -72,21 +72,22 @@ struct AskGridInspector: View {
         }
     }
 
+    @ViewBuilder
     private var introduction: some View {
         VStack(alignment: .leading, spacing: 10) {
-            Text("Ask about the selected grid state, a change in generation, imports, carbon intensity, or a reported event.")
-                .font(.body)
-                .foregroundStyle(GridTheme.textSecondary)
-                .lineSpacing(4)
-            Text("50Hz asks its backend to gather bounded evidence before the model answers. It will not diagnose an outage from an output change alone.")
-                .font(.caption)
-                .foregroundStyle(GridTheme.textTertiary)
-
-            if !hasAcknowledgedProcessing {
+            if hasAcknowledgedProcessing {
+                Text("Ask about the selected grid state, a change in generation, imports, carbon intensity, or a reported event.")
+                    .font(.body)
+                    .foregroundStyle(GridTheme.textSecondary)
+                    .lineSpacing(4)
+                Text("50Hz gathers bounded evidence before the model answers. It will not diagnose an outage from an output change alone.")
+                    .font(.caption)
+                    .foregroundStyle(GridTheme.textTertiary)
+            } else {
                 VStack(alignment: .leading, spacing: 10) {
                     Label("Before your first question", systemImage: "hand.raised")
                         .font(.subheadline.weight(.semibold))
-                    Text("The question you enter and this selected grid time go to the 50Hz API. The API may send them to an OpenRouter-hosted model after gathering evidence. Do not include personal or confidential information.")
+                    Text("Your question and this selected grid time go to the 50Hz API and may reach an OpenRouter-hosted model. Do not include personal or confidential information.")
                         .font(.caption)
                         .foregroundStyle(GridTheme.textSecondary)
                         .lineSpacing(3)
