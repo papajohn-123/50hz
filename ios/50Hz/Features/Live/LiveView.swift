@@ -4,6 +4,7 @@ struct LiveView: View {
     @EnvironmentObject private var model: AppModel
     @State private var sharePayload: GridShareCardPayload?
     @State private var isDataDetailsPresented = false
+    @State private var isEventListPresented = false
 
     var body: some View {
         ZStack {
@@ -54,6 +55,12 @@ struct LiveView: View {
                     .presentationDragIndicator(.visible)
                     .presentationBackground(GridTheme.background)
             }
+        }
+        .sheet(isPresented: $isEventListPresented) {
+            ReportedEventsListSheet()
+                .presentationDetents([.large])
+                .presentationDragIndicator(.visible)
+                .presentationBackground(GridTheme.background)
         }
     }
 
@@ -109,6 +116,38 @@ struct LiveView: View {
                         .buttonStyle(.plain)
                         .padding(.trailing, 2)
                         .padding(.bottom, 2)
+                    }
+
+                    if model.timelineModeLabel == "LIVE" {
+                        Button {
+                            isEventListPresented = true
+                        } label: {
+                            HStack(spacing: 12) {
+                                Image(systemName: "exclamationmark.bubble")
+                                    .foregroundStyle(model.eventsError == nil ? GridTheme.liveCyan : GridTheme.staleAmber)
+                                    .frame(width: 22)
+                                VStack(alignment: .leading, spacing: 3) {
+                                    Text("Active reported events")
+                                        .font(.subheadline.weight(.semibold))
+                                        .foregroundStyle(GridTheme.textPrimary)
+                                    Text(model.eventsError == nil
+                                         ? "\(model.events.count) in the current server-ranked list"
+                                         : "Saved list · refresh incomplete")
+                                        .font(.caption2)
+                                        .foregroundStyle(GridTheme.textTertiary)
+                                }
+                                Spacer(minLength: 8)
+                                Image(systemName: "chevron.right")
+                                    .font(.caption)
+                                    .foregroundStyle(GridTheme.textTertiary)
+                                    .accessibilityHidden(true)
+                            }
+                            .frame(maxWidth: .infinity, minHeight: 54, alignment: .leading)
+                            .contentShape(Rectangle())
+                            .overlay(alignment: .bottom) { Hairline() }
+                        }
+                        .buttonStyle(.plain)
+                        .accessibilityHint("Opens the full active reported-event list")
                     }
 
                     if snapshot.generation.isEmpty {

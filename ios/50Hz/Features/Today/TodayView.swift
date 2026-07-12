@@ -2,6 +2,7 @@ import SwiftUI
 
 struct TodayView: View {
     @EnvironmentObject private var model: AppModel
+    @State private var isEventListPresented = false
 
     private var londonDate: String { LondonDay.localDateKey() }
 
@@ -16,6 +17,12 @@ struct TodayView: View {
         .gridPageBackground()
         .task(id: londonDate) {
             await model.loadTodayBriefing(localDate: londonDate)
+        }
+        .sheet(isPresented: $isEventListPresented) {
+            ReportedEventsListSheet()
+                .presentationDetents([.large])
+                .presentationDragIndicator(.visible)
+                .presentationBackground(GridTheme.background)
         }
     }
 
@@ -428,20 +435,21 @@ struct TodayView: View {
                     eventRow(event, briefing: briefing)
                 }
                 if TodayBriefingPresentation.shouldShowAllEvents(briefing.reportedEvents) {
-                    Text("Showing \(events.count) of \(briefing.reportedEvents.totalCount) server-ranked reported events.")
+                    Text("Showing \(events.count) of \(briefing.reportedEvents.totalCount) server-ranked active or next-24-hour reported events. The separate current active list can differ because it excludes upcoming notices.")
                         .font(.caption2)
                         .foregroundStyle(GridTheme.textTertiary)
                         .padding(.top, 10)
                     Button {
-                        model.selectedTab = .live
+                        isEventListPresented = true
                     } label: {
-                        Label("See all in Live", systemImage: "arrow.right")
+                        Label("Open current active list", systemImage: "list.bullet")
                             .font(.caption.weight(.semibold))
                             .foregroundStyle(GridTheme.liveCyan)
                             .frame(maxWidth: .infinity, minHeight: 44, alignment: .leading)
                             .contentShape(Rectangle())
                     }
                     .buttonStyle(.plain)
+                    .accessibilityHint("Opens the separate current active reported-event list")
                 }
             }
         }

@@ -12,6 +12,7 @@ struct EventDetailSheet: View {
     @State private var isExplaining = false
     @State private var detailError: String?
     @State private var explanationError: String?
+    @State private var isHistoryPresented = false
 
     private var displayedEvent: GridEvent { resolvedEvent ?? event }
 
@@ -54,6 +55,37 @@ struct EventDetailSheet: View {
                                 .frame(maxWidth: .infinity, minHeight: 44, alignment: .leading)
                                 .overlay(alignment: .bottom) { Hairline() }
                         }
+                    }
+
+                    if displayedEvent.isAuthoritativelyReported,
+                       InspectionEndpoint.isValidEventID(displayedEvent.id) {
+                        Button {
+                            isHistoryPresented = true
+                        } label: {
+                            HStack(spacing: 12) {
+                                Image(systemName: "clock.arrow.trianglehead.counterclockwise.rotate.90")
+                                    .foregroundStyle(GridTheme.liveCyan)
+                                    .frame(width: 22)
+                                VStack(alignment: .leading, spacing: 3) {
+                                    Text("Revision history")
+                                        .font(.subheadline.weight(.semibold))
+                                        .foregroundStyle(GridTheme.textPrimary)
+                                    Text("Current state, publisher changes and provenance")
+                                        .font(.caption2)
+                                        .foregroundStyle(GridTheme.textTertiary)
+                                }
+                                Spacer(minLength: 8)
+                                Image(systemName: "chevron.right")
+                                    .font(.caption)
+                                    .foregroundStyle(GridTheme.textTertiary)
+                                    .accessibilityHidden(true)
+                            }
+                            .frame(maxWidth: .infinity, minHeight: 54, alignment: .leading)
+                            .contentShape(Rectangle())
+                            .overlay(alignment: .bottom) { Hairline() }
+                        }
+                        .buttonStyle(.plain)
+                        .accessibilityHint("Opens the immutable reported-event revision list")
                     }
 
                     if let snapshot {
@@ -100,6 +132,12 @@ struct EventDetailSheet: View {
                 .presentationDetents([.large])
                 .presentationDragIndicator(.visible)
                 .presentationBackground(GridTheme.surface)
+        }
+        .sheet(isPresented: $isHistoryPresented) {
+            EventHistorySheet(eventID: displayedEvent.id, eventTitle: displayedEvent.title)
+                .presentationDetents([.large])
+                .presentationDragIndicator(.visible)
+                .presentationBackground(GridTheme.background)
         }
     }
 

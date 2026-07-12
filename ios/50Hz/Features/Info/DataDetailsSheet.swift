@@ -5,6 +5,8 @@ struct DataDetailsSheet: View {
     let mode: String
     @Environment(\.dismiss) private var dismiss
     @State private var inspectedAt = Date()
+    @State private var supplySort: SupplyTableSort = .output
+    @State private var interconnectorSort: InterconnectorTableSort = .magnitude
 
     private var summary: CurrentDataSummary {
         CurrentDataSummary.resolve(
@@ -33,6 +35,8 @@ struct DataDetailsSheet: View {
 
                     familySection
                     supplySection
+                    technicalTablesSection
+                    inspectionSection
                     sourceSection
                 }
                 .padding(GridTheme.horizontalPadding)
@@ -224,6 +228,218 @@ struct DataDetailsSheet: View {
         }
     }
 
+    private var technicalTablesSection: some View {
+        VStack(alignment: .leading, spacing: 26) {
+            VStack(alignment: .leading, spacing: 8) {
+                HStack(alignment: .center) {
+                    SectionLabel("Supply table", trailing: "DISPLAYED MIX")
+                    Spacer(minLength: 10)
+                    Menu {
+                        Picker("Sort supply", selection: $supplySort) {
+                            ForEach(SupplyTableSort.allCases) { sort in
+                                Text(sort.label).tag(sort)
+                            }
+                        }
+                    } label: {
+                        Label(supplySort.label, systemImage: "arrow.up.arrow.down")
+                            .font(.caption.weight(.semibold))
+                            .foregroundStyle(GridTheme.liveCyan)
+                            .frame(minHeight: 44)
+                    }
+                    .accessibilityLabel("Sort supply table by \(supplySort.label)")
+                }
+
+                if snapshot.generation.isEmpty {
+                    Text("No time-aligned supply rows are available in this current snapshot.")
+                        .font(.caption)
+                        .foregroundStyle(GridTheme.textSecondary)
+                        .frame(minHeight: 44, alignment: .leading)
+                } else {
+                    ForEach(sortedGeneration) { reading in
+                        HStack(alignment: .firstTextBaseline, spacing: 10) {
+                            VStack(alignment: .leading, spacing: 2) {
+                                Text(reading.fuel.displayName)
+                                    .font(.subheadline.weight(.medium))
+                                    .foregroundStyle(GridTheme.textPrimary)
+                                Text("\((reading.share * 100).formatted(.number.precision(.fractionLength(0...2))))% of displayed mix · \(reading.factClass.rawValue)")
+                                    .font(.caption2)
+                                    .foregroundStyle(GridTheme.textTertiary)
+                            }
+                            Spacer(minLength: 10)
+                            Text(exactMegawatts(reading.megawatts))
+                                .font(.subheadline)
+                                .fontDesign(.monospaced)
+                                .monospacedDigit()
+                                .foregroundStyle(GridTheme.textPrimary)
+                        }
+                        .frame(minHeight: 50)
+                        .overlay(alignment: .bottom) { Hairline() }
+                        .accessibilityElement(children: .combine)
+                        .accessibilityLabel("\(reading.fuel.displayName), \(exactMegawatts(reading.megawatts)), \((reading.share * 100).formatted(.number.precision(.fractionLength(0...2)))) percent of displayed mix")
+                    }
+                }
+                Text("These are exact values returned in this snapshot. The table inherits the partial transmission-visible boundary described above; its percentages are not total Great Britain generation shares.")
+                    .font(.caption2)
+                    .foregroundStyle(GridTheme.textTertiary)
+                    .lineSpacing(3)
+                    .padding(.top, 4)
+            }
+
+            VStack(alignment: .leading, spacing: 8) {
+                HStack(alignment: .center) {
+                    SectionLabel("Interconnector table", trailing: "SIGNED MW")
+                    Spacer(minLength: 10)
+                    Menu {
+                        Picker("Sort interconnectors", selection: $interconnectorSort) {
+                            ForEach(InterconnectorTableSort.allCases) { sort in
+                                Text(sort.label).tag(sort)
+                            }
+                        }
+                    } label: {
+                        Label(interconnectorSort.label, systemImage: "arrow.up.arrow.down")
+                            .font(.caption.weight(.semibold))
+                            .foregroundStyle(GridTheme.liveCyan)
+                            .frame(minHeight: 44)
+                    }
+                    .accessibilityLabel("Sort interconnector table by \(interconnectorSort.label)")
+                }
+
+                if snapshot.interconnectors.isEmpty {
+                    Text("No time-aligned interconnector rows are available in this current snapshot.")
+                        .font(.caption)
+                        .foregroundStyle(GridTheme.textSecondary)
+                        .frame(minHeight: 44, alignment: .leading)
+                } else {
+                    ForEach(sortedInterconnectors) { flow in
+                        HStack(alignment: .firstTextBaseline, spacing: 10) {
+                            VStack(alignment: .leading, spacing: 2) {
+                                Text(flow.name)
+                                    .font(.subheadline.weight(.medium))
+                                    .foregroundStyle(GridTheme.textPrimary)
+                                Text("\(flow.countryCode) · \(interconnectorDirection(flow.megawatts)) · \(flow.factClass.rawValue)")
+                                    .font(.caption2)
+                                    .foregroundStyle(GridTheme.textTertiary)
+                            }
+                            Spacer(minLength: 10)
+                            Text(signedMegawatts(flow.megawatts))
+                                .font(.subheadline)
+                                .fontDesign(.monospaced)
+                                .monospacedDigit()
+                                .foregroundStyle(flow.megawatts >= 0 ? GridTheme.liveCyan : GridTheme.forecastViolet)
+                        }
+                        .frame(minHeight: 50)
+                        .overlay(alignment: .bottom) { Hairline() }
+                        .accessibilityElement(children: .combine)
+                        .accessibilityLabel("\(flow.name), \(interconnectorDirection(flow.megawatts)), \(exactMegawatts(abs(flow.megawatts)))")
+                    }
+                }
+                Text("Positive values import into Britain; negative values export from Britain. Sort by absolute magnitude to compare physical direction without hiding the sign.")
+                    .font(.caption2)
+                    .foregroundStyle(GridTheme.textTertiary)
+                    .lineSpacing(3)
+                    .padding(.top, 4)
+            }
+        }
+    }
+
+    private var inspectionSection: some View {
+        VStack(alignment: .leading, spacing: 0) {
+            SectionLabel("Inspect & export")
+                .padding(.bottom, 7)
+
+            NavigationLink {
+                SourceStatusView()
+            } label: {
+                inspectionRow(
+                    title: "Source status",
+                    detail: "Delivery timing and current-fact coverage",
+                    symbol: "antenna.radiowaves.left.and.right"
+                )
+            }
+            .buttonStyle(.plain)
+
+            NavigationLink {
+                DataExportView()
+            } label: {
+                inspectionRow(
+                    title: "Export data",
+                    detail: "Up to 31 days · JSON or CSV · half-hour rows",
+                    symbol: "arrow.down.doc"
+                )
+            }
+            .buttonStyle(.plain)
+        }
+    }
+
+    private func inspectionRow(title: String, detail: String, symbol: String) -> some View {
+        HStack(spacing: 12) {
+            Image(systemName: symbol)
+                .foregroundStyle(GridTheme.liveCyan)
+                .frame(width: 22)
+            VStack(alignment: .leading, spacing: 3) {
+                Text(title)
+                    .font(.subheadline.weight(.semibold))
+                    .foregroundStyle(GridTheme.textPrimary)
+                Text(detail)
+                    .font(.caption2)
+                    .foregroundStyle(GridTheme.textTertiary)
+            }
+            Spacer(minLength: 8)
+            Image(systemName: "chevron.right")
+                .font(.caption)
+                .foregroundStyle(GridTheme.textTertiary)
+                .accessibilityHidden(true)
+        }
+        .frame(maxWidth: .infinity, minHeight: 56, alignment: .leading)
+        .contentShape(Rectangle())
+        .overlay(alignment: .bottom) { Hairline() }
+        .accessibilityElement(children: .combine)
+        .accessibilityHint("Opens \(title.lowercased())")
+    }
+
+    private var sortedGeneration: [FuelReading] {
+        snapshot.generation.sorted { lhs, rhs in
+            switch supplySort {
+            case .output:
+                if lhs.megawatts != rhs.megawatts { return lhs.megawatts > rhs.megawatts }
+            case .share:
+                if lhs.share != rhs.share { return lhs.share > rhs.share }
+            case .name:
+                return lhs.fuel.displayName.localizedCaseInsensitiveCompare(rhs.fuel.displayName) == .orderedAscending
+            }
+            return lhs.fuel.displayName < rhs.fuel.displayName
+        }
+    }
+
+    private var sortedInterconnectors: [InterconnectorFlow] {
+        snapshot.interconnectors.sorted { lhs, rhs in
+            switch interconnectorSort {
+            case .magnitude:
+                if abs(lhs.megawatts) != abs(rhs.megawatts) { return abs(lhs.megawatts) > abs(rhs.megawatts) }
+            case .signedFlow:
+                if lhs.megawatts != rhs.megawatts { return lhs.megawatts > rhs.megawatts }
+            case .name:
+                return lhs.name.localizedCaseInsensitiveCompare(rhs.name) == .orderedAscending
+            }
+            return lhs.name < rhs.name
+        }
+    }
+
+    private func signedMegawatts(_ value: Double) -> String {
+        let sign = value > 0 ? "+" : ""
+        return "\(sign)\(value.formatted(.number.precision(.fractionLength(0...2)))) MW"
+    }
+
+    private func exactMegawatts(_ value: Double) -> String {
+        "\(value.formatted(.number.precision(.fractionLength(0...2)))) MW"
+    }
+
+    private func interconnectorDirection(_ value: Double) -> String {
+        if value > 0 { return "Importing" }
+        if value < 0 { return "Exporting" }
+        return "No net flow"
+    }
+
     private func sourceRow(_ source: SourceReference, showsLink: Bool) -> some View {
         HStack(alignment: .top, spacing: 12) {
             Image(systemName: "doc.text.magnifyingglass")
@@ -402,5 +618,35 @@ private extension SourceReference {
             return URL(string: "https://carbonintensity.org.uk/")
         }
         return nil
+    }
+}
+
+private enum SupplyTableSort: String, CaseIterable, Identifiable {
+    case output
+    case share
+    case name
+
+    var id: String { rawValue }
+    var label: String {
+        switch self {
+        case .output: "Output"
+        case .share: "Displayed share"
+        case .name: "Name"
+        }
+    }
+}
+
+private enum InterconnectorTableSort: String, CaseIterable, Identifiable {
+    case magnitude
+    case signedFlow
+    case name
+
+    var id: String { rawValue }
+    var label: String {
+        switch self {
+        case .magnitude: "Magnitude"
+        case .signedFlow: "Signed flow"
+        case .name: "Name"
+        }
     }
 }
