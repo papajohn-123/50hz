@@ -4,46 +4,36 @@ from app.api.models import ConditionHeadline
 
 
 def cleanliness_label(carbon_intensity: float) -> str:
-    """Bootstrap bands until rolling GB percentiles have enough stored history."""
+    """Use broad, explicitly comparative bands until history supports percentiles."""
 
-    if carbon_intensity < 50:
-        return "Exceptionally clean"
     if carbon_intensity < 100:
-        return "Clean"
-    if carbon_intensity < 180:
-        return "Typical"
-    if carbon_intensity < 260:
-        return "Carbon intensive"
-    return "Exceptionally carbon intensive"
+        return "Lower carbon"
+    if carbon_intensity < 200:
+        return "Typical carbon"
+    return "Higher carbon"
 
 
 def balance_label(frequency_hz: float | None, *, active_system_warning: bool = False) -> str:
+    """Describe frequency only; never infer a formal system-balance condition."""
+
     if active_system_warning:
-        return "System event"
+        return "System warning"
     if frequency_hz is None:
-        return "Unknown"
+        return "Frequency unavailable"
     deviation = abs(frequency_hz - 50.0)
-    if deviation <= 0.05:
-        return "Comfortable"
     if deviation <= 0.10:
-        return "Balanced"
-    if deviation <= 0.15:
-        return "Tightening"
+        return "Frequency near 50 Hz"
     if deviation <= 0.20:
-        return "Stretched"
-    return "System event"
+        return "Frequency away from 50 Hz"
+    return "Frequency excursion"
 
 
 def energy_position_label(net_import_mw: float) -> str:
-    if net_import_mw <= -2_000:
-        return "Exporting strongly"
     if net_import_mw <= -250:
-        return "Exporting"
+        return "Net exporting"
     if net_import_mw < 250:
-        return "Broadly balanced"
-    if net_import_mw < 3_000:
-        return "Importing"
-    return "Import-dependent"
+        return "Near-neutral flows"
+    return "Net importing"
 
 
 def build_headline(
@@ -59,7 +49,7 @@ def build_headline(
     balance = balance_label(frequency_hz, active_system_warning=active_system_warning)
     position = energy_position_label(net_import_mw)
     total = sum(max(0.0, value) for value in generation_mw.values())
-    leader = max(generation_mw, key=generation_mw.__getitem__) if generation_mw else "Generation"
+    leader = max(generation_mw, key=generation_mw.__getitem__) if generation_mw else "Supply"
     share = generation_mw.get(leader, 0.0) / total * 100 if total else 0
     flow_gw = abs(net_import_mw) / 1_000
     flow_phrase = (
@@ -67,12 +57,13 @@ def build_headline(
         if net_import_mw < -250
         else f"importing {flow_gw:.1f} GW"
         if net_import_mw > 250
-        else "broadly balanced with neighbouring systems"
+        else "near neutral across the displayed interconnectors"
     )
     leader_label = leader.replace("_", " ").title()
     leader_verb = "are" if leader == "imports" else "is"
     interpretation = (
-        f"{leader_label} {leader_verb} the largest source at {share:.0f}% of generation. "
+        f"{leader_label} {leader_verb} the largest displayed supply component "
+        f"at {share:.0f}% of this partial mix. "
         f"Britain is {flow_phrase}; demand is {demand_mw / 1_000:.1f} GW."
     )
     return ConditionHeadline(
