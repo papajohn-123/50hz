@@ -1,8 +1,9 @@
 from __future__ import annotations
 
-from collections.abc import Callable, Iterable, Sequence
+from collections.abc import Callable, Iterable, Mapping, Sequence
 from dataclasses import dataclass
 from datetime import UTC, datetime, timedelta
+import re
 from typing import Any, TypeVar
 
 from sqlalchemy import Select, and_, func, or_, select
@@ -12,6 +13,8 @@ from sqlalchemy.orm import aliased
 from app.db.models import (
     CarbonObservation,
     DemandObservation,
+    EventLifecycleDelta,
+    EventLifecycleRevision,
     ForecastObservation,
     FrequencyObservation,
     GenerationObservation,
@@ -19,11 +22,33 @@ from app.db.models import (
     ReportedNotice,
     SourceMetadata,
 )
+from app.events.identity import is_stable_event_id
+from app.events.models import EventStatus
+from app.events.revisions import (
+    EventAuthority,
+    EventRevisionDelta,
+    RevisionFieldDelta,
+)
 from app.sources.types import as_utc
 
 
 SessionFactory = Callable[[], AsyncSession]
 ObservationRow = TypeVar("ObservationRow")
+MAX_ACTIVE_NOTICE_CANDIDATES = 500
+_INACTIVE_NOTICE_STATUSES = {
+    "cancelled",
+    "canceled",
+    "closed",
+    "complete",
+    "completed",
+    "dismissed",
+    "ended",
+    "inactive",
+    "replaced",
+    "resolved",
+    "superseded",
+    "withdrawn",
+}
 
 
 @dataclass(frozen=True, slots=True)
@@ -120,6 +145,108 @@ class ReportedNoticeRead:
     warning_type: str | None
     warning_text: str | None
     evidence: dict[str, Any]
+
+
+@dataclass(frozen=True, slots=True)
+class EventLifecycleRevisionRead:
+    """Public-safe immutable lifecycle state and its audited prior delta."""
+
+    revision_number: int
+    status: EventStatus
+    authority: EventAuthority
+    published_at: datetime
+    effective_start: datetime | None
+    effective_end: datetime | None
+    asset_id: str | None
+    asset_name: str | None
+    asset_identity_reliable: bool
+    unavailable_mw: float | None
+    normal_capacity_mw: float | None
+    planned: bool | None
+    reported_cause: str | None
+    evidence_checksum: str
+    material_reason: str | None
+    superseded_by_event_id: str | None
+    source_ids: tuple[str, ...]
+    source_record_ids: tuple[str, ...]
+    changes: tuple[RevisionFieldDelta, ...] = ()
+
+    def __post_init__(self) -> None:
+        if self.revision_number < 1:
+            raise ValueError("revision_number must be positive")
+        object.__setattr__(
+            self,
+            "published_at",
+            as_utc(self.published_at, field_name="published_at"),
+        )
+        if self.effective_start is not None:
+            object.__setattr__(
+                self,
+                "effective_start",
+                as_utc(self.effective_start, field_name="effective_start"),
+            )
+        if self.effective_end is not None:
+            object.__setattr__(
+                self,
+                "effective_end",
+                as_utc(self.effective_end, field_name="effective_end"),
+            )
+        if (
+            self.effective_start is not None
+            and self.effective_end is not None
+            and self.effective_end < self.effective_start
+        ):
+            raise ValueError("effective_end cannot precede effective_start")
+        if re.fullmatch(r"[0-9a-f]{64}", self.evidence_checksum) is None:
+            raise ValueError("evidence_checksum must be a lowercase SHA-256 digest")
+        if not self.source_ids or not all(item.strip() for item in self.source_ids):
+            raise ValueError("source_ids cannot be empty or blank")
+        if not self.source_record_ids or not all(
+            item.strip() for item in self.source_record_ids
+        ):
+            raise ValueError("source_record_ids cannot be empty or blank")
+
+
+@dataclass(frozen=True, slots=True)
+class EventLifecycleHistoryRead:
+    """Newest bounded public slice plus whole-lifecycle publication bounds."""
+
+    event_id: str
+    first_published_at: datetime
+    latest_published_at: datetime
+    total_revision_count: int
+    revisions: tuple[EventLifecycleRevisionRead, ...]
+
+    def __post_init__(self) -> None:
+        if not is_stable_event_id(self.event_id):
+            raise ValueError("event_id is not a stable public event ID")
+        object.__setattr__(
+            self,
+            "first_published_at",
+            as_utc(self.first_published_at, field_name="first_published_at"),
+        )
+        object.__setattr__(
+            self,
+            "latest_published_at",
+            as_utc(self.latest_published_at, field_name="latest_published_at"),
+        )
+        if self.latest_published_at < self.first_published_at:
+            raise ValueError("latest publication cannot precede first publication")
+        if not 1 <= len(self.revisions) <= 100:
+            raise ValueError("history slices must contain between 1 and 100 revisions")
+        if self.total_revision_count < len(self.revisions):
+            raise ValueError("total revision count cannot be below the returned slice")
+        numbers = [revision.revision_number for revision in self.revisions]
+        if numbers != sorted(numbers, reverse=True) or len(numbers) != len(set(numbers)):
+            raise ValueError("history revisions must be unique and newest first")
+
+    @property
+    def current(self) -> EventLifecycleRevisionRead:
+        return self.revisions[0]
+
+    @property
+    def is_truncated(self) -> bool:
+        return self.total_revision_count > len(self.revisions)
 
 
 @dataclass(frozen=True, slots=True)
@@ -463,9 +590,15 @@ class GridReadRepository:
         cutoff = as_utc(as_of or self._clock(), field_name="as_of")
         if warning_fresh_for_seconds <= 0:
             raise ValueError("warning_fresh_for_seconds must be positive")
+        warning_fresh_for = timedelta(seconds=warning_fresh_for_seconds)
         async with self._session_factory() as session:
             rows = (
-                await session.execute(_latest_notice_revisions_statement(cutoff))
+                await session.execute(
+                    _latest_notice_revisions_statement(
+                        cutoff,
+                        warning_fresh_for=warning_fresh_for,
+                    )
+                )
             ).scalars().all()
         notices = (map_reported_notice_read(row) for row in rows)
         return tuple(
@@ -474,7 +607,7 @@ class GridReadRepository:
             if _notice_is_active(
                 notice,
                 as_of=cutoff,
-                warning_fresh_for=timedelta(seconds=warning_fresh_for_seconds),
+                warning_fresh_for=warning_fresh_for,
             )
         )
 
@@ -548,6 +681,33 @@ class GridReadRepository:
         async with self._session_factory() as session:
             rows = (await session.execute(statement)).scalars().all()
         return tuple(map_reported_notice_read(row) for row in rows)
+
+    async def get_event_lifecycle_history(
+        self,
+        event_id: str,
+        *,
+        limit: int = 100,
+    ) -> EventLifecycleHistoryRead | None:
+        """Read a reported event's newest immutable revisions by stable ID.
+
+        This query deliberately selects only public-safe ledger columns. It does
+        not load the lifecycle JSON payload, raw source notice text, internal
+        database IDs, request URLs, or ingestion errors.
+        """
+
+        if not is_stable_event_id(event_id):
+            raise ValueError("event_id is not a stable public event ID")
+        if isinstance(limit, bool) or not isinstance(limit, int):
+            raise TypeError("limit must be an integer")
+        if not 1 <= limit <= 100:
+            raise ValueError("limit must be between 1 and 100")
+
+        statement = _event_lifecycle_history_statement(event_id, limit=limit)
+        async with self._session_factory() as session:
+            rows = (await session.execute(statement)).mappings().all()
+        if not rows:
+            return None
+        return map_event_lifecycle_history_read(rows)
 
     async def get_timeline(
         self,
@@ -772,6 +932,75 @@ def map_reported_notice_read(row: ReportedNotice) -> ReportedNoticeRead:
     )
 
 
+def map_event_lifecycle_history_read(
+    rows: Sequence[Mapping[str, Any]],
+) -> EventLifecycleHistoryRead:
+    if not rows:
+        raise ValueError("event lifecycle rows cannot be empty")
+    revisions: list[EventLifecycleRevisionRead] = []
+    expected_event_id = str(rows[0]["event_id"])
+    for row in rows:
+        event_id = str(row["event_id"])
+        if event_id != expected_event_id:
+            raise ValueError("event lifecycle query mixed event identities")
+        revision_number = int(row["revision_number"])
+        raw_changes = row.get("changes")
+        if raw_changes:
+            from_revision = row.get("from_revision")
+            to_revision = row.get("to_revision")
+            delta = EventRevisionDelta(
+                event_id=event_id,
+                from_revision=from_revision,
+                to_revision=to_revision,
+                changes=raw_changes,
+            )
+            if delta.to_revision != revision_number:
+                raise ValueError("lifecycle delta does not match its revision")
+            changes = delta.changes
+        else:
+            if revision_number > 1:
+                raise ValueError("later lifecycle revisions require an audited delta")
+            changes = ()
+
+        revisions.append(
+            EventLifecycleRevisionRead(
+                revision_number=revision_number,
+                status=EventStatus(row["status"]),
+                authority=EventAuthority(str(row["authority"])),
+                published_at=row["published_at"],
+                effective_start=row.get("effective_start"),
+                effective_end=row.get("effective_end"),
+                asset_id=_optional_public_text(row.get("asset_id")),
+                asset_name=_optional_public_text(row.get("asset_name")),
+                asset_identity_reliable=bool(row["asset_identity_reliable"]),
+                unavailable_mw=_optional_float(row.get("unavailable_mw")),
+                normal_capacity_mw=_optional_float(row.get("normal_capacity_mw")),
+                planned=row.get("planned"),
+                reported_cause=_optional_public_text(row.get("reported_cause")),
+                evidence_checksum=str(row["evidence_checksum"]),
+                material_reason=_optional_public_text(row.get("material_reason")),
+                superseded_by_event_id=_optional_public_text(
+                    row.get("superseded_by_event_id")
+                ),
+                source_ids=_public_id_tuple(row["source_ids"], "source_ids"),
+                source_record_ids=_public_id_tuple(
+                    row["source_record_ids"],
+                    "source_record_ids",
+                ),
+                changes=changes,
+            )
+        )
+
+    first = rows[0]
+    return EventLifecycleHistoryRead(
+        event_id=expected_event_id,
+        first_published_at=first["first_published_at"],
+        latest_published_at=first["latest_published_at"],
+        total_revision_count=int(first["total_revision_count"]),
+        revisions=tuple(revisions),
+    )
+
+
 def map_source_metadata_read(row: SourceMetadata) -> SourceMetadataRead:
     return SourceMetadataRead(
         id=row.id,
@@ -783,6 +1012,28 @@ def map_source_metadata_read(row: SourceMetadata) -> SourceMetadataRead:
         attribution=row.attribution,
         expected_cadence_seconds=row.expected_cadence_seconds,
     )
+
+
+def _public_id_tuple(value: Any, field_name: str) -> tuple[str, ...]:
+    if not isinstance(value, (list, tuple)):
+        raise ValueError(f"{field_name} must be a JSON array")
+    values = tuple(str(item).strip() for item in value)
+    if not values or any(not item for item in values):
+        raise ValueError(f"{field_name} cannot be empty or blank")
+    return values
+
+
+def _optional_public_text(value: Any) -> str | None:
+    if value is None:
+        return None
+    normalized = str(value).strip()
+    if not normalized:
+        return None
+    return normalized if len(normalized) <= 1_000 else normalized[:999] + "…"
+
+
+def _optional_float(value: Any) -> float | None:
+    return float(value) if value is not None else None
 
 
 def _provenance(row: Any) -> ReadProvenance:
@@ -960,7 +1211,39 @@ def _forecast_history_statement(
     )
 
 
-def _latest_notice_revisions_statement(as_of: datetime) -> Select:
+def _latest_notice_revisions_statement(
+    as_of: datetime,
+    *,
+    warning_fresh_for: timedelta,
+) -> Select:
+    warning_floor = as_of - warning_fresh_for
+    candidate_identities = (
+        select(
+            ReportedNotice.source_id.label("source_id"),
+            ReportedNotice.notice_kind.label("notice_kind"),
+            ReportedNotice.external_id.label("external_id"),
+        )
+        .where(
+            ReportedNotice.published_at <= as_of,
+            or_(
+                and_(
+                    ReportedNotice.notice_kind == "system_warning",
+                    ReportedNotice.published_at >= warning_floor,
+                ),
+                and_(
+                    ReportedNotice.notice_kind == "remit_unavailability",
+                    ReportedNotice.event_start.is_not(None),
+                    ReportedNotice.event_start <= as_of,
+                    or_(
+                        ReportedNotice.event_end.is_(None),
+                        ReportedNotice.event_end > as_of,
+                    ),
+                ),
+            ),
+        )
+        .distinct()
+        .subquery()
+    )
     rank = func.row_number().over(
         partition_by=(
             ReportedNotice.source_id,
@@ -976,14 +1259,110 @@ def _latest_notice_revisions_statement(as_of: datetime) -> Select:
     ).label("notice_rank")
     ranked = (
         select(ReportedNotice, rank)
+        .join(
+            candidate_identities,
+            and_(
+                candidate_identities.c.source_id == ReportedNotice.source_id,
+                candidate_identities.c.notice_kind == ReportedNotice.notice_kind,
+                candidate_identities.c.external_id == ReportedNotice.external_id,
+            ),
+        )
         .where(ReportedNotice.published_at <= as_of)
         .subquery()
     )
     latest = aliased(ReportedNotice, ranked)
+    normalized_status = func.lower(
+        func.replace(
+            func.replace(func.coalesce(latest.event_status, ""), " ", "_"),
+            "-",
+            "_",
+        )
+    )
     return (
         select(latest)
-        .where(ranked.c.notice_rank == 1)
-        .order_by(latest.notice_kind, latest.published_at.desc())
+        .where(
+            ranked.c.notice_rank == 1,
+            or_(
+                and_(
+                    latest.notice_kind == "system_warning",
+                    latest.published_at >= warning_floor,
+                ),
+                and_(
+                    latest.notice_kind == "remit_unavailability",
+                    latest.event_start.is_not(None),
+                    latest.event_start <= as_of,
+                    or_(latest.event_end.is_(None), latest.event_end > as_of),
+                    normalized_status.notin_(_INACTIVE_NOTICE_STATUSES),
+                ),
+            ),
+        )
+        # Keep authoritative system warnings inside the safety cap even during
+        # an unusually large REMIT event set; presentation performs the final
+        # user-facing relevance ordering.
+        .order_by(latest.notice_kind.desc(), latest.published_at.desc())
+        .limit(MAX_ACTIVE_NOTICE_CANDIDATES)
+    )
+
+
+def _event_lifecycle_history_statement(event_id: str, *, limit: int) -> Select:
+    """Select only the bounded public ledger projection for one reported event."""
+
+    return (
+        select(
+            EventLifecycleRevision.event_id.label("event_id"),
+            EventLifecycleRevision.revision_number.label("revision_number"),
+            EventLifecycleRevision.status.label("status"),
+            EventLifecycleRevision.authority.label("authority"),
+            EventLifecycleRevision.published_at.label("published_at"),
+            EventLifecycleRevision.effective_start.label("effective_start"),
+            EventLifecycleRevision.effective_end.label("effective_end"),
+            EventLifecycleRevision.asset_id.label("asset_id"),
+            EventLifecycleRevision.asset_name.label("asset_name"),
+            EventLifecycleRevision.asset_identity_reliable.label(
+                "asset_identity_reliable"
+            ),
+            EventLifecycleRevision.unavailable_mw.label("unavailable_mw"),
+            EventLifecycleRevision.normal_capacity_mw.label("normal_capacity_mw"),
+            EventLifecycleRevision.planned.label("planned"),
+            EventLifecycleRevision.reported_cause.label("reported_cause"),
+            EventLifecycleRevision.evidence_checksum.label("evidence_checksum"),
+            EventLifecycleRevision.material_reason.label("material_reason"),
+            EventLifecycleRevision.superseded_by_event_id.label(
+                "superseded_by_event_id"
+            ),
+            EventLifecycleRevision.source_ids.label("source_ids"),
+            EventLifecycleRevision.source_record_ids.label("source_record_ids"),
+            EventLifecycleDelta.from_revision.label("from_revision"),
+            EventLifecycleDelta.to_revision.label("to_revision"),
+            EventLifecycleDelta.changes.label("changes"),
+            func.min(EventLifecycleRevision.published_at)
+            .over(partition_by=EventLifecycleRevision.event_id)
+            .label("first_published_at"),
+            func.max(EventLifecycleRevision.published_at)
+            .over(partition_by=EventLifecycleRevision.event_id)
+            .label("latest_published_at"),
+            func.count(EventLifecycleRevision.revision_number)
+            .over(partition_by=EventLifecycleRevision.event_id)
+            .label("total_revision_count"),
+        )
+        .outerjoin(
+            EventLifecycleDelta,
+            and_(
+                EventLifecycleDelta.event_id == EventLifecycleRevision.event_id,
+                EventLifecycleDelta.to_revision
+                == EventLifecycleRevision.revision_number,
+            ),
+        )
+        .where(
+            EventLifecycleRevision.event_id == event_id,
+            EventLifecycleRevision.event_kind == "reported",
+            EventLifecycleRevision.evidence_class == "reported",
+        )
+        .order_by(
+            EventLifecycleRevision.revision_number.desc(),
+            EventLifecycleRevision.published_at.desc(),
+        )
+        .limit(limit)
     )
 
 
@@ -1056,13 +1435,7 @@ def _notice_is_active(
     if notice.event_end is not None and notice.event_end <= as_of:
         return False
     status = (notice.event_status or "").strip().casefold().replace(" ", "_")
-    return status not in {
-        "cancelled",
-        "canceled",
-        "dismissed",
-        "withdrawn",
-        "inactive",
-    }
+    return status not in _INACTIVE_NOTICE_STATUSES
 
 
 def _notice_is_upcoming(
@@ -1078,13 +1451,7 @@ def _notice_is_upcoming(
     if notice.event_end is not None and notice.event_end <= notice.event_start:
         return False
     status = (notice.event_status or "").strip().casefold().replace(" ", "_")
-    return status not in {
-        "cancelled",
-        "canceled",
-        "dismissed",
-        "withdrawn",
-        "inactive",
-    }
+    return status not in _INACTIVE_NOTICE_STATUSES
 
 
 def _between_statement(model: type, start: datetime, end: datetime) -> Select:

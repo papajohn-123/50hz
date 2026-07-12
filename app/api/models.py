@@ -4,6 +4,8 @@ from typing import Literal, Self
 
 from pydantic import AwareDatetime, BaseModel, ConfigDict, Field, model_validator
 
+from app.events.models import EventStatus
+from app.events.revisions import EventAuthority
 from app.metrics import MetricClassification, MetricFamily
 
 
@@ -102,6 +104,122 @@ class GridEvent(MobileModel):
     started_at: AwareDatetime
     source_ids: list[str] = Field(alias="sourceIDs")
     is_authoritatively_reported: bool
+
+
+class EventHistoryChangedField(StrEnum):
+    UNAVAILABLE_MW = "unavailableMW"
+    NORMAL_CAPACITY_MW = "normalCapacityMW"
+    EFFECTIVE_START = "effectiveStart"
+    EFFECTIVE_END = "effectiveEnd"
+    STATUS = "status"
+    REPORTED_CAUSE = "reportedCause"
+    EVIDENCE_CHECKSUM = "evidenceChecksum"
+    MATERIAL_REASON = "materialReason"
+
+
+class EventHistoryFieldChange(MobileModel):
+    field: EventHistoryChangedField
+    before: float | AwareDatetime | str | None
+    after: float | AwareDatetime | str | None
+
+
+class EventHistoryEffectiveWindow(MobileModel):
+    start: AwareDatetime | None = None
+    end: AwareDatetime | None = None
+
+    @model_validator(mode="after")
+    def validate_window(self) -> Self:
+        if self.start is None and self.end is None:
+            raise ValueError("effective window requires a start or end")
+        if self.start is not None and self.end is not None and self.end < self.start:
+            raise ValueError("effective window end cannot precede start")
+        return self
+
+
+class EventHistoryReportedAsset(MobileModel):
+    asset_id: str | None = Field(default=None, alias="assetID", max_length=200)
+    name: str | None = Field(default=None, max_length=300)
+    identity_reliable: bool
+
+    @model_validator(mode="after")
+    def reliable_identity_has_id(self) -> Self:
+        if self.identity_reliable and self.asset_id is None:
+            raise ValueError("reliable asset identity requires assetID")
+        if self.asset_id is None and self.name is None:
+            raise ValueError("reported asset requires an ID or name")
+        return self
+
+
+class EventHistoryReportedCapacity(MobileModel):
+    unavailable_mw: float | None = Field(default=None, alias="unavailableMW", ge=0)
+    normal_capacity_mw: float | None = Field(
+        default=None,
+        alias="normalCapacityMW",
+        gt=0,
+    )
+
+    @model_validator(mode="after")
+    def capacity_has_a_reported_value(self) -> Self:
+        if self.unavailable_mw is None and self.normal_capacity_mw is None:
+            raise ValueError("reported capacity requires at least one value")
+        return self
+
+
+class EventHistoryRevision(MobileModel):
+    revision_number: int = Field(ge=1)
+    status: EventStatus
+    authority: EventAuthority
+    evidence_class: Literal["reported"] = "reported"
+    published_at: AwareDatetime
+    effective_window: EventHistoryEffectiveWindow | None = None
+    reported_asset: EventHistoryReportedAsset | None = None
+    reported_capacity: EventHistoryReportedCapacity | None = None
+    planned: bool | None = None
+    reported_cause: str | None = Field(default=None, max_length=1_000)
+    material_reason: str | None = Field(default=None, max_length=500)
+    superseded_by_event_id: str | None = Field(
+        default=None,
+        alias="supersededByEventID",
+        pattern=r"^evt_[0-9a-f]{20}$",
+    )
+    source_ids: list[str] = Field(alias="sourceIDs", min_length=1, max_length=16)
+    source_record_ids: list[str] = Field(
+        alias="sourceRecordIDs",
+        min_length=1,
+        max_length=100,
+    )
+    evidence_checksum: str = Field(pattern=r"^[0-9a-f]{64}$")
+    changes: list[EventHistoryFieldChange] = Field(default_factory=list, max_length=8)
+
+
+class EventHistoryResponse(MobileModel):
+    schema_version: Literal["1.0"] = "1.0"
+    event_id: str = Field(alias="eventID", pattern=r"^evt_[0-9a-f]{20}$")
+    lifecycle_status: EventStatus
+    revision_order: Literal["newestFirst"] = "newestFirst"
+    revision_count: int = Field(ge=1)
+    returned_revision_count: int = Field(ge=1, le=100)
+    is_truncated: bool
+    first_published_at: AwareDatetime
+    latest_published_at: AwareDatetime
+    revisions: list[EventHistoryRevision] = Field(min_length=1, max_length=100)
+
+    @model_validator(mode="after")
+    def validate_history_summary(self) -> Self:
+        if self.returned_revision_count != len(self.revisions):
+            raise ValueError("returned revision count must match revisions")
+        if self.revision_count < self.returned_revision_count:
+            raise ValueError("revision count cannot be below the returned slice")
+        if self.is_truncated != (self.revision_count > self.returned_revision_count):
+            raise ValueError("truncation must match revision counts")
+        if self.lifecycle_status is not self.revisions[0].status:
+            raise ValueError("lifecycle status must match the newest revision")
+        if self.latest_published_at < self.first_published_at:
+            raise ValueError("latest publication cannot precede first publication")
+        numbers = [revision.revision_number for revision in self.revisions]
+        if numbers != sorted(numbers, reverse=True) or len(numbers) != len(set(numbers)):
+            raise ValueError("revisions must be unique and newest first")
+        return self
 
 
 class DataFamilyStatus(MobileModel):

@@ -13,6 +13,7 @@ from app.api.local_windows import (
 )
 from app.api.models import (
     GridEvent,
+    EventHistoryResponse,
     MetricRegistryResponse,
     MobileFreshness,
     GridSnapshotResponse,
@@ -22,7 +23,7 @@ from app.api.models import (
     SourceMetadataResponse,
 )
 from app.briefing import Briefing
-from app.api.notices import present_reported_notices
+from app.api.notices import present_event_history, present_reported_notices
 from app.api.presenter import (
     GridDataUnavailableError,
     aggregate_generation,
@@ -32,6 +33,7 @@ from app.api.presenter import (
 from app.api.regional import present_region
 from app.game.models import DailyGame
 from app.game.service import build_daily_game
+from app.events.identity import is_stable_event_id
 from app.persistence import GridReadRepository
 from app.regions import RegionalCarbonProvider, RegionalDataUnavailableError
 from app.sources.exceptions import SourceError
@@ -96,6 +98,34 @@ async def events(
     limit: int = Query(default=25, ge=1, le=100),
 ) -> list[GridEvent]:
     return present_reported_notices(await repository.get_active_notices())[:limit]
+
+
+@router.get(
+    "/events/{event_id}/history",
+    response_model=EventHistoryResponse,
+    tags=["events"],
+    summary="Get reported event revision history",
+    responses={404: {"description": "Reported event history not found"}},
+)
+async def event_history(
+    event_id: str,
+    repository: Repository,
+    limit: int = Query(
+        default=100,
+        ge=1,
+        le=100,
+        description="Newest immutable lifecycle revisions to return",
+    ),
+) -> EventHistoryResponse:
+    # Invalid and unknown IDs intentionally share one public response. The
+    # stable ID is non-reversible and the query never falls back to active-only
+    # notices, so terminal or otherwise inactive events remain resolvable.
+    if not is_stable_event_id(event_id):
+        raise HTTPException(status_code=404, detail="Event history not found")
+    history = await repository.get_event_lifecycle_history(event_id, limit=limit)
+    if history is None:
+        raise HTTPException(status_code=404, detail="Event history not found")
+    return present_event_history(history)
 
 
 @router.get("/events/{event_id}", response_model=GridEvent, tags=["events"])
