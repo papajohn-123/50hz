@@ -41,15 +41,17 @@ async def privacy() -> HTMLResponse:
         title="Privacy policy",
         body="""
 <h1>Privacy policy</h1>
-<p class="updated">Effective 11 July 2026 · pre-release policy</p>
+<p class="updated">Effective 12 July 2026 · pre-release policy</p>
 <p>50Hz is a free electricity-system information app. It has no account system,
 advertising SDK, analytics SDK or cross-app tracking.</p>
 
 <h2>Information you choose to provide</h2>
-<p>If you use Mine, the app stores your postcode on your device and sends only
+<p>If you use Local, the app stores your postcode on your device and sends only
 its outward code (for example, SW1A) to the 50Hz API to retrieve public regional
-carbon-intensity data. 50Hz does not request device location. Clearing the app’s
-data or deleting the app removes its on-device preferences and cache.</p>
+carbon-intensity forecast data for the corresponding electricity-network region.
+This is not address-level or household measurement. 50Hz does not request device
+location. Clearing the app’s data or deleting the app removes its on-device
+preferences and cache.</p>
 <p>If you use Ask the Grid, your question and the selected grid time are sent to
 the 50Hz API and then to OpenRouter so a model can explain the source-backed grid
 facts. Do not put personal or confidential information in a question. 50Hz asks
@@ -98,7 +100,7 @@ trading, safety or emergency decisions.</p>
 <ul>
   <li>Check the data-state label in the app. Delayed and offline values are kept visibly labelled.</li>
   <li>Pull to refresh or use Retry after a connection error.</li>
-  <li>For Mine, enter a valid UK postcode; only the outward code leaves the device.</li>
+  <li>For Local, enter a valid UK postcode; only the outward code leaves the device.</li>
   <li>Include the app version, iOS version, time and the screen affected. Do not include a full postcode or other personal information.</li>
 </ul>
 
