@@ -359,6 +359,17 @@ struct DataDetailsSheet: View {
             .buttonStyle(.plain)
 
             NavigationLink {
+                ForecastVerificationView()
+            } label: {
+                inspectionRow(
+                    title: "Forecast review",
+                    detail: "National MAE, bias and WAPE by horizon",
+                    symbol: "chart.line.uptrend.xyaxis"
+                )
+            }
+            .buttonStyle(.plain)
+
+            NavigationLink {
                 DataExportView()
             } label: {
                 inspectionRow(

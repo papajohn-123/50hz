@@ -3,6 +3,8 @@ import Foundation
 protocol InspectionDataProviding: Sendable {
     func cachedSourceStatus() async -> SourceStatusResponse?
     func sourceStatus() async throws -> SourceStatusResponse
+    func cachedForecastVerification() async -> ForecastVerificationResponse?
+    func forecastVerification() async throws -> ForecastVerificationResponse
     func cachedEventHistory(eventID: String) async -> EventHistoryResponse?
     func eventHistory(eventID: String) async throws -> EventHistoryResponse
     func cachedExportSchema() async -> ExportSchemaResponse?
@@ -10,10 +12,19 @@ protocol InspectionDataProviding: Sendable {
     func prepareExport(_ request: ExportRequestSpec) async throws -> PreparedExport
 }
 
+extension InspectionDataProviding {
+    func cachedForecastVerification() async -> ForecastVerificationResponse? { nil }
+
+    func forecastVerification() async throws -> ForecastVerificationResponse {
+        throw GridAPIError.invalidResponse
+    }
+}
+
 struct InspectionCacheKey: Hashable, Sendable {
     let rawValue: String
 
     static let sourceStatus = Self(rawValue: "source-status")
+    static let forecastVerification = Self(rawValue: "forecast-verification-all")
     static let exportSchema = Self(rawValue: "export-schema")
 
     static func eventHistory(_ eventID: String) -> Self? {
@@ -188,12 +199,14 @@ actor HTTPInspectionClient: InspectionDataProviding {
 
     private enum Endpoint: Hashable {
         case sourceStatus
+        case forecastVerification
         case eventHistory(String)
         case exportSchema
 
         var cacheKey: InspectionCacheKey? {
             switch self {
             case .sourceStatus: .sourceStatus
+            case .forecastVerification: .forecastVerification
             case .eventHistory(let eventID): .eventHistory(eventID)
             case .exportSchema: .exportSchema
             }
@@ -205,6 +218,7 @@ actor HTTPInspectionClient: InspectionDataProviding {
     private let cache: InspectionDiskCache
     private let artifactStore: ExportArtifactStore
     private var sourceStatusTask: Task<SourceStatusResponse, Error>?
+    private var forecastVerificationTask: Task<ForecastVerificationResponse, Error>?
     private var eventHistoryTasks: [String: Task<EventHistoryResponse, Error>] = [:]
     private var exportSchemaTask: Task<ExportSchemaResponse, Error>?
     private var exportTasks: [ExportRequestSpec: Task<PreparedExport, Error>] = [:]
@@ -239,6 +253,10 @@ actor HTTPInspectionClient: InspectionDataProviding {
         await decodeCached(.sourceStatus, as: SourceStatusResponse.self)
     }
 
+    func cachedForecastVerification() async -> ForecastVerificationResponse? {
+        await decodeCached(.forecastVerification, as: ForecastVerificationResponse.self)
+    }
+
     func cachedEventHistory(eventID: String) async -> EventHistoryResponse? {
         guard InspectionEndpoint.isValidEventID(eventID) else { return nil }
         let result = await decodeCached(.eventHistory(eventID), as: EventHistoryResponse.self)
@@ -267,6 +285,24 @@ actor HTTPInspectionClient: InspectionDataProviding {
         sourceStatusTask = task
         defer { sourceStatusTask = nil }
         return try await awaitValue(of: task)
+    }
+
+    func forecastVerification() async throws -> ForecastVerificationResponse {
+        if let forecastVerificationTask { return try await forecastVerificationTask.value }
+        let task = Task<ForecastVerificationResponse, Error> {
+            try await Self.fetch(
+                endpoint: .forecastVerification,
+                url: Self.forecastVerificationURL(baseURL: baseURL),
+                session: session,
+                cache: cache,
+                as: ForecastVerificationResponse.self
+            )
+        }
+        forecastVerificationTask = task
+        defer { forecastVerificationTask = nil }
+        // Do not cancel the shared request when one view disappears. A second
+        // inspector/Local waiter can safely receive the same bounded result.
+        return try await task.value
     }
 
     func eventHistory(eventID: String) async throws -> EventHistoryResponse {
@@ -367,6 +403,10 @@ actor HTTPInspectionClient: InspectionDataProviding {
 
     nonisolated static func sourceStatusURL(baseURL: URL) -> URL {
         baseURL.appendingPathComponent("v1/sources/status")
+    }
+
+    nonisolated static func forecastVerificationURL(baseURL: URL) -> URL {
+        baseURL.appendingPathComponent("v1/forecasts/verification")
     }
 
     nonisolated static func eventHistoryURL(baseURL: URL, eventID: String) -> URL {

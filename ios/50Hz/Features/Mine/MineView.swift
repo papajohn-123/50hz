@@ -19,6 +19,7 @@ struct MineView: View {
     @AppStorage("mine.lastPlannedActivity") private var lastPlannedActivityRawValue = LocalActivityPreset.laundry.rawValue
     @AppStorage("mine.reminderActivity") private var reminderActivityRawValue = ""
     @StateObject private var reminder = LocalReminderCoordinator()
+    @StateObject private var forecastReview: ForecastVerificationViewModel
     @State private var draftPostcode = ""
     @State private var postcodeInputError: String?
     @State private var usesCustomPlanningBounds = false
@@ -26,6 +27,12 @@ struct MineView: View {
     @FocusState private var postcodeFocused: Bool
 
     private let londonTimeZone = TimeZone(identifier: "Europe/London") ?? .current
+
+    init(inspectionClient: any InspectionDataProviding = HTTPInspectionClient()) {
+        _forecastReview = StateObject(
+            wrappedValue: ForecastVerificationViewModel(client: inspectionClient)
+        )
+    }
 
     private var selectedActivity: LocalActivityPreset {
         LocalActivityPreset(rawValue: activityRawValue) ?? .laundry
@@ -148,6 +155,7 @@ struct MineView: View {
                 durationMinutes: selectedDurationMinutes
             )
         }
+        .task { await forecastReview.load() }
         .task(id: reminderPlan) {
             await reminder.refresh(for: reminderPlan)
         }
@@ -572,6 +580,26 @@ struct MineView: View {
                         .font(.caption)
                         .foregroundStyle(GridTheme.textSecondary)
                 }
+            }
+
+            if let qualification = ForecastVerificationSelection.localCarbonQualification(
+                response: forecastReview.response,
+                local: response,
+                window: window
+            ) {
+                VStack(alignment: .leading, spacing: 4) {
+                    Text("TYPICAL RECENT ERROR")
+                        .font(.caption2.weight(.semibold))
+                        .tracking(0.8)
+                        .foregroundStyle(GridTheme.textTertiary)
+                    Text(ForecastVerificationPresentation.localQualificationCopy(qualification))
+                        .font(.caption)
+                        .foregroundStyle(GridTheme.textSecondary)
+                    Text(ForecastVerificationPresentation.localQualificationWindow(qualification))
+                        .font(.caption2)
+                        .foregroundStyle(GridTheme.textTertiary)
+                }
+                .accessibilityElement(children: .combine)
             }
 
             coverageDetails(response.plan.coverage)
