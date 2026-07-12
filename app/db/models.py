@@ -540,6 +540,257 @@ class ReportedNotice(Base):
     )
 
 
+class MetricDefinition(TimestampMixin, Base):
+    """Versioned identity and plain-language contract for a comparable series."""
+
+    __tablename__ = "metric_definitions"
+
+    id: Mapped[str] = mapped_column(String(120), primary_key=True)
+    identity_version: Mapped[str] = mapped_column(String(80), nullable=False)
+    display_name: Mapped[str] = mapped_column(String(160), nullable=False)
+    unit: Mapped[str] = mapped_column(String(32), nullable=False)
+    geography_scope: Mapped[str] = mapped_column(String(80), nullable=False)
+    fact_class: Mapped[str] = mapped_column(String(32), nullable=False)
+    methodology_version: Mapped[str] = mapped_column(String(120), nullable=False)
+    source_id: Mapped[str] = mapped_column(
+        ForeignKey("source_metadata.id", ondelete="RESTRICT"), nullable=False
+    )
+    definition: Mapped[str] = mapped_column(Text, nullable=False)
+    inclusions: Mapped[list[str]] = mapped_column(
+        JSON_DOCUMENT, nullable=False, default=list, server_default=text("'[]'")
+    )
+    exclusions: Mapped[list[str]] = mapped_column(
+        JSON_DOCUMENT, nullable=False, default=list, server_default=text("'[]'")
+    )
+    expected_interval_minutes: Mapped[int | None] = mapped_column(SmallInteger)
+    active: Mapped[bool] = mapped_column(
+        Boolean, nullable=False, default=True, server_default=text("true")
+    )
+    attributes: Mapped[dict[str, Any]] = mapped_column(
+        JSON_DOCUMENT, nullable=False, default=dict, server_default=text("'{}'")
+    )
+
+    __table_args__ = (
+        CheckConstraint(
+            "expected_interval_minutes IS NULL OR expected_interval_minutes > 0",
+            name="positive_metric_interval",
+        ),
+        UniqueConstraint(
+            "id",
+            "identity_version",
+            "methodology_version",
+            name="uq_metric_definition_identity",
+        ),
+        Index("ix_metric_definitions_active", "active", "id"),
+    )
+
+
+class ObservationCoverageDaily(Base):
+    """Coverage evidence for one compatible metric series and settlement day."""
+
+    __tablename__ = "observation_coverage_daily"
+
+    id: Mapped[uuid.UUID] = mapped_column(Uuid, primary_key=True, default=uuid.uuid4)
+    metric_id: Mapped[str] = mapped_column(
+        ForeignKey("metric_definitions.id", ondelete="RESTRICT"), nullable=False
+    )
+    series_key: Mapped[str] = mapped_column(String(160), nullable=False)
+    geography: Mapped[str] = mapped_column(String(80), nullable=False)
+    settlement_date: Mapped[date] = mapped_column(Date, nullable=False)
+    expected_interval_count: Mapped[int] = mapped_column(SmallInteger, nullable=False)
+    observed_interval_count: Mapped[int] = mapped_column(SmallInteger, nullable=False)
+    duplicate_interval_count: Mapped[int] = mapped_column(
+        SmallInteger, nullable=False, default=0, server_default="0"
+    )
+    source_record_count: Mapped[int] = mapped_column(Integer, nullable=False)
+    coverage_fraction: Mapped[float] = mapped_column(Float, nullable=False)
+    is_sufficient: Mapped[bool] = mapped_column(Boolean, nullable=False)
+    missing_starts: Mapped[list[str]] = mapped_column(
+        JSON_DOCUMENT, nullable=False, default=list, server_default=text("'[]'")
+    )
+    methodology_version: Mapped[str] = mapped_column(String(120), nullable=False)
+    source_watermark_at: Mapped[datetime] = mapped_column(
+        DateTime(timezone=True), nullable=False
+    )
+    computed_at: Mapped[datetime] = mapped_column(
+        DateTime(timezone=True), nullable=False, server_default=func.now()
+    )
+
+    __table_args__ = (
+        CheckConstraint(
+            "expected_interval_count BETWEEN 46 AND 50",
+            name="valid_daily_expected_intervals",
+        ),
+        CheckConstraint(
+            "observed_interval_count BETWEEN 0 AND expected_interval_count",
+            name="valid_daily_observed_intervals",
+        ),
+        CheckConstraint(
+            "duplicate_interval_count >= 0",
+            name="nonnegative_daily_duplicate_intervals",
+        ),
+        CheckConstraint(
+            "source_record_count >= observed_interval_count",
+            name="valid_daily_source_record_count",
+        ),
+        CheckConstraint(
+            "coverage_fraction >= 0 AND coverage_fraction <= 1",
+            name="bounded_daily_coverage",
+        ),
+        UniqueConstraint(
+            "metric_id",
+            "series_key",
+            "geography",
+            "settlement_date",
+            "methodology_version",
+            name="uq_daily_coverage_series_date_method",
+        ),
+        Index(
+            "ix_daily_coverage_metric_date",
+            "metric_id",
+            "settlement_date",
+        ),
+    )
+
+
+class MetricAggregate(Base):
+    """A bounded aggregate that never hides the coverage used to produce it."""
+
+    __tablename__ = "metric_aggregates"
+
+    id: Mapped[uuid.UUID] = mapped_column(Uuid, primary_key=True, default=uuid.uuid4)
+    metric_id: Mapped[str] = mapped_column(
+        ForeignKey("metric_definitions.id", ondelete="RESTRICT"), nullable=False
+    )
+    series_key: Mapped[str] = mapped_column(String(160), nullable=False)
+    geography: Mapped[str] = mapped_column(String(80), nullable=False)
+    aggregate_kind: Mapped[str] = mapped_column(String(64), nullable=False)
+    period_start: Mapped[datetime] = mapped_column(DateTime(timezone=True), nullable=False)
+    period_end: Mapped[datetime] = mapped_column(DateTime(timezone=True), nullable=False)
+    value: Mapped[float | None] = mapped_column(Float)
+    unit: Mapped[str] = mapped_column(String(32), nullable=False)
+    sample_count: Mapped[int] = mapped_column(Integer, nullable=False)
+    expected_sample_count: Mapped[int] = mapped_column(Integer, nullable=False)
+    coverage_fraction: Mapped[float] = mapped_column(Float, nullable=False)
+    status: Mapped[str] = mapped_column(String(32), nullable=False)
+    methodology_version: Mapped[str] = mapped_column(String(120), nullable=False)
+    source_watermark_at: Mapped[datetime] = mapped_column(
+        DateTime(timezone=True), nullable=False
+    )
+    attributes: Mapped[dict[str, Any]] = mapped_column(
+        JSON_DOCUMENT, nullable=False, default=dict, server_default=text("'{}'")
+    )
+    computed_at: Mapped[datetime] = mapped_column(
+        DateTime(timezone=True), nullable=False, server_default=func.now()
+    )
+
+    __table_args__ = (
+        CheckConstraint("period_end > period_start", name="valid_aggregate_period"),
+        CheckConstraint("sample_count >= 0", name="nonnegative_aggregate_samples"),
+        CheckConstraint(
+            "expected_sample_count > 0 AND sample_count <= expected_sample_count",
+            name="valid_aggregate_expected_samples",
+        ),
+        CheckConstraint(
+            "coverage_fraction >= 0 AND coverage_fraction <= 1",
+            name="bounded_aggregate_coverage",
+        ),
+        CheckConstraint(
+            "(status = 'available' AND value IS NOT NULL) OR "
+            "(status <> 'available' AND value IS NULL)",
+            name="aggregate_value_matches_status",
+        ),
+        UniqueConstraint(
+            "metric_id",
+            "series_key",
+            "geography",
+            "aggregate_kind",
+            "period_start",
+            "period_end",
+            "methodology_version",
+            name="uq_metric_aggregate_series_period_method",
+        ),
+        Index(
+            "ix_metric_aggregates_metric_period",
+            "metric_id",
+            "period_start",
+            "period_end",
+        ),
+    )
+
+
+class ComparisonBaseline(Base):
+    """Auditable rolling statistics for one reference half-hour."""
+
+    __tablename__ = "comparison_baselines"
+
+    id: Mapped[uuid.UUID] = mapped_column(Uuid, primary_key=True, default=uuid.uuid4)
+    metric_id: Mapped[str] = mapped_column(
+        ForeignKey("metric_definitions.id", ondelete="RESTRICT"), nullable=False
+    )
+    series_key: Mapped[str] = mapped_column(String(160), nullable=False)
+    geography: Mapped[str] = mapped_column(String(80), nullable=False)
+    baseline_kind: Mapped[str] = mapped_column(String(80), nullable=False)
+    reference_start: Mapped[datetime] = mapped_column(
+        DateTime(timezone=True), nullable=False
+    )
+    window_start: Mapped[datetime] = mapped_column(DateTime(timezone=True), nullable=False)
+    window_end: Mapped[datetime] = mapped_column(DateTime(timezone=True), nullable=False)
+    median: Mapped[float | None] = mapped_column(Float)
+    first_quartile: Mapped[float | None] = mapped_column(Float)
+    third_quartile: Mapped[float | None] = mapped_column(Float)
+    sample_count: Mapped[int] = mapped_column(Integer, nullable=False)
+    expected_sample_count: Mapped[int] = mapped_column(Integer, nullable=False)
+    coverage_fraction: Mapped[float] = mapped_column(Float, nullable=False)
+    status: Mapped[str] = mapped_column(String(32), nullable=False)
+    methodology_version: Mapped[str] = mapped_column(String(120), nullable=False)
+    source_watermark_at: Mapped[datetime] = mapped_column(
+        DateTime(timezone=True), nullable=False
+    )
+    computed_at: Mapped[datetime] = mapped_column(
+        DateTime(timezone=True), nullable=False, server_default=func.now()
+    )
+
+    __table_args__ = (
+        CheckConstraint("window_end > window_start", name="valid_baseline_window"),
+        CheckConstraint("sample_count >= 0", name="nonnegative_baseline_samples"),
+        CheckConstraint(
+            "expected_sample_count > 0 AND sample_count <= expected_sample_count",
+            name="valid_baseline_expected_samples",
+        ),
+        CheckConstraint(
+            "coverage_fraction >= 0 AND coverage_fraction <= 1",
+            name="bounded_baseline_coverage",
+        ),
+        CheckConstraint(
+            "(status = 'available' AND median IS NOT NULL "
+            "AND first_quartile IS NOT NULL AND third_quartile IS NOT NULL) OR "
+            "(status <> 'available' AND median IS NULL "
+            "AND first_quartile IS NULL AND third_quartile IS NULL)",
+            name="baseline_values_match_status",
+        ),
+        CheckConstraint(
+            "first_quartile IS NULL OR third_quartile IS NULL "
+            "OR first_quartile <= median AND median <= third_quartile",
+            name="ordered_baseline_quartiles",
+        ),
+        UniqueConstraint(
+            "metric_id",
+            "series_key",
+            "geography",
+            "baseline_kind",
+            "reference_start",
+            "methodology_version",
+            name="uq_comparison_baseline_reference_method",
+        ),
+        Index(
+            "ix_comparison_baselines_metric_reference",
+            "metric_id",
+            "reference_start",
+        ),
+    )
+
+
 class DetectedEvent(TimestampMixin, Base):
     __tablename__ = "detected_events"
 
