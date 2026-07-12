@@ -4,9 +4,10 @@ from __future__ import annotations
 
 from datetime import UTC, datetime, timedelta
 
+from app.api.forecast_vintages import load_national_forecast_vintages
 from app.api.models import RegionResponse, SourceReference
-from app.charging.service import CarbonForecastPoint, find_cleanest_window
-from app.persistence import CarbonRead, ForecastRead, GridReadRepository, SourceMetadataRead
+from app.charging import CarbonForecastPoint, find_cleanest_window
+from app.persistence import ForecastRead, GridReadRepository, SourceMetadataRead
 from app.regions import RegionalCarbonProvider, RegionalCarbonReading, RegionalDataUnavailableError
 from app.sources.neso_carbon import normalize_outward_postcode
 from app.sources.types import DataClassification
@@ -38,56 +39,71 @@ async def present_region(
     )
     if regional is None:
         regional = await provider.fetch(normalized, as_of=instant)
+    if regional.classification is not DataClassification.FORECAST:
+        raise RegionalDataUnavailableError(
+            "A current regional carbon forecast is unavailable"
+        )
 
     forecast_start = _ceil_half_hour(instant)
-    national_forecasts = await repository.get_carbon_forecast(
-        region_code="GB",
-        window_start=instant - timedelta(minutes=30),
+    capture_cutoff = min(instant, regional.retrieved_at)
+    vintages = await load_national_forecast_vintages(
+        repository,
+        window_start=min(regional.period_start, forecast_start),
         window_end=instant + FORECAST_HORIZON,
-        issued_before=instant,
+        captured_before=capture_cutoff,
+        capture_lookback=timedelta(hours=24),
     )
-    national_actual = await repository.get_latest_carbon(
-        as_of=instant,
-        carbon_region="GB",
-    )
-    national_intensity = _national_current_intensity(
-        national_actual,
-        national_forecasts,
-        as_of=instant,
-    )
-    if national_intensity is None:
-        raise RegionalDataUnavailableError("National carbon intensity is unavailable")
-
-    future = [
-        item
-        for item in national_forecasts
-        if item.valid_to is not None and item.valid_from >= forecast_start
-    ]
-    points = [
-        CarbonForecastPoint(
-            start=item.valid_from,
-            end=item.valid_to,
-            intensity_gco2_kwh=item.value,
-            source_record_id=(
-                item.source_record_id
-                or f"{item.source_id}:{item.valid_from.isoformat()}"
-            ),
+    selection = None
+    has_matching_period = False
+    for vintage in vintages:
+        if instant - vintage.captured_at > MAX_REGIONAL_LAG:
+            continue
+        national_period = vintage.matching_interval(
+            regional.period_start,
+            regional.period_end,
         )
-        for item in future
-        if item.valid_to is not None
-    ]
-    cleanest = find_cleanest_window(points, duration=charging_duration)
-    if cleanest is None:
+        if national_period is None:
+            continue
+        has_matching_period = True
+        future = [
+            item
+            for item in vintage.rows
+            if item.valid_to is not None and item.valid_from >= forecast_start
+        ]
+        points = [
+            CarbonForecastPoint(
+                start=item.valid_from,
+                end=item.valid_to,
+                intensity_gco2_kwh=item.value,
+                source_record_id=(
+                    item.source_record_id
+                    or f"{item.source_id}:{item.valid_from.isoformat()}"
+                ),
+            )
+            for item in future
+            if item.valid_to is not None
+        ]
+        cleanest = find_cleanest_window(points, duration=charging_duration)
+        if cleanest is not None:
+            selection = (vintage, national_period, cleanest)
+            break
+
+    if selection is None and not has_matching_period:
+        raise RegionalDataUnavailableError(
+            "A compatible national forecast for the regional half-hour is unavailable"
+        )
+    if selection is None:
         raise RegionalDataUnavailableError(
             "A contiguous national carbon forecast is unavailable for the "
             "requested charging duration"
         )
+    national_vintage, national_period, cleanest = selection
 
     return RegionResponse(
         name=regional.name,
         postcode=normalized,
         carbon_intensity=regional.intensity_gco2_kwh,
-        national_carbon_intensity=national_intensity,
+        national_carbon_intensity=national_period.value,
         rating=regional.rating,
         regional_period_end=regional.period_end,
         regional_is_delayed=regional.period_end <= instant,
@@ -95,7 +111,8 @@ async def present_region(
         cleanest_window_end=cleanest.end,
         charging_window_start=cleanest.start,
         charging_window_end=cleanest.end,
-        forecast_issued_at=max(item.issued_at for item in future),
+        forecast_issued_at=national_vintage.captured_at,
+        forecast_captured_at=national_vintage.captured_at,
         source=_source_reference(regional, source_metadata.get(regional.source_id)),
     )
 
@@ -106,29 +123,11 @@ async def _stored_regional_reading(
     *,
     as_of: datetime,
 ) -> RegionalCarbonReading | None:
-    # London is continuously collected as region 13.  Other outward postcodes
+    # London is continuously collected as region 13. Other outward postcodes
     # may exist when an earlier on-demand result has been persisted by a future
-    # cache layer.
+    # cache layer. Regional current values are forecast facts, not actuals.
     series_keys = (postcode, "region-13") if postcode == "SW1A" else (postcode,)
     for series_key in series_keys:
-        actual = await repository.get_latest_regional_carbon(series_key, as_of=as_of)
-        if actual is not None and _is_recent_period(
-            actual.provenance.observed_at,
-            as_of=as_of,
-        ):
-            return RegionalCarbonReading(
-                postcode=postcode,
-                name="London" if series_key == "region-13" else postcode,
-                intensity_gco2_kwh=actual.intensity_gco2_kwh,
-                rating=actual.index_label or _rating(actual.intensity_gco2_kwh),
-                period_start=actual.provenance.observed_at,
-                period_end=actual.provenance.observed_at + timedelta(minutes=30),
-                retrieved_at=actual.provenance.retrieved_at,
-                source_id=actual.provenance.source_id,
-                dataset="carbon_intensity_regional",
-                classification=DataClassification.ESTIMATED,
-            )
-
         forecasts = await repository.get_carbon_forecast(
             region_code=series_key,
             window_start=as_of - timedelta(minutes=30),
@@ -151,21 +150,6 @@ async def _stored_regional_reading(
                 classification=DataClassification.FORECAST,
             )
     return None
-
-
-def _national_current_intensity(
-    actual: CarbonRead | None,
-    forecasts: tuple[ForecastRead, ...],
-    *,
-    as_of: datetime,
-) -> float | None:
-    if actual is not None and _is_recent_period(
-        actual.provenance.observed_at,
-        as_of=as_of,
-    ):
-        return actual.intensity_gco2_kwh
-    current = _covering_or_recent_forecast(forecasts, as_of=as_of)
-    return current.value if current is not None else None
 
 
 def _covering_forecast(
@@ -228,12 +212,6 @@ def _rating(intensity: float) -> str:
     if intensity <= 250:
         return "high"
     return "very high"
-
-
-def _is_recent_period(observed_at: datetime, *, as_of: datetime) -> bool:
-    period_end = observed_at + timedelta(minutes=30)
-    lag = as_of - period_end
-    return lag < timedelta(0) or lag <= MAX_REGIONAL_LAG
 
 
 def _ceil_half_hour(value: datetime) -> datetime:

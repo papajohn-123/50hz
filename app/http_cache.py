@@ -98,6 +98,8 @@ def _cache_seconds(path: str) -> int | None:
         return 60
     if path.startswith("/v1/events/") and not path.endswith("/explanation"):
         return 60
+    if path.startswith("/v1/regions/") and path.endswith("/windows"):
+        return 60
     if path.startswith("/v1/regions/"):
         return 300
     if path in {"/v1/sources", "/v1/meta", "/v1/metadata/metrics"}:

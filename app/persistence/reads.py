@@ -360,6 +360,45 @@ class GridReadRepository:
             issued_before=issued_before,
         )
 
+    async def get_carbon_forecast_history(
+        self,
+        *,
+        region_code: str,
+        window_start: datetime,
+        window_end: datetime,
+        captured_after: datetime,
+        captured_before: datetime,
+        issued_before: datetime | None = None,
+    ) -> tuple[ForecastRead, ...]:
+        """Return bounded raw forecast vintages without mixing interval revisions."""
+
+        start = as_utc(window_start, field_name="window_start")
+        end = as_utc(window_end, field_name="window_end")
+        capture_start = as_utc(captured_after, field_name="captured_after")
+        capture_end = as_utc(captured_before, field_name="captured_before")
+        issue_cutoff = as_utc(
+            issued_before or capture_end,
+            field_name="issued_before",
+        )
+        if start >= end:
+            raise ValueError("forecast window_start must precede window_end")
+        if capture_start >= capture_end:
+            raise ValueError("captured_after must precede captured_before")
+        if not region_code.strip():
+            raise ValueError("region_code cannot be blank")
+
+        statement = _forecast_history_statement(
+            start,
+            end,
+            region_code=region_code.strip(),
+            captured_after=capture_start,
+            captured_before=capture_end,
+            issued_before=issue_cutoff,
+        )
+        async with self._session_factory() as session:
+            rows = (await session.execute(statement)).scalars().all()
+        return tuple(map_forecast_read(row) for row in rows)
+
     async def get_active_notices(
         self,
         *,
@@ -786,6 +825,39 @@ def _latest_forecasts_statement(
         select(latest)
         .where(ranked.c.forecast_rank == 1)
         .order_by(latest.valid_from, latest.metric_type, latest.series_key)
+    )
+
+
+def _forecast_history_statement(
+    start: datetime,
+    end: datetime,
+    *,
+    region_code: str,
+    captured_after: datetime,
+    captured_before: datetime,
+    issued_before: datetime,
+) -> Select:
+    """Read a bounded set of raw carbon rows so callers can keep one vintage."""
+
+    return (
+        select(ForecastObservation)
+        .where(
+            ForecastObservation.metric_type == "carbon_intensity",
+            ForecastObservation.variant == "point",
+            func.lower(ForecastObservation.series_key) == region_code.lower(),
+            ForecastObservation.valid_from < end,
+            ForecastObservation.valid_to.is_not(None),
+            ForecastObservation.valid_to > start,
+            ForecastObservation.retrieved_at >= captured_after,
+            ForecastObservation.retrieved_at <= captured_before,
+            ForecastObservation.issued_at <= issued_before,
+        )
+        .order_by(
+            ForecastObservation.retrieved_at.desc(),
+            ForecastObservation.issued_at.desc(),
+            ForecastObservation.source_id,
+            ForecastObservation.valid_from,
+        )
     )
 
 

@@ -4,12 +4,7 @@ from fastapi.testclient import TestClient
 
 from app.api.dependencies import get_grid_read_repository, get_regional_carbon_provider
 from app.main import app
-from app.persistence.reads import (
-    CarbonRead,
-    ForecastRead,
-    ReadProvenance,
-    SourceMetadataRead,
-)
+from app.persistence.reads import CarbonRead, ForecastRead, SourceMetadataRead
 from app.regions import RegionalCarbonReading
 from app.regions.service import _current_record
 from app.sources.exceptions import SourceUnavailableError
@@ -22,8 +17,15 @@ def ceil_half_hour(value: datetime) -> datetime:
 
 
 class RegionRepository:
-    def __init__(self, *, stored_region: bool = False) -> None:
+    def __init__(
+        self,
+        *,
+        stored_region: bool = False,
+        matching_national: bool = True,
+    ) -> None:
         self.stored_region = stored_region
+        self.matching_national = matching_national
+        self.national_actual_reads = 0
 
     async def list_sources(self) -> tuple[SourceMetadataRead, ...]:
         return (
@@ -45,22 +47,7 @@ class RegionRepository:
         *,
         as_of: datetime | None = None,
     ) -> CarbonRead | None:
-        if not self.stored_region or region_code != "SW1A" or as_of is None:
-            return None
-        observed = as_of - timedelta(minutes=5)
-        return CarbonRead(
-            "SW1A",
-            72,
-            "low",
-            (),
-            ReadProvenance(
-                "neso.carbon.regional",
-                "regional:stored",
-                observed,
-                None,
-                observed + timedelta(minutes=1),
-            ),
-        )
+        raise AssertionError("regional current values must come from forecast storage")
 
     async def get_carbon_forecast(
         self,
@@ -70,27 +57,90 @@ class RegionRepository:
         window_end: datetime,
         issued_before: datetime | None = None,
     ) -> tuple[ForecastRead, ...]:
-        if region_code != "GB" or issued_before is None:
+        if (
+            not self.stored_region
+            or region_code not in {"SW1A", "region-13"}
+            or issued_before is None
+        ):
             return ()
-        start = ceil_half_hour(issued_before)
-        values = [120, 40, 30, 90]
+        start = issued_before.replace(
+            minute=30 if issued_before.minute >= 30 else 0,
+            second=0,
+            microsecond=0,
+        )
+        captured = issued_before - timedelta(minutes=5)
+        return (
+            ForecastRead(
+                metric_type="carbon_intensity",
+                series_key=region_code,
+                value=72,
+                unit="gCO2/kWh",
+                valid_from=start,
+                valid_to=start + timedelta(minutes=30),
+                issued_at=captured,
+                published_at=None,
+                retrieved_at=captured,
+                source_id="neso.carbon.regional",
+                source_record_id="regional:stored",
+                model_name="neso_carbon_intensity",
+                attributes={
+                    "classification": "forecast",
+                    "issueTimeBasis": "retrieved_at",
+                    "regionName": "London",
+                    "index": "low",
+                },
+            ),
+        )
+
+    async def get_carbon_forecast_history(
+        self,
+        *,
+        region_code: str,
+        window_start: datetime,
+        window_end: datetime,
+        captured_after: datetime,
+        captured_before: datetime,
+        issued_before: datetime | None = None,
+    ) -> tuple[ForecastRead, ...]:
+        assert region_code == "GB"
+        assert issued_before == captured_before
+        captured = captured_before - timedelta(minutes=5)
+        current_start = window_start
+        current_end = current_start + timedelta(minutes=30)
+        future_start = max(ceil_half_hour(captured_before), current_end)
+        periods: list[tuple[datetime, datetime, float, str]] = []
+        if self.matching_national:
+            periods.append((current_start, current_end, 92, "national:current"))
+        periods.extend(
+            (
+                future_start + timedelta(minutes=30 * index),
+                future_start + timedelta(minutes=30 * (index + 1)),
+                value,
+                f"national:{index}",
+            )
+            for index, value in enumerate([120, 40, 30, 90])
+        )
         return tuple(
             ForecastRead(
                 metric_type="carbon_intensity",
                 series_key="GB",
                 value=value,
                 unit="gCO2/kWh",
-                valid_from=start + timedelta(minutes=30 * index),
-                valid_to=start + timedelta(minutes=30 * (index + 1)),
-                issued_at=issued_before - timedelta(minutes=10),
+                valid_from=start,
+                valid_to=end,
+                issued_at=captured,
                 published_at=None,
-                retrieved_at=issued_before - timedelta(minutes=5),
+                retrieved_at=captured,
                 source_id="neso.carbon.national.forecast",
-                source_record_id=f"national:{index}",
+                source_record_id=record_id,
                 model_name="neso_carbon_intensity",
-                attributes={"classification": "forecast"},
+                attributes={
+                    "classification": "forecast",
+                    "issueTimeBasis": "retrieved_at",
+                },
             )
-            for index, value in enumerate(values)
+            for start, end, value, record_id in periods
+            if start < window_end and end > window_start
         )
 
     async def get_latest_carbon(
@@ -99,21 +149,8 @@ class RegionRepository:
         as_of: datetime | None = None,
         carbon_region: str = "GB",
     ) -> CarbonRead | None:
-        assert as_of is not None
-        observed = as_of - timedelta(minutes=5)
-        return CarbonRead(
-            "GB",
-            88,
-            "low",
-            (),
-            ReadProvenance(
-                "neso.carbon.national",
-                "national:actual",
-                observed,
-                None,
-                observed + timedelta(minutes=1),
-            ),
-        )
+        self.national_actual_reads += 1
+        raise AssertionError("regional forecast must not be compared with actual")
 
 
 class RegionProvider:
@@ -123,10 +160,8 @@ class RegionProvider:
 
     async def fetch(self, postcode: str, *, as_of: datetime) -> RegionalCarbonReading:
         self.calls += 1
-        period_end = (
-            as_of - self.period_lag
-            if self.period_lag is not None
-            else as_of + timedelta(minutes=25)
+        period_end = as_of - self.period_lag if self.period_lag else ceil_half_hour(
+            as_of
         )
         return RegionalCarbonReading(
             postcode=postcode,
@@ -168,10 +203,18 @@ def test_postcode_route_falls_back_to_bounded_regional_provider() -> None:
     assert status == 200
     assert payload["postcode"] == "SW1A"
     assert payload["carbonIntensity"] == 81
-    assert payload["nationalCarbonIntensity"] == 88
+    assert payload["nationalCarbonIntensity"] == 92
     assert payload["regionalIsDelayed"] is False
     assert payload["chargingWindowEnd"] > payload["chargingWindowStart"]
     assert payload["source"]["id"] == "neso.carbon.postcode.SW1A"
+    assert payload["regionalFactClass"] == "forecast"
+    assert payload["regionalGeographyScope"] == "regional"
+    assert payload["nationalFactClass"] == "forecast"
+    assert payload["nationalGeographyScope"] == "national"
+    assert payload["forecastIssueTimeBasis"] == (
+        "source_does_not_publish_issue_time"
+    )
+    assert payload["forecastIssuedAt"] == payload["forecastCapturedAt"]
     assert provider.calls == 1
 
 
@@ -209,6 +252,33 @@ def test_recently_ended_regional_period_is_returned_as_delayed_source_data() -> 
     ) is None
 
 
+def test_regional_selection_never_substitutes_an_estimated_actual() -> None:
+    now = datetime(2026, 7, 11, 13, 15, tzinfo=UTC)
+    common = {
+        "period_start": now - timedelta(minutes=15),
+        "period_end": now + timedelta(minutes=15),
+        "retrieved_at": now,
+        "index": "low",
+        "region_name": "London",
+        "postcode": "SW1A",
+    }
+    estimate = CarbonIntensityRecord(
+        source_key="regional:estimated",
+        intensity_g_co2_per_kwh=70,
+        classification=DataClassification.ESTIMATED,
+        **common,
+    )
+    forecast = CarbonIntensityRecord(
+        source_key="regional:forecast",
+        intensity_g_co2_per_kwh=82,
+        classification=DataClassification.FORECAST,
+        **common,
+    )
+
+    assert _current_record((estimate, forecast), as_of=now) == forecast
+    assert _current_record((estimate,), as_of=now) is None
+
+
 def test_region_contract_marks_a_recently_ended_period_as_delayed() -> None:
     provider = RegionProvider(period_lag=timedelta(minutes=19))
 
@@ -217,6 +287,17 @@ def test_region_contract_marks_a_recently_ended_period_as_delayed() -> None:
     assert status == 200
     assert payload["regionalIsDelayed"] is True
     assert payload["regionalPeriodEnd"] < payload["forecastIssuedAt"]
+
+
+def test_region_route_never_falls_back_to_national_actual_for_comparison() -> None:
+    repository = RegionRepository(matching_national=False)
+    provider = RegionProvider()
+
+    status, payload = request(repository, provider, "/v1/regions/SW1A")
+
+    assert status == 503
+    assert "compatible national forecast" in str(payload["detail"])
+    assert repository.national_actual_reads == 0
 
 
 def test_invalid_postcode_is_422_without_upstream_lookup() -> None:

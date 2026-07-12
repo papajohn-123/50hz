@@ -5,12 +5,18 @@ from fastapi import APIRouter, Depends, HTTPException, Query, status
 
 from app.api.dependencies import get_grid_read_repository, get_regional_carbon_provider
 from app.api.metrics import present_metric_registry
+from app.api.local_windows import (
+    LocalWindowsUnavailableError,
+    LocalWindowsValidationError,
+    present_local_windows,
+)
 from app.api.models import (
     GridEvent,
     MetricRegistryResponse,
     MobileFreshness,
     GridSnapshotResponse,
     GridTimelineResponse,
+    LocalWindowsResponse,
     RegionResponse,
     SourceMetadataResponse,
 )
@@ -132,6 +138,51 @@ async def metric_registry() -> MetricRegistryResponse:
     """Return stable definitions and methodology versions for public metrics."""
 
     return present_metric_registry()
+
+
+@router.get(
+    "/regions/{postcode}/windows",
+    response_model=LocalWindowsResponse,
+    tags=["regions"],
+)
+async def local_windows(
+    postcode: str,
+    repository: Repository,
+    duration_minutes: int = Query(
+        ...,
+        alias="durationMinutes",
+        ge=30,
+        le=720,
+        description="Continuous use duration in whole 30-minute intervals",
+    ),
+    earliest: datetime | None = Query(default=None),
+    latest: datetime | None = Query(default=None),
+    continuous: bool = Query(default=True),
+) -> LocalWindowsResponse:
+    try:
+        # Normalize before any repository call. The service repeats this at its
+        # boundary so direct callers receive the same privacy guarantee.
+        normalized = normalize_outward_postcode(postcode)
+    except (TypeError, ValueError) as error:
+        raise HTTPException(status_code=422, detail=str(error)) from error
+    try:
+        return await present_local_windows(
+            repository,
+            postcode=normalized,
+            now=datetime.now(UTC),
+            duration_minutes=duration_minutes,
+            earliest=earliest,
+            latest=latest,
+            continuous=continuous,
+        )
+    except LocalWindowsValidationError as error:
+        raise HTTPException(status_code=422, detail=str(error)) from error
+    except LocalWindowsUnavailableError as error:
+        raise HTTPException(
+            status_code=status.HTTP_503_SERVICE_UNAVAILABLE,
+            detail=str(error),
+            headers={"Retry-After": "300"},
+        ) from error
 
 
 @router.get("/regions/{postcode}", response_model=RegionResponse, tags=["regions"])

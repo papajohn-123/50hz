@@ -98,15 +98,22 @@ def _current_record(
         ]
     if not candidates:
         return None
-    # An estimate and forecast may describe the same slot. Prefer the estimate.
-    return sorted(
-        candidates,
+    # Regional "now" is a forecast contract. The upstream payload can contain
+    # an estimated actual for the same half-hour; mixing that with the national
+    # forecast would create a false like-for-like comparison.
+    forecasts = [
+        record
+        for record in candidates
+        if record.classification is DataClassification.FORECAST
+    ]
+    return max(
+        forecasts,
         key=lambda record: (
             record.period_end,
-            record.classification is DataClassification.ESTIMATED,
+            record.retrieved_at,
         ),
-        reverse=True,
-    )[0]
+        default=None,
+    )
 
 
 def _rating(intensity: float) -> str:

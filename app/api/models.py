@@ -1,6 +1,6 @@
 from datetime import datetime
 from enum import StrEnum
-from typing import Self
+from typing import Literal, Self
 
 from pydantic import AwareDatetime, BaseModel, ConfigDict, Field, model_validator
 
@@ -275,8 +275,150 @@ class RegionResponse(MobileModel):
     cleanest_window_end: AwareDatetime
     charging_window_start: AwareDatetime
     charging_window_end: AwareDatetime
-    forecast_issued_at: AwareDatetime
+    forecast_issued_at: AwareDatetime = Field(
+        description=(
+            "Compatibility field containing the selected forecast capture time; "
+            "the source does not publish an issue timestamp"
+        )
+    )
+    regional_fact_class: Literal["forecast"] = "forecast"
+    regional_geography_scope: Literal["regional"] = "regional"
+    national_fact_class: Literal["forecast"] = "forecast"
+    national_geography_scope: Literal["national"] = "national"
+    forecast_captured_at: AwareDatetime
+    forecast_issue_time_basis: Literal[
+        "source_does_not_publish_issue_time"
+    ] = "source_does_not_publish_issue_time"
     source: SourceReference
+
+
+class LocalFlexibleUseStatus(StrEnum):
+    LOWER_CARBON_WINDOW = "lower_carbon_window"
+    NO_MEANINGFUL_DIFFERENCE = "no_meaningful_difference"
+    WINDOW_FOUND = "window_found"
+    INSUFFICIENT_COVERAGE = "insufficient_coverage"
+
+
+class LocalComparisonStatus(StrEnum):
+    COMPATIBLE = "compatible"
+    INCOMPATIBLE_SERIES = "incompatible_series"
+    INSUFFICIENT_COVERAGE = "insufficient_coverage"
+
+
+class LocalChargingWindow(MobileModel):
+    start: AwareDatetime
+    end: AwareDatetime
+    average_intensity_gco2_kwh: float = Field(
+        alias="averageIntensityGCO2KWh",
+        ge=0,
+    )
+    source_record_ids: list[str] = Field(alias="sourceRecordIDs")
+    coverage_fraction: float = Field(ge=0, le=1)
+
+
+class LocalForecastCoverage(MobileModel):
+    interval_minutes: int = Field(gt=0)
+    required_interval_count: int = Field(ge=1)
+    expected_interval_count: int = Field(ge=0)
+    available_interval_count: int = Field(ge=0)
+    coverage_fraction: float = Field(ge=0, le=1)
+    gap_starts: list[AwareDatetime]
+    candidate_start_count: int = Field(ge=0)
+    complete_candidate_count: int = Field(ge=0)
+
+
+class LocalFlexibleUseComparison(MobileModel):
+    status: LocalComparisonStatus
+    start_now_window: LocalChargingWindow | None = None
+    incompatibility_fields: list[str] = Field(default_factory=list)
+    start_now_minus_recommended_gco2_kwh: float | None = Field(
+        default=None,
+        alias="startNowMinusRecommendedGCO2KWh",
+    )
+    percent_lower_than_start_now: float | None = None
+    is_meaningful: bool | None = None
+
+    @model_validator(mode="after")
+    def deltas_require_a_compatible_comparison(self) -> Self:
+        deltas = (
+            self.start_now_minus_recommended_gco2_kwh,
+            self.percent_lower_than_start_now,
+            self.is_meaningful,
+        )
+        if self.status is LocalComparisonStatus.COMPATIBLE:
+            if self.start_now_window is None or self.is_meaningful is None:
+                raise ValueError("Compatible comparisons require a window and result")
+        elif any(value is not None for value in deltas):
+            raise ValueError("Unavailable comparisons cannot expose deltas")
+        return self
+
+
+class LocalFlexibleUseMethodology(MobileModel):
+    version: str
+    interval_minutes: int = Field(gt=0)
+    required_window_coverage_percent: int = Field(ge=0, le=100)
+    selection_rule: str
+    tie_break_rule: str
+    meaningful_absolute_delta_gco2_kwh: float = Field(
+        alias="meaningfulAbsoluteDeltaGCO2KWh",
+        ge=0,
+    )
+    meaningful_percent_delta: float = Field(ge=0)
+
+
+class LocalFlexibleUsePlan(MobileModel):
+    result_version: str
+    methodology: LocalFlexibleUseMethodology
+    status: LocalFlexibleUseStatus
+    summary: str
+    continuous: Literal[True]
+    requested_duration_minutes: int = Field(gt=0)
+    earliest_start: AwareDatetime
+    latest_finish: AwareDatetime
+    recommended_window: LocalChargingWindow | None = None
+    coverage: LocalForecastCoverage
+    comparison: LocalFlexibleUseComparison
+
+
+class LocalForecastMetadata(MobileModel):
+    geography_code: Literal["GB"] = "GB"
+    geography_scope: Literal["national"] = "national"
+    fact_class: Literal["forecast"] = "forecast"
+    series_id: str = Field(alias="seriesID")
+    source_id: str = Field(alias="sourceID")
+    methodology_version: str
+    source_issued_at: AwareDatetime | None = None
+    captured_at: AwareDatetime
+    vintage_at: AwareDatetime
+    vintage_basis: Literal["captured_at", "source_issued_at"]
+    issue_time_basis: str
+    capture_time_basis: Literal["retrieved_at"] = "retrieved_at"
+    capture_age_seconds: int = Field(ge=0)
+    capture_stale_after_seconds: int = Field(gt=0)
+    capture_state: Literal["live"] = "live"
+    source_record_ids: list[str] = Field(alias="sourceRecordIDs")
+
+
+class LocalSearchBounds(MobileModel):
+    earliest_start: AwareDatetime
+    latest_finish: AwareDatetime
+    earliest_was_defaulted: bool
+    latest_was_defaulted: bool
+    default_rule: str
+
+
+class LocalWindowsResponse(MobileModel):
+    """Privacy-safe flexible-use plan backed only by a GB national forecast."""
+
+    schema_version: str = "1.0"
+    postcode: str = Field(
+        description="Normalized UK outward postcode only; full postcodes are never returned"
+    )
+    evaluated_at: AwareDatetime
+    bounds: LocalSearchBounds
+    forecast: LocalForecastMetadata
+    plan: LocalFlexibleUsePlan
+    limitations: list[str]
 
 
 class SourceMetadataResponse(MobileModel):

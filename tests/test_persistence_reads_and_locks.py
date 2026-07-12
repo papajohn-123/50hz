@@ -8,6 +8,7 @@ from app.db.models import (
     CarbonObservation,
     DemandObservation,
     FrequencyObservation,
+    ForecastObservation,
     GenerationObservation,
     InterconnectorObservation,
     SourceMetadata,
@@ -227,6 +228,55 @@ def test_timeline_downsamples_each_series_without_inventing_bucket_timestamps() 
         next_bucket.observed_at,
     ]
     assert timeline.resolution_seconds == 60
+
+
+def test_carbon_forecast_history_preserves_bounded_vintages_for_compatibility() -> None:
+    def forecast(captured_at: datetime, value: float) -> ForecastObservation:
+        return ForecastObservation(
+            source_id="neso.carbon-intensity-national",
+            raw_payload_id=None,
+            source_record_id=f"national:{captured_at.isoformat()}",
+            metric_type="carbon_intensity",
+            series_key="GB",
+            variant="point",
+            value=value,
+            unit="gCO2/kWh",
+            value_low=None,
+            value_high=None,
+            valid_from=NOW,
+            valid_to=NOW + timedelta(minutes=30),
+            issued_at=captured_at,
+            published_at=None,
+            retrieved_at=captured_at,
+            model_name="neso_carbon_intensity",
+            settlement_date=None,
+            settlement_period=None,
+            attributes={
+                "classification": "forecast",
+                "issueTimeBasis": "retrieved_at",
+            },
+        )
+
+    older = forecast(NOW - timedelta(minutes=40), 80)
+    newer = forecast(NOW - timedelta(minutes=10), 75)
+    session = FakeSession([FakeResult([newer, older])])
+    repository = GridReadRepository(lambda: session)
+
+    rows = asyncio.run(
+        repository.get_carbon_forecast_history(
+            region_code="GB",
+            window_start=NOW,
+            window_end=NOW + timedelta(hours=1),
+            captured_after=NOW - timedelta(hours=2),
+            captured_before=NOW,
+            issued_before=NOW,
+        )
+    )
+
+    assert [row.value for row in rows] == [75, 80]
+    statement = str(session.executed[0][0])
+    assert "forecast_observations.retrieved_at" in statement
+    assert "row_number" not in statement.casefold()
 
 
 def test_advisory_lock_key_is_stable_signed_bigint() -> None:
