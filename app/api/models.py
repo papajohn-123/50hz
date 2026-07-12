@@ -4,6 +4,8 @@ from typing import Self
 
 from pydantic import AwareDatetime, BaseModel, ConfigDict, Field, model_validator
 
+from app.metrics import MetricClassification, MetricFamily
+
 
 def _to_camel(value: str) -> str:
     head, *tail = value.split("_")
@@ -31,6 +33,24 @@ class MobileFreshness(StrEnum):
     STALE = "stale"
     OFFLINE = "offline"
     CRITICAL = "critical"
+
+
+class DeliveryState(StrEnum):
+    """Health of 50Hz receiving data from a source, based on retrieval age."""
+
+    HEALTHY = "healthy"
+    DELAYED = "delayed"
+    STALE = "stale"
+    UNAVAILABLE = "unavailable"
+
+
+class FactState(StrEnum):
+    """Currency of the source fact itself, based on observation age."""
+
+    LIVE = "live"
+    DELAYED = "delayed"
+    STALE = "stale"
+    UNAVAILABLE = "unavailable"
 
 
 class SourceReference(MobileModel):
@@ -84,6 +104,106 @@ class GridEvent(MobileModel):
     is_authoritatively_reported: bool
 
 
+class DataFamilyStatus(MobileModel):
+    """Independent source-delivery and fact-currency state for one metric family."""
+
+    family: MetricFamily
+    metric_ids: list[str] = Field(alias="metricIDs", min_length=1)
+    source_ids: list[str] = Field(default_factory=list, alias="sourceIDs")
+    source_record_ids: list[str] = Field(
+        default_factory=list,
+        alias="sourceRecordIDs",
+    )
+    required_for_snapshot: bool
+    evaluated_at: AwareDatetime = Field(
+        description="Request instant used to calculate ages and states"
+    )
+    delivery_state: DeliveryState
+    fact_state: FactState
+    observed_at: AwareDatetime | None = None
+    published_at: AwareDatetime | None = Field(
+        default=None,
+        description="Oldest source publication time, when the source supplies one",
+    )
+    retrieved_at: AwareDatetime | None = None
+    valid_to: AwareDatetime | None = Field(
+        default=None,
+        description="End of the fact interval; absent for spot measurements",
+    )
+    observation_age_seconds: int | None = Field(default=None, ge=0)
+    retrieval_age_seconds: int | None = Field(default=None, ge=0)
+    expected_cadence_seconds: int = Field(gt=0)
+    delivery_healthy_seconds: int = Field(gt=0)
+    delivery_stale_seconds: int = Field(gt=0)
+    fact_live_seconds: int = Field(gt=0)
+    fact_stale_seconds: int = Field(gt=0)
+    series_count: int = Field(ge=0)
+
+    @model_validator(mode="after")
+    def timing_matches_availability(self) -> Self:
+        available = self.series_count > 0
+        timings = (
+            self.observed_at,
+            self.published_at,
+            self.retrieved_at,
+            self.valid_to,
+            self.observation_age_seconds,
+            self.retrieval_age_seconds,
+        )
+        required_timings = (
+            self.observed_at,
+            self.retrieved_at,
+            self.observation_age_seconds,
+            self.retrieval_age_seconds,
+        )
+        if available and any(value is None for value in required_timings):
+            raise ValueError("Available families require source timing and ages")
+        if not available and any(value is not None for value in timings):
+            raise ValueError("Unavailable families cannot expose source timing")
+        if not available and (
+            self.delivery_state is not DeliveryState.UNAVAILABLE
+            or self.fact_state is not FactState.UNAVAILABLE
+        ):
+            raise ValueError("Missing families must be unavailable")
+        if self.delivery_healthy_seconds >= self.delivery_stale_seconds:
+            raise ValueError("Delivery thresholds must be ordered")
+        if self.fact_live_seconds >= self.fact_stale_seconds:
+            raise ValueError("Fact thresholds must be ordered")
+        return self
+
+
+class SupplyAccounting(MobileModel):
+    """Partial, explicitly bounded accounting behind the legacy display mix."""
+
+    methodology_version: str = "supply-accounting-v1"
+    boundary: str
+    is_complete: bool = Field(
+        description="Whether this is a complete Great Britain supply balance"
+    )
+    generation_data_available: bool
+    interconnector_data_available: bool
+    domestic_generation_mw: float = Field(alias="domesticGenerationMW", ge=0)
+    gross_imports_mw: float = Field(alias="grossImportsMW", ge=0)
+    gross_exports_mw: float = Field(alias="grossExportsMW", ge=0)
+    net_imports_mw: float = Field(alias="netImportsMW")
+    storage_generation_mw: float = Field(alias="storageGenerationMW", ge=0)
+    storage_charging_mw: float | None = Field(
+        default=None,
+        alias="storageChargingMW",
+        ge=0,
+        description=(
+            "Charging demand when supported by a complete source; null for the "
+            "current FUELINST-derived accounting"
+        ),
+    )
+    legacy_displayed_generation_mw: float = Field(
+        alias="legacyDisplayedGenerationMW",
+        ge=0,
+    )
+    legacy_mix_basis: str
+    note: str
+
+
 class GridSnapshotResponse(MobileModel):
     schema_version: str = "1.0"
     timestamp: AwareDatetime
@@ -98,6 +218,8 @@ class GridSnapshotResponse(MobileModel):
     interconnectors: list[InterconnectorFlow]
     active_event: GridEvent | None = None
     sources: list[SourceReference]
+    data_status: list[DataFamilyStatus] = Field(default_factory=list)
+    supply: SupplyAccounting | None = None
 
     @model_validator(mode="after")
     def references_are_resolvable(self) -> Self:
@@ -105,6 +227,16 @@ class GridSnapshotResponse(MobileModel):
         facts = [self.demand, self.carbon_intensity, *([self.frequency] if self.frequency else [])]
         if any(fact.source_id not in source_ids for fact in facts):
             raise ValueError("Every top-level metric must reference a supplied source")
+        status_source_ids = {
+            source_id
+            for status in self.data_status
+            for source_id in status.source_ids
+        }
+        if not status_source_ids.issubset(source_ids):
+            raise ValueError("Every data status source must reference a supplied source")
+        families = [status.family for status in self.data_status]
+        if len(families) != len(set(families)):
+            raise ValueError("Data status families must be unique")
         return self
 
 
@@ -155,3 +287,42 @@ class SourceMetadataResponse(MobileModel):
     licence_url: str | None = None
     attribution: str
     expected_cadence_seconds: int
+
+
+class MetricDefinitionResponse(MobileModel):
+    """Stable metric meaning, provenance boundary, and versioned methodology."""
+
+    id: str
+    methodology_version: str
+    family: MetricFamily
+    display_name: str
+    description: str
+    unit: str
+    classification: MetricClassification
+    boundary: str
+    resolution_seconds: int = Field(
+        gt=0,
+        description=(
+            "Fact interval, or sampling interval when the metric is a spot value"
+        ),
+    )
+    expected_publication_lag_seconds: int = Field(ge=0)
+    source_datasets: list[str] = Field(min_length=1)
+    methodology: str
+    exclusions: list[str] = Field(min_length=1)
+    sign_convention: str | None = None
+
+
+class MetricRegistryResponse(MobileModel):
+    """Versioned registry for metrics exposed by the current grid API."""
+
+    schema_version: str = "1.0"
+    registry_version: str
+    metrics: list[MetricDefinitionResponse] = Field(min_length=1)
+
+    @model_validator(mode="after")
+    def metric_ids_are_unique(self) -> Self:
+        identifiers = [metric.id for metric in self.metrics]
+        if len(identifiers) != len(set(identifiers)):
+            raise ValueError("Metric registry IDs must be unique")
+        return self

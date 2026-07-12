@@ -5,6 +5,7 @@ class DataClassification(StrEnum):
     """How a fact came to exist, independent of its quality."""
 
     OBSERVED = "observed"
+    ESTIMATED = "estimated"
     REPORTED = "reported"
     DERIVED = "derived"
     FORECAST = "forecast"
@@ -56,4 +57,3 @@ class EvidenceConfidence(StrEnum):
     MEDIUM = "medium"
     HIGH = "high"
     AUTHORITATIVE = "authoritative"
-

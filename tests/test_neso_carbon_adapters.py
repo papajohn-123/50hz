@@ -61,21 +61,21 @@ def test_national_current_keeps_actual_and_forecast_separate() -> None:
 
     assert requests[0].url.path == "/intensity"
     assert len(result.records) == 2
-    observed = next(
+    estimated = next(
         record
         for record in result.records
-        if record.classification is DataClassification.OBSERVED
+        if record.classification is DataClassification.ESTIMATED
     )
     forecast = next(
         record
         for record in result.records
         if record.classification is DataClassification.FORECAST
     )
-    assert observed.intensity_g_co2_per_kwh == 67
+    assert estimated.intensity_g_co2_per_kwh == 67
     assert forecast.intensity_g_co2_per_kwh == 63
-    assert observed.source_key.endswith(":observed")
+    assert estimated.source_key.endswith(":estimated")
     assert forecast.source_key.endswith(":forecast")
-    assert observed.period_end == datetime(2026, 7, 11, 12, 30, tzinfo=UTC)
+    assert estimated.period_end == datetime(2026, 7, 11, 12, 30, tzinfo=UTC)
 
 
 def test_national_forecast_uses_requested_range_and_never_emits_actuals() -> None:

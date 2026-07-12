@@ -15,6 +15,7 @@ from app.api.models import (
     MobileFreshness,
     SourceReference,
 )
+from app.api.status import present_data_status, present_supply_accounting
 from app.persistence.reads import (
     CarbonRead,
     CurrentGridRead,
@@ -247,6 +248,8 @@ def present_current(
         ],
         active_event=active_event,
         sources=sources,
+        data_status=present_data_status(read),
+        supply=present_supply_accounting(read),
     )
 
 

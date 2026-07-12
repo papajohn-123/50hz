@@ -75,10 +75,13 @@ class Provenance(ApiModel):
                 raise ValueError("forecast_issued_at cannot be after effective_at")
         elif self.classification in {
             DataClassification.OBSERVED,
+            DataClassification.ESTIMATED,
             DataClassification.REPORTED,
         }:
             if self.observed_at is None:
-                raise ValueError("observed and reported facts require observed_at")
+                raise ValueError(
+                    "observed, estimated, and reported facts require observed_at"
+                )
 
         if self.valid_until is not None and self.valid_until <= self.effective_at:
             raise ValueError("valid_until must be after effective_at")
@@ -273,4 +276,3 @@ class GridTimeline(ApiModel):
         ):
             raise ValueError("timeline points must fall inside the response window")
         return self
-

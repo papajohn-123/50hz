@@ -104,6 +104,25 @@ def test_forecast_provenance_requires_a_distinct_issue_time() -> None:
     assert forecast.forecast_issued_at == NOW
 
 
+def test_estimated_provenance_requires_an_observation_time() -> None:
+    with pytest.raises(ValidationError, match="estimated"):
+        Provenance(
+            source=source(),
+            classification=DataClassification.ESTIMATED,
+            effective_at=NOW,
+            retrieved_at=NOW,
+        )
+
+    estimate = Provenance(
+        source=source(),
+        classification=DataClassification.ESTIMATED,
+        effective_at=NOW,
+        observed_at=NOW,
+        retrieved_at=NOW + timedelta(seconds=30),
+    )
+    assert estimate.classification is DataClassification.ESTIMATED
+
+
 @pytest.mark.parametrize(
     ("flow_mw", "expected"),
     [

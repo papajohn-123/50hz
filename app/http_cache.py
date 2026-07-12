@@ -100,7 +100,7 @@ def _cache_seconds(path: str) -> int | None:
         return 60
     if path.startswith("/v1/regions/"):
         return 300
-    if path in {"/v1/sources", "/v1/meta"}:
+    if path in {"/v1/sources", "/v1/meta", "/v1/metadata/metrics"}:
         return 3_600
     return None
 

@@ -149,6 +149,19 @@ def test_current_route_matches_native_acronym_keys() -> None:
     payload = response.json()
     assert payload["frequency"]["sourceID"] == "elexon.freq"
     assert payload["generation"][0]["share"] <= 1
+    assert {status["family"] for status in payload["dataStatus"]} == {
+        "generation",
+        "demand",
+        "frequency",
+        "interconnectors",
+        "carbon",
+    }
+    assert all("deliveryState" in status for status in payload["dataStatus"])
+    assert all("factState" in status for status in payload["dataStatus"])
+    assert all("evaluatedAt" in status for status in payload["dataStatus"])
+    assert payload["supply"]["isComplete"] is False
+    assert payload["supply"]["storageChargingMW"] is None
+    assert payload["supply"]["grossExportsMW"] == 500
 
 
 def test_current_route_includes_highest_priority_reported_event() -> None:

@@ -4,8 +4,10 @@ from typing import Annotated
 from fastapi import APIRouter, Depends, HTTPException, Query, status
 
 from app.api.dependencies import get_grid_read_repository, get_regional_carbon_provider
+from app.api.metrics import present_metric_registry
 from app.api.models import (
     GridEvent,
+    MetricRegistryResponse,
     MobileFreshness,
     GridSnapshotResponse,
     GridTimelineResponse,
@@ -119,6 +121,17 @@ async def sources(repository: Repository) -> list[SourceMetadataResponse]:
         )
         for source in await repository.list_sources()
     ]
+
+
+@router.get(
+    "/metadata/metrics",
+    response_model=MetricRegistryResponse,
+    tags=["metadata"],
+)
+async def metric_registry() -> MetricRegistryResponse:
+    """Return stable definitions and methodology versions for public metrics."""
+
+    return present_metric_registry()
 
 
 @router.get("/regions/{postcode}", response_model=RegionResponse, tags=["regions"])

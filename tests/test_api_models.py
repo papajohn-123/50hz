@@ -47,6 +47,20 @@ def test_headline_copy_is_constructed_from_facts() -> None:
     assert "2.3 GW" in headline.interpretation
 
 
+def test_imports_are_described_as_supply_not_generation() -> None:
+    headline = build_headline(
+        carbon_intensity=120,
+        frequency_hz=50.0,
+        net_import_mw=4_000,
+        generation_mw={"imports": 4_000, "wind": 3_000, "gas": 2_000},
+        demand_mw=20_000,
+    )
+
+    assert headline.energy_position == "Net importing"
+    assert "Imports are the largest displayed supply component" in headline.interpretation
+    assert "generation source" not in headline.interpretation
+
+
 def test_forecast_timeline_rejects_frequency_value() -> None:
     with pytest.raises(ValidationError):
         GridTimelineSample(

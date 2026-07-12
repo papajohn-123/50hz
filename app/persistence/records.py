@@ -255,8 +255,8 @@ def map_carbon_actual_record(
     source_id: str,
     raw_payload_id: UUID,
 ) -> dict[str, Any]:
-    if record.classification is not SourceDataClassification.OBSERVED:
-        raise ValueError("only observed carbon records belong in carbon_observations")
+    if record.classification is not SourceDataClassification.ESTIMATED:
+        raise ValueError("only estimated carbon actuals belong in carbon_observations")
     return {
         "source_id": source_id,
         "raw_payload_id": raw_payload_id,
@@ -265,7 +265,7 @@ def map_carbon_actual_record(
         "published_at": None,
         "retrieved_at": as_utc(record.retrieved_at, field_name="retrieved_at"),
         "revision": 0,
-        "quality": FactQuality.VALIDATED,
+        "quality": FactQuality.ESTIMATED,
         "region_code": carbon_region_code(record),
         "intensity_gco2_kwh": float(record.intensity_g_co2_per_kwh),
         "index_label": record.index,

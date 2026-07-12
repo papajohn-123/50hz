@@ -11,6 +11,8 @@ def test_native_snapshot_fixture_matches_backend_contract() -> None:
     payload = json.loads((FIXTURES / "grid_snapshot.json").read_text())
     snapshot = GridSnapshotResponse.model_validate(payload)
     assert snapshot.generation
+    assert snapshot.data_status == []
+    assert snapshot.supply is None
     assert snapshot.model_dump(by_alias=True)["headline"]["energyPosition"] == "Exporting"
 
 

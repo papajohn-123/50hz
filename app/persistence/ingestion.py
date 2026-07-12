@@ -543,7 +543,7 @@ def _map_record_batches(
                 )
             )
         elif isinstance(record, CarbonIntensityRecord):
-            if record.classification is SourceDataClassification.OBSERVED:
+            if record.classification is SourceDataClassification.ESTIMATED:
                 grouped[_CARBON_ACTUAL_SPEC].append(
                     map_carbon_actual_record(
                         record, source_id=source_id, raw_payload_id=raw_payload_id
@@ -556,7 +556,7 @@ def _map_record_batches(
                     )
                 )
             else:
-                raise ValueError("carbon intensity records must be observed or forecast")
+                raise ValueError("carbon intensity records must be estimated or forecast")
         elif isinstance(record, DemandForecastRecord):
             grouped[_FORECAST_SPEC].append(
                 map_demand_forecast_record(

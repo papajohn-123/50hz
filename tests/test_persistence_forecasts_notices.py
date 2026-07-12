@@ -96,7 +96,7 @@ def carbon(classification: DataClassification) -> CarbonIntensityRecord:
         period_start=NOW,
         period_end=NOW + timedelta(minutes=30),
         retrieved_at=NOW - timedelta(minutes=1),
-        intensity_g_co2_per_kwh=67 if classification is DataClassification.OBSERVED else 63,
+        intensity_g_co2_per_kwh=67 if classification is DataClassification.ESTIMATED else 63,
         classification=classification,
         index="low",
         generation_mix=(GenerationMixShare("wind", 45.5),),
@@ -153,9 +153,9 @@ def warning(
     )
 
 
-def test_carbon_actual_and_forecast_use_separate_storage_contracts() -> None:
+def test_carbon_estimate_and_forecast_use_separate_storage_contracts() -> None:
     actual = map_carbon_actual_record(
-        carbon(DataClassification.OBSERVED),
+        carbon(DataClassification.ESTIMATED),
         source_id="neso.carbon-intensity-national",
         raw_payload_id=RAW_ID,
     )
@@ -167,7 +167,10 @@ def test_carbon_actual_and_forecast_use_separate_storage_contracts() -> None:
 
     assert actual["region_code"] == "GB"
     assert actual["observed_at"] == NOW
+    assert actual["published_at"] is None
     assert actual["generation_mix"] == [{"fuel": "wind", "percent": 45.5}]
+    assert actual["quality"].value == "estimated"
+    assert actual["attributes"]["classification"] == "estimated"
     assert forecast["metric_type"] == "carbon_intensity"
     assert forecast["valid_from"] == NOW
     assert forecast["valid_to"] == NOW + timedelta(minutes=30)
@@ -269,7 +272,7 @@ def test_mixed_carbon_result_persists_actual_and_forecast_atomically() -> None:
         retrieved_at=NOW,
         request_url="https://api.carbonintensity.org.uk/intensity",
         records=(
-            carbon(DataClassification.OBSERVED),
+            carbon(DataClassification.ESTIMATED),
             carbon(DataClassification.FORECAST),
         ),
         raw_payload={"data": []},

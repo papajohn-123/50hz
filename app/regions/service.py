@@ -98,12 +98,12 @@ def _current_record(
         ]
     if not candidates:
         return None
-    # An actual and forecast may describe the same slot.  Prefer the actual fact.
+    # An estimate and forecast may describe the same slot. Prefer the estimate.
     return sorted(
         candidates,
         key=lambda record: (
             record.period_end,
-            record.classification is DataClassification.OBSERVED,
+            record.classification is DataClassification.ESTIMATED,
         ),
         reverse=True,
     )[0]

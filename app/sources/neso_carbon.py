@@ -245,7 +245,9 @@ def _parse_periods(
             actual = _optional(intensity, "actual")
             forecast = _optional(intensity, "forecast")
             if include_actual and actual is not None:
-                values.append((DataClassification.OBSERVED, actual))
+                # NESO names this field ``actual`` to distinguish it from its
+                # forecast, but carbon intensity remains a modelled estimate.
+                values.append((DataClassification.ESTIMATED, actual))
             if include_forecast and forecast is not None:
                 values.append((DataClassification.FORECAST, forecast))
             for classification, raw_value in values:

@@ -49,9 +49,10 @@ class FlowDirection(StrEnum):
 
 
 class DataClassification(StrEnum):
-    """What the source says a fact represents; never inferred by the LLM."""
+    """Normalized source semantics assigned by adapters, never by the LLM."""
 
     OBSERVED = "observed"
+    ESTIMATED = "estimated"
     FORECAST = "forecast"
     REPORTED = "reported"
 

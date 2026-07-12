@@ -126,7 +126,7 @@ async def _stored_regional_reading(
                 retrieved_at=actual.provenance.retrieved_at,
                 source_id=actual.provenance.source_id,
                 dataset="carbon_intensity_regional",
-                classification=DataClassification.OBSERVED,
+                classification=DataClassification.ESTIMATED,
             )
 
         forecasts = await repository.get_carbon_forecast(
