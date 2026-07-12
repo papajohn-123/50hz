@@ -51,85 +51,91 @@ struct LiveView: View {
     private func loadedContent(snapshot: GridSnapshot, model: AppModel) -> some View {
         let isForecast = model.selectedSample?.factClass == .forecast
 
-        return ScrollView {
-            LazyVStack(alignment: .leading, spacing: 19) {
-                BrandHeader(
-                    snapshot: snapshot,
-                    mode: model.timelineModeLabel,
-                    onShare: { sharePayload = .current(snapshot) }
-                )
-                    .padding(.top, 8)
+        return VStack(spacing: 0) {
+            ScrollView {
+                LazyVStack(alignment: .leading, spacing: 19) {
+                    BrandHeader(
+                        snapshot: snapshot,
+                        mode: model.timelineModeLabel,
+                        onShare: { sharePayload = .current(snapshot) }
+                    )
+                        .padding(.top, 8)
 
-                if snapshot.freshness != .live || model.lastRefreshError != nil {
-                    DataStateBanner(snapshot: snapshot, lastError: model.lastRefreshError, isRefreshing: model.isRefreshing) {
-                        Task { await model.retry() }
+                    if snapshot.freshness != .live || model.lastRefreshError != nil {
+                        DataStateBanner(snapshot: snapshot, lastError: model.lastRefreshError, isRefreshing: model.isRefreshing) {
+                            Task { await model.retry() }
+                        }
                     }
+
+                    ConditionHeadlineView(
+                        headline: snapshot.headline,
+                        isForecast: isForecast,
+                        interpretation: snapshot.headline.publicInterpretation(for: snapshot.generation)
+                    )
+
+                    MeasurementRow(snapshot: snapshot, isForecast: isForecast)
+
+                    BritainGridMap(
+                        snapshot: snapshot,
+                        selectedFuel: model.selectedFuel,
+                        isForecast: isForecast,
+                        onEventTap: { model.selectedEvent = snapshot.activeEvent }
+                    )
+                    .frame(height: 340)
+                    .opacity(snapshot.freshness == .offline ? 0.62 : (snapshot.freshness == .stale ? 0.82 : 1))
+                    .padding(.horizontal, -GridTheme.horizontalPadding)
+                    .overlay(alignment: .bottomTrailing) {
+                        Button {
+                            model.isAskPresented = true
+                        } label: {
+                            Label("Ask the Grid", systemImage: "sparkles")
+                                .font(.caption.weight(.semibold))
+                                .padding(.horizontal, 14)
+                                .frame(minHeight: 44)
+                                .foregroundStyle(GridTheme.textPrimary)
+                                .background(GridTheme.surface.opacity(0.92), in: Capsule())
+                                .overlay(Capsule().stroke(GridTheme.liveCyan.opacity(0.25), lineWidth: 1))
+                        }
+                        .buttonStyle(.plain)
+                        .padding(.trailing, 2)
+                        .padding(.bottom, 2)
+                    }
+
+                    if snapshot.generation.isEmpty {
+                        VStack(alignment: .leading, spacing: 8) {
+                            SectionLabel("Supply mix", trailing: "NOT IN FRAME")
+                            Text("A time-aligned supply mix is not available for this timeline frame, so 50Hz does not project one.")
+                                .font(.caption)
+                                .foregroundStyle(GridTheme.textSecondary)
+                                .padding(12)
+                                .background(GridTheme.surface.opacity(0.7), in: RoundedRectangle(cornerRadius: 10))
+                        }
+                    } else {
+                        VStack(alignment: .leading, spacing: 12) {
+                            SectionLabel(
+                                "Supply mix",
+                                trailing: "\((snapshot.totalGenerationMW / 1_000).formatted(.number.precision(.fractionLength(1)))) GW"
+                            )
+                            GenerationMixBar(readings: snapshot.generation, selectedFuel: model.selectedFuel)
+                        }
+
+                        FuelFilter(readings: snapshot.generation, selection: $model.selectedFuel)
+
+                        if let fuel = model.selectedFuel,
+                           let reading = snapshot.reading(for: fuel),
+                           let timeline = model.displayTimeline {
+                            FuelFocusView(reading: reading, timeline: timeline)
+                        }
+                    }
+
+                    SourceFootnote(snapshot: snapshot, mode: model.timelineModeLabel)
+                        .padding(.bottom, 20)
                 }
-
-                ConditionHeadlineView(headline: snapshot.headline, isForecast: isForecast)
-
-                MeasurementRow(snapshot: snapshot, isForecast: isForecast)
-
-                BritainGridMap(
-                    snapshot: snapshot,
-                    selectedFuel: model.selectedFuel,
-                    isForecast: isForecast,
-                    onEventTap: { model.selectedEvent = snapshot.activeEvent }
-                )
-                .frame(height: 340)
-                .opacity(snapshot.freshness == .offline ? 0.62 : (snapshot.freshness == .stale ? 0.82 : 1))
-                .padding(.horizontal, -GridTheme.horizontalPadding)
-                .overlay(alignment: .bottomTrailing) {
-                    Button {
-                        model.isAskPresented = true
-                    } label: {
-                        Label("Ask the Grid", systemImage: "sparkles")
-                            .font(.caption.weight(.semibold))
-                            .padding(.horizontal, 14)
-                            .frame(minHeight: 44)
-                            .foregroundStyle(GridTheme.textPrimary)
-                            .background(GridTheme.surface.opacity(0.92), in: Capsule())
-                            .overlay(Capsule().stroke(GridTheme.liveCyan.opacity(0.25), lineWidth: 1))
-                    }
-                    .buttonStyle(.plain)
-                    .padding(.trailing, 2)
-                    .padding(.bottom, 2)
-                }
-
-                if snapshot.generation.isEmpty {
-                    VStack(alignment: .leading, spacing: 8) {
-                        SectionLabel("Generation mix", trailing: "NOT IN FRAME")
-                        Text("A time-aligned generation mix is not available for this timeline frame, so 50Hz does not project one.")
-                            .font(.caption)
-                            .foregroundStyle(GridTheme.textSecondary)
-                            .padding(12)
-                            .background(GridTheme.surface.opacity(0.7), in: RoundedRectangle(cornerRadius: 10))
-                    }
-                } else {
-                    VStack(alignment: .leading, spacing: 12) {
-                        SectionLabel(
-                            "Generation mix",
-                            trailing: "\((snapshot.totalGenerationMW / 1_000).formatted(.number.precision(.fractionLength(1)))) GW"
-                        )
-                        GenerationMixBar(readings: snapshot.generation, selectedFuel: model.selectedFuel)
-                    }
-
-                    FuelFilter(readings: snapshot.generation, selection: $model.selectedFuel)
-
-                    if let fuel = model.selectedFuel,
-                       let reading = snapshot.reading(for: fuel),
-                       let timeline = model.displayTimeline {
-                        FuelFocusView(reading: reading, timeline: timeline)
-                    }
-                }
-
-                SourceFootnote(snapshot: snapshot, mode: model.timelineModeLabel)
-                    .padding(.bottom, 12)
+                .padding(.horizontal, GridTheme.horizontalPadding)
             }
-            .padding(.horizontal, GridTheme.horizontalPadding)
-        }
-        .scrollIndicators(.hidden)
-        .safeAreaInset(edge: .bottom, spacing: 0) {
+            .scrollIndicators(.hidden)
+            .layoutPriority(1)
+
             if let timeline = model.displayTimeline {
                 GridTimelineView(timeline: timeline, selectedTime: $model.selectedTime)
                     .background(GridTheme.background.opacity(0.95))

@@ -330,21 +330,21 @@ final class AppModel: ObservableObject {
         if sample.factClass == .forecast {
             let hasGenerationForecast = !sample.generation.isEmpty
             snapshot.headline = ConditionHeadline(
-                cleanliness: sample.carbonIntensity < 130 ? "Very clean" : "Cleaner",
+                cleanliness: CarbonIntensityWording.label(for: sample.carbonIntensity),
                 balance: "Forecast",
-                energyPosition: hasGenerationForecast ? "Generation outlook" : "Carbon outlook",
+                energyPosition: hasGenerationForecast ? "Supply outlook" : "Carbon outlook",
                 interpretation: hasGenerationForecast
-                    ? "This forecast frame includes modelled demand, carbon and generation values. Forecast values are shown in violet."
-                    : "This forecast frame includes modelled demand and carbon intensity. A future generation mix is not available, so 50Hz does not project one."
+                    ? "This forecast frame includes modelled demand, carbon and supply-mix values. Forecast values are shown in violet."
+                    : "This forecast frame includes modelled demand and carbon intensity. A future supply mix is not available, so 50Hz does not project one."
             )
         } else {
             snapshot.headline = ConditionHeadline(
-                cleanliness: sample.carbonIntensity < 130 ? "Cleaner" : "Historical",
+                cleanliness: CarbonIntensityWording.label(for: sample.carbonIntensity),
                 balance: "Replay",
                 energyPosition: "Observed frame",
                 interpretation: sample.generation.isEmpty
                     ? "This historical frame includes observed demand and carbon intensity. Other system state is not available for this time."
-                    : "This historical frame includes observed demand, carbon intensity and generation. Interconnector and event state are not available for this time."
+                    : "This historical frame includes observed demand, carbon intensity and the supply mix. Interconnector and event state are not available for this time."
             )
         }
         return snapshot

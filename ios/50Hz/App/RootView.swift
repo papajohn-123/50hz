@@ -14,11 +14,11 @@ struct RootView: View {
                 .tag(AppTab.today)
 
             MineView()
-                .tabItem { Label("Mine", systemImage: "location") }
+                .tabItem { Label("Local", systemImage: "location") }
                 .tag(AppTab.mine)
 
             LogView()
-                .tabItem { Label("Log", systemImage: "book.closed") }
+                .tabItem { Label("Notebook", systemImage: "book.closed") }
                 .tag(AppTab.log)
         }
         .tint(GridTheme.liveCyan)

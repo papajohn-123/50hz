@@ -11,6 +11,7 @@ private struct ObservedGridMoment: Identifiable {
 
 struct LogView: View {
     @EnvironmentObject private var model: AppModel
+    @Environment(\.accessibilityReduceMotion) private var reduceMotion
     @AppStorage("log.prediction") private var predictionChoice = ""
     @AppStorage("log.prediction.id") private var predictionID = ""
     @AppStorage("log.prediction.date") private var predictionDate = ""
@@ -43,7 +44,7 @@ struct LogView: View {
     private var header: some View {
         VStack(alignment: .leading, spacing: 8) {
             HStack(alignment: .firstTextBaseline) {
-                Text("Field notebook")
+                Text("Notebook")
                     .font(.system(.largeTitle, design: .rounded, weight: .medium))
                     .tracking(-1.3)
                     .accessibilityAddTraits(.isHeader)
@@ -58,7 +59,7 @@ struct LogView: View {
                         .foregroundStyle(GridTheme.textTertiary)
                 }
             }
-            Text("Observe. Predict. Learn how Britain stays balanced.")
+            Text("Observe. Predict. Learn how Britain’s grid changes.")
                 .font(.subheadline)
                 .foregroundStyle(GridTheme.textSecondary)
         }
@@ -192,7 +193,7 @@ struct LogView: View {
         let symbol = choice == .importing ? "arrow.down.left" : "arrow.up.right"
         return Button {
             guard !locked else { return }
-            withAnimation(.snappy(duration: 0.22)) {
+            animateIfAllowed(duration: 0.22) {
                 predictionChoice = choice.rawValue
                 predictionID = prediction.predictionID
                 predictionDate = currentGame?.date ?? todayKey
@@ -244,7 +245,7 @@ struct LogView: View {
         let isDone = completedMissionIDs.contains(mission.missionID)
         return Button {
             guard mission.available else { return }
-            withAnimation(.snappy(duration: 0.2)) {
+            animateIfAllowed(duration: 0.2) {
                 toggleMission(mission.missionID)
                 registerParticipation()
             }
@@ -282,7 +283,7 @@ struct LogView: View {
         }
         return switch mission.kind {
         case .findCleanWindow: "Use Today or the Live timeline, then mark this locally."
-        case .identifyLargestSource: "Inspect the current generation ranking, then mark this locally."
+        case .identifyLargestSource: "Inspect the current supply ranking, then mark this locally."
         case .inspectInterconnector: "Inspect the current interconnector direction, then mark this locally."
         case .openEventEvidence: "Open a reported event’s evidence, then mark this locally."
         case .other: "Explore the requested grid state, then mark this locally."
@@ -415,7 +416,7 @@ struct LogView: View {
             }
             .font(.caption2.weight(.medium))
             .foregroundStyle(GridTheme.liveCyan)
-            .frame(minHeight: 32)
+            .frame(minHeight: 44)
         }
     }
 
@@ -497,6 +498,14 @@ struct LogView: View {
            predictionID != activeID {
             predictionChoice = ""
             predictionID = ""
+        }
+    }
+
+    private func animateIfAllowed(duration: Double, updates: () -> Void) {
+        if reduceMotion {
+            updates()
+        } else {
+            withAnimation(.snappy(duration: duration), updates)
         }
     }
 }

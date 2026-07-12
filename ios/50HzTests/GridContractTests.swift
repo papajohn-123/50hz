@@ -2,6 +2,30 @@ import XCTest
 @testable import FiftyHz
 
 final class GridContractTests: XCTestCase {
+    func testCarbonIntensityWordingUsesComparativeBands() {
+        XCTAssertEqual(CarbonIntensityWording.label(for: 99.9), "Lower carbon")
+        XCTAssertEqual(CarbonIntensityWording.label(for: 100), "Typical carbon")
+        XCTAssertEqual(CarbonIntensityWording.label(for: 199.9), "Typical carbon")
+        XCTAssertEqual(CarbonIntensityWording.label(for: 200), "Higher carbon")
+    }
+
+    func testRegionalMethodologyUsesForecastAndCaptureSemantics() {
+        let source = SourceReference(
+            id: "neso-region",
+            name: "NESO Carbon Intensity",
+            dataset: "REGIONAL",
+            observedAt: Date(timeIntervalSince1970: 1_000),
+            retrievedAt: Date(timeIntervalSince1970: 1_060),
+            cadenceSeconds: 1_800
+        )
+
+        let copy = RegionalGridCopy.methodology(source: source)
+        XCTAssertTrue(copy.contains("current half-hour carbon value is a regional forecast"))
+        XCTAssertTrue(copy.contains("forecast period"))
+        XCTAssertTrue(copy.contains("captured"))
+        XCTAssertFalse(copy.localizedCaseInsensitiveContains("observed"))
+    }
+
     func testGridJSONDecodesProductionFractionalAndWholeSecondDates() throws {
         struct DateEnvelope: Decodable {
             let timestamp: Date
@@ -24,6 +48,47 @@ final class GridContractTests: XCTestCase {
         let reading = try GridJSON.decoder.decode(FuelReading.self, from: Data(json.utf8))
         XCTAssertEqual(reading.fuel, .other)
         XCTAssertEqual(reading.share, 0.01)
+    }
+
+    func testConditionHeadlineCorrectsLegacyPublicSupplyWording() {
+        let headline = ConditionHeadline(
+            cleanliness: "Typical",
+            balance: "Balanced",
+            energyPosition: "Import-dependent",
+            interpretation: "Wind is the largest source at 31% of generation. The generation mix includes imports."
+        )
+        let imports = FuelReading(
+            fuel: .imports,
+            megawatts: 3_500,
+            share: 0.16,
+            changeOneHour: 0,
+            rank: 3,
+            factClass: .observed
+        )
+
+        XCTAssertEqual(
+            headline.publicInterpretation(for: [imports]),
+            "Wind is the largest displayed supply component at 31% of this partial supply mix. The displayed supply mix includes imports."
+        )
+    }
+
+    func testConditionHeadlinePreservesGenerationWordingWithoutImports() {
+        let headline = ConditionHeadline(
+            cleanliness: "Clean",
+            balance: "Balanced",
+            energyPosition: "Self-supplied",
+            interpretation: "Wind is the largest source at 45% of generation."
+        )
+        let wind = FuelReading(
+            fuel: .wind,
+            megawatts: 10_000,
+            share: 0.45,
+            changeOneHour: 0,
+            rank: 1,
+            factClass: .observed
+        )
+
+        XCTAssertEqual(headline.publicInterpretation(for: [wind]), headline.interpretation)
     }
 
     func testDailyGameDecodesBackendSnakeCaseContract() throws {
@@ -164,6 +229,27 @@ final class GridContractTests: XCTestCase {
         let before = GridTimelineSampler(timeline: timeline).sample(at: boundary.addingTimeInterval(-1))
         XCTAssertEqual(before?.factClass, .observed)
         XCTAssertEqual(before?.demandMW, 20_000)
+    }
+
+    func testTimelineScaleNeverProducesNonFiniteAccessibilityPositions() {
+        let instant = Date(timeIntervalSince1970: 1_000)
+        let scale = GridTimelineScale(firstDate: instant, lastDate: instant)
+
+        XCTAssertTrue(scale.ratio(for: instant).isFinite)
+        XCTAssertEqual(scale.ratio(for: instant), 0)
+        XCTAssertEqual(scale.date(at: .nan), instant)
+    }
+
+    func testTimelineScaleClampsAccessibleDatesToBounds() {
+        let first = Date(timeIntervalSince1970: 1_000)
+        let last = Date(timeIntervalSince1970: 1_600)
+        let scale = GridTimelineScale(firstDate: first, lastDate: last)
+
+        XCTAssertEqual(scale.ratio(for: first.addingTimeInterval(-60)), 0)
+        XCTAssertEqual(scale.ratio(for: last.addingTimeInterval(60)), 1)
+        XCTAssertEqual(scale.date(at: -1), first)
+        XCTAssertEqual(scale.date(at: 2), last)
+        XCTAssertEqual(scale.date(at: 0.5), Date(timeIntervalSince1970: 1_300))
     }
 
     private func sample(at date: Date, demand: Double, carbon: Double, frequency: Double, wind: Double) -> GridTimelineSample {

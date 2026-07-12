@@ -82,6 +82,8 @@ struct EventDetailSheet: View {
                         sharePayload = .event(displayedEvent, snapshot: snapshot)
                     } label: {
                         Image(systemName: "square.and.arrow.up")
+                            .frame(width: 44, height: 44)
+                            .contentShape(Rectangle())
                     }
                     .foregroundStyle(GridTheme.textSecondary)
                     .accessibilityLabel("Share this grid event")

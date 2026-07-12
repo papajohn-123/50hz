@@ -1,5 +1,14 @@
 import SwiftUI
 
+enum RegionalGridCopy {
+    static func methodology(source: SourceReference?) -> String {
+        let provenance = source.map {
+            " Source: \($0.name), \($0.dataset), forecast period \($0.observedAt.formatted(.dateTime.hour().minute())), captured \($0.retrievedAt.formatted(.dateTime.hour().minute()))."
+        } ?? ""
+        return "The current half-hour carbon value is a regional forecast. The charging window uses Britain’s national carbon forecast, and the national supply mix shown elsewhere is not a regional electricity supply mix.\(provenance)"
+    }
+}
+
 struct MineView: View {
     @EnvironmentObject private var model: AppModel
     @AppStorage("mine.postcode") private var postcode = ""
@@ -44,7 +53,7 @@ struct MineView: View {
 
     private var header: some View {
         VStack(alignment: .leading, spacing: 7) {
-            Text("Mine")
+            Text("Local")
                 .font(.system(.largeTitle, design: .rounded, weight: .medium))
                 .tracking(-1.2)
                 .accessibilityAddTraits(.isHeader)
@@ -65,8 +74,8 @@ struct MineView: View {
     private func regionalReading(_ context: RegionalGridContext) -> some View {
         VStack(alignment: .leading, spacing: 7) {
             SectionLabel(
-                "Regional carbon",
-                trailing: context.regionalIsDelayed == true ? "DELAYED ESTIMATE" : "ESTIMATED"
+                "Regional forecast now",
+                trailing: context.regionalIsDelayed == true ? "\(context.name.uppercased()) · DELAYED" : context.name.uppercased()
             )
             HStack(alignment: .firstTextBaseline, spacing: 8) {
                 Text(Int(context.carbonIntensity.rounded()).formatted())
@@ -88,7 +97,7 @@ struct MineView: View {
             }
         }
         .accessibilityElement(children: .combine)
-        .accessibilityLabel("Estimated regional carbon intensity, \(Int(context.carbonIntensity.rounded())) grams of carbon dioxide per kilowatt hour, \(context.rating)")
+        .accessibilityLabel("Regional carbon forecast for the current half-hour, \(Int(context.carbonIntensity.rounded())) grams of carbon dioxide per kilowatt hour, \(context.rating)")
     }
 
     private func comparison(_ context: RegionalGridContext) -> some View {
@@ -110,12 +119,12 @@ struct MineView: View {
         let national = max(context.nationalCarbonIntensity, 1)
         let difference = Int((abs(context.carbonIntensity - national) / national * 100).rounded())
         if context.carbonIntensity < national {
-            return "\(context.name) is approximately \(difference)% cleaner than the national estimate in this snapshot."
+            return "\(context.name) is approximately \(difference)% lower carbon than the national forecast for this half-hour."
         }
         if context.carbonIntensity > national {
-            return "\(context.name) is approximately \(difference)% more carbon-intensive than the national estimate in this snapshot."
+            return "\(context.name) is approximately \(difference)% more carbon-intensive than the national forecast for this half-hour."
         }
-        return "The regional and national estimates are currently aligned."
+        return "The regional and national forecasts are aligned for this half-hour."
     }
 
     private func comparisonBar(label: String, value: Double, maximum: Double, color: Color) -> some View {
@@ -137,7 +146,7 @@ struct MineView: View {
         VStack(alignment: .leading, spacing: 14) {
             HStack(alignment: .top) {
                 VStack(alignment: .leading, spacing: 5) {
-                    SectionLabel("Best charging window")
+                    SectionLabel("Best GB window", trailing: "NATIONAL FORECAST")
                     Text(windowLabel(start: context.chargingWindowStart, end: context.chargingWindowEnd))
                         .font(.system(.title, design: .monospaced, weight: .medium))
                         .foregroundStyle(GridTheme.forecastViolet)
@@ -154,9 +163,9 @@ struct MineView: View {
             HStack(spacing: 0) {
                 chargingFact(value: durationLabel(start: context.chargingWindowStart, end: context.chargingWindowEnd), label: "Window")
                 chargingFact(value: context.chargingWindowStart.formatted(.dateTime.weekday(.abbreviated)), label: "Day")
-                chargingFact(value: context.forecastIssuedAt.formatted(.dateTime.hour().minute()), label: "Issued")
+                chargingFact(value: context.forecastIssuedAt.formatted(.dateTime.hour().minute()), label: "Captured")
             }
-            Text("This window comes from Britain’s national forecast; the current reading above is regional. 50Hz does not claim an emissions saving until the API supplies the window’s average intensity.")
+            Text("This window comes from Britain’s national forecast; the value above is the regional forecast for the current half-hour. 50Hz does not claim an emissions saving until the API supplies the window’s average intensity.")
                 .font(.caption2)
                 .foregroundStyle(GridTheme.textTertiary)
         }
@@ -224,14 +233,12 @@ struct MineView: View {
     }
 
     private var methodologyCopy: String {
-        let source = model.regionalContext?.source
-        let provenance = source.map { " Source: \($0.name), \($0.dataset), observed \($0.observedAt.formatted(.dateTime.hour().minute()))." } ?? ""
-        return "The current carbon value is regional. The charging window uses Britain’s national carbon forecast, and national generation shown elsewhere is not a regional generation mix.\(provenance)"
+        RegionalGridCopy.methodology(source: model.regionalContext?.source)
     }
 
     private var regionalPlaceholder: some View {
         VStack(alignment: .leading, spacing: 12) {
-            SectionLabel("Regional carbon")
+            SectionLabel("Regional forecast now")
             if case .failed(let message) = model.regionLoadPhase {
                 Text(message)
                     .font(.subheadline)

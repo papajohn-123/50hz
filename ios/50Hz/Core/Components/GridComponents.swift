@@ -26,7 +26,7 @@ struct BrandHeader: View {
                     Image(systemName: "square.and.arrow.up")
                         .font(.subheadline.weight(.medium))
                         .foregroundStyle(GridTheme.textSecondary)
-                        .frame(width: 38, height: 38)
+                        .frame(width: 44, height: 44)
                         .contentShape(Circle())
                 }
                 .buttonStyle(.plain)
@@ -88,6 +88,13 @@ struct StatusLabel: View {
 struct ConditionHeadlineView: View {
     let headline: ConditionHeadline
     let isForecast: Bool
+    let interpretation: String
+
+    init(headline: ConditionHeadline, isForecast: Bool, interpretation: String? = nil) {
+        self.headline = headline
+        self.isForecast = isForecast
+        self.interpretation = interpretation ?? headline.interpretation
+    }
 
     var body: some View {
         VStack(alignment: .leading, spacing: 9) {
@@ -112,7 +119,7 @@ struct ConditionHeadlineView: View {
             .accessibilityElement(children: .combine)
             .accessibilityLabel("Grid condition: \(headline.cleanliness), \(headline.balance), \(headline.energyPosition)")
 
-            Text(headline.interpretation)
+            Text(interpretation)
                 .font(.subheadline)
                 .foregroundStyle(GridTheme.textSecondary)
                 .lineSpacing(3)
@@ -196,7 +203,7 @@ struct GenerationMixBar: View {
         }
         .frame(height: 5)
         .accessibilityElement(children: .ignore)
-        .accessibilityLabel("Generation mix")
+        .accessibilityLabel("Supply mix")
         .accessibilityValue(readings.prefix(4).map { "\($0.fuel.displayName) \(Int($0.share * 100)) percent" }.joined(separator: ", "))
     }
 }
@@ -204,22 +211,22 @@ struct GenerationMixBar: View {
 struct FuelFilter: View {
     let readings: [FuelReading]
     @Binding var selection: FuelKind?
+    @Environment(\.accessibilityReduceMotion) private var reduceMotion
 
     var body: some View {
         ScrollView(.horizontal) {
             HStack(spacing: 8) {
-                chip(title: "All", color: GridTheme.liveCyan, isSelected: selection == nil) {
-                    withAnimation(.snappy(duration: 0.28)) { selection = nil }
+                chip(title: "All", accessibilityName: "All supply sources", color: GridTheme.liveCyan, isSelected: selection == nil) {
+                    updateSelection(nil)
                 }
                 ForEach(readings) { reading in
                     chip(
                         title: reading.fuel.shortName,
+                        accessibilityName: reading.fuel == .imports ? "Imported power" : "\(reading.fuel.displayName) supply",
                         color: GridTheme.fuel(reading.fuel),
                         isSelected: selection == reading.fuel
                     ) {
-                        withAnimation(.snappy(duration: 0.28)) {
-                            selection = selection == reading.fuel ? nil : reading.fuel
-                        }
+                        updateSelection(selection == reading.fuel ? nil : reading.fuel)
                     }
                 }
             }
@@ -229,7 +236,13 @@ struct FuelFilter: View {
         .contentMargins(.horizontal, -GridTheme.horizontalPadding, for: .scrollContent)
     }
 
-    private func chip(title: String, color: Color, isSelected: Bool, action: @escaping () -> Void) -> some View {
+    private func chip(
+        title: String,
+        accessibilityName: String,
+        color: Color,
+        isSelected: Bool,
+        action: @escaping () -> Void
+    ) -> some View {
         Button(action: action) {
             HStack(spacing: 6) {
                 Circle().fill(color).frame(width: 5, height: 5)
@@ -243,8 +256,16 @@ struct FuelFilter: View {
             .overlay(Capsule().stroke(isSelected ? color.opacity(0.42) : GridTheme.hairline, lineWidth: 1))
         }
         .buttonStyle(.plain)
-        .accessibilityLabel("\(title) generation")
+        .accessibilityLabel(accessibilityName)
         .accessibilityAddTraits(isSelected ? .isSelected : [])
+    }
+
+    private func updateSelection(_ newSelection: FuelKind?) {
+        if reduceMotion {
+            selection = newSelection
+        } else {
+            withAnimation(.snappy(duration: 0.28)) { selection = newSelection }
+        }
     }
 }
 
@@ -277,7 +298,7 @@ struct FuelFocusView: View {
             FuelSparkline(fuel: reading.fuel, timeline: timeline)
                 .frame(height: 54)
 
-            Text("\(Int(reading.share * 100))% of generation · \(reading.factClass.rawValue.capitalized)")
+            Text("\(Int(reading.share * 100))% of supply mix · \(reading.factClass.rawValue.capitalized)")
                 .font(.caption)
                 .foregroundStyle(GridTheme.textTertiary)
         }

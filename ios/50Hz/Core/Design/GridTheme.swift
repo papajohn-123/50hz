@@ -6,7 +6,8 @@ enum GridTheme {
     static let surfaceRaised = Color(hex: 0x151B25)
     static let textPrimary = Color(hex: 0xF2EFE9)
     static let textSecondary = Color(hex: 0x9AA6B4)
-    static let textTertiary = Color(hex: 0x66707E)
+    // Keeps supporting copy subdued while clearing 4.5:1 against raised surfaces.
+    static let textTertiary = Color(hex: 0x7A8593)
     static let hairline = Color(hex: 0x7C91AA).opacity(0.12)
     static let liveCyan = Color(hex: 0x7FE3E0)
     static let warning = Color(hex: 0xE05A4D)

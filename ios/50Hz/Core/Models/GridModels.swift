@@ -7,6 +7,14 @@ enum FactClass: String, Codable, Sendable {
     case forecast
 }
 
+enum CarbonIntensityWording {
+    static func label(for gramsPerKilowattHour: Double) -> String {
+        if gramsPerKilowattHour < 100 { return "Lower carbon" }
+        if gramsPerKilowattHour < 200 { return "Typical carbon" }
+        return "Higher carbon"
+    }
+}
+
 enum FreshnessState: String, Codable, Sendable, CaseIterable {
     case live
     case stale
@@ -45,7 +53,7 @@ enum FuelKind: String, Codable, Sendable, CaseIterable, Identifiable {
         switch self {
         case .nuclear: "Nuclear"
         case .biomass: "Bio"
-        case .imports: "Import"
+        case .imports: "Imports"
         case .storage: "Store"
         case .other: "Other"
         default: displayName
@@ -110,6 +118,30 @@ struct ConditionHeadline: Codable, Hashable, Sendable {
     let balance: String
     let energyPosition: String
     let interpretation: String
+
+    /// Older snapshots could describe a displayed mix containing imports as
+    /// generation. Qualify only those legacy phrases and preserve generation
+    /// language when the snapshot contains generation alone.
+    func publicInterpretation(for readings: [FuelReading]) -> String {
+        guard readings.contains(where: { $0.fuel == .imports }) else { return interpretation }
+
+        return interpretation
+            .replacingOccurrences(
+                of: "largest source",
+                with: "largest displayed supply component",
+                options: .caseInsensitive
+            )
+            .replacingOccurrences(
+                of: "% of generation",
+                with: "% of this partial supply mix",
+                options: .caseInsensitive
+            )
+            .replacingOccurrences(
+                of: "generation mix",
+                with: "displayed supply mix",
+                options: .caseInsensitive
+            )
+    }
 }
 
 struct GridEvent: Codable, Hashable, Sendable, Identifiable {

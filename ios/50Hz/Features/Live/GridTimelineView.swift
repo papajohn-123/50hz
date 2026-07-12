@@ -1,16 +1,36 @@
 import SwiftUI
+import UIKit
+
+struct GridTimelineScale: Equatable, Sendable {
+    let firstDate: Date
+    let lastDate: Date
+
+    var span: TimeInterval { max(lastDate.timeIntervalSince(firstDate), 1) }
+
+    func ratio(for date: Date) -> Double {
+        let rawValue = date.timeIntervalSince(firstDate) / span
+        guard rawValue.isFinite else { return 0 }
+        return min(max(rawValue, 0), 1)
+    }
+
+    func date(at ratio: Double) -> Date {
+        let finiteRatio = ratio.isFinite ? ratio : 0
+        return firstDate.addingTimeInterval(span * min(max(finiteRatio, 0), 1))
+    }
+}
 
 struct GridTimelineView: View {
     let timeline: GridTimeline
     @Binding var selectedTime: Date?
     @State private var feedbackTick = 0
+    @Environment(\.accessibilityReduceMotion) private var reduceMotion
 
     private var firstDate: Date { timeline.samples.first?.timestamp ?? timeline.nowBoundary }
     private var lastDate: Date { timeline.samples.last?.timestamp ?? timeline.nowBoundary }
     private var selectedDate: Date { selectedTime ?? timeline.nowBoundary }
-    private var span: TimeInterval { max(lastDate.timeIntervalSince(firstDate), 1) }
-    private var nowRatio: CGFloat { CGFloat(timeline.nowBoundary.timeIntervalSince(firstDate) / span).clamped(to: 0...1) }
-    private var selectedRatio: CGFloat { CGFloat(selectedDate.timeIntervalSince(firstDate) / span).clamped(to: 0...1) }
+    private var scale: GridTimelineScale { GridTimelineScale(firstDate: firstDate, lastDate: lastDate) }
+    private var nowRatio: CGFloat { CGFloat(scale.ratio(for: timeline.nowBoundary)) }
+    private var selectedRatio: CGFloat { CGFloat(scale.ratio(for: selectedDate)) }
     private var isForecast: Bool { selectedDate > timeline.nowBoundary }
     private var isLive: Bool { selectedTime == nil }
     private var hasForecastRange: Bool {
@@ -33,13 +53,13 @@ struct GridTimelineView: View {
 
                 if !isLive {
                     Button {
-                        withAnimation(.snappy(duration: 0.28)) { selectedTime = nil }
+                        resumeLive()
                     } label: {
                         Label("Resume live", systemImage: "dot.radiowaves.left.and.right")
                             .font(.caption.weight(.semibold))
                             .foregroundStyle(GridTheme.liveCyan)
                             .padding(.horizontal, 10)
-                            .frame(minHeight: 36)
+                            .frame(minHeight: 44)
                             .background(GridTheme.liveCyan.opacity(0.09), in: Capsule())
                     }
                     .buttonStyle(.plain)
@@ -76,7 +96,10 @@ struct GridTimelineView: View {
                         .frame(width: 14, height: 14)
                         .shadow(color: (isForecast ? GridTheme.forecastViolet : GridTheme.liveCyan).opacity(0.65), radius: 6)
                         .offset(x: proxy.size.width * selectedRatio - 7)
-                        .animation(.interactiveSpring(response: 0.22, dampingFraction: 0.88), value: selectedRatio)
+                        .animation(
+                            reduceMotion ? nil : .interactiveSpring(response: 0.22, dampingFraction: 0.88),
+                            value: selectedRatio
+                        )
                 }
                 .frame(maxHeight: .infinity)
                 .contentShape(Rectangle())
@@ -84,26 +107,20 @@ struct GridTimelineView: View {
                     DragGesture(minimumDistance: 0)
                         .onChanged { value in
                             let ratio = (value.location.x / max(proxy.size.width, 1)).clamped(to: 0...1)
-                            let date = firstDate.addingTimeInterval(span * TimeInterval(ratio))
-                            selectedTime = date
+                            selectedTime = scale.date(at: Double(ratio))
                             let newTick = Int(ratio * 48)
                             if newTick != feedbackTick { feedbackTick = newTick }
                         }
                 )
-                .accessibilityElement(children: .ignore)
-                .accessibilityLabel("Grid timeline")
-                .accessibilityValue(isLive ? "Now" : selectedDate.formatted(.dateTime.hour().minute()))
-                .accessibilityAdjustableAction { direction in
-                    let step = TimeInterval(timeline.sourceResolutionSeconds)
-                    let base = selectedTime ?? timeline.nowBoundary
-                    switch direction {
-                    case .increment: selectedTime = min(base.addingTimeInterval(step), lastDate)
-                    case .decrement: selectedTime = max(base.addingTimeInterval(-step), firstDate)
-                    @unknown default: break
-                    }
+                .accessibilityRepresentation {
+                    GridTimelineAccessibilityControl(
+                        value: timelineAccessibilityValue,
+                        onIncrement: { adjustTimeline(by: 1) },
+                        onDecrement: { adjustTimeline(by: -1) }
+                    )
                 }
             }
-            .frame(height: 24)
+            .frame(height: 44)
             .sensoryFeedback(.selection, trigger: feedbackTick)
 
             GeometryReader { proxy in
@@ -142,11 +159,80 @@ struct GridTimelineView: View {
         return selectedDate.formatted(.dateTime.weekday(.abbreviated).hour().minute())
     }
 
+    private var accessibilityStep: Double {
+        min(max(Double(timeline.sourceResolutionSeconds) / scale.span, 0.000_001), 1)
+    }
+
+    private var timelineAccessibilityValue: String {
+        if isLive {
+            return "Live now, \(axisLabel(for: timeline.nowBoundary))"
+        }
+        return "\(isForecast ? "Forecast frame" : "Observed replay"), \(selectedDateLabel)"
+    }
+
+    private func adjustTimeline(by stepCount: Double) {
+        let currentPosition = scale.ratio(for: selectedDate)
+        let targetDate = scale.date(at: currentPosition + accessibilityStep * stepCount)
+        guard targetDate != selectedDate else { return }
+        selectedTime = targetDate
+    }
+
+    private func resumeLive() {
+        if reduceMotion {
+            selectedTime = nil
+        } else {
+            withAnimation(.snappy(duration: 0.28)) { selectedTime = nil }
+        }
+    }
+
     private func axisLabel(for date: Date) -> String {
         if Calendar.autoupdatingCurrent.isDate(date, inSameDayAs: timeline.nowBoundary) {
             return date.formatted(.dateTime.hour().minute())
         }
         return date.formatted(.dateTime.weekday(.abbreviated).hour().minute())
+    }
+}
+
+private struct GridTimelineAccessibilityControl: UIViewRepresentable {
+    let value: String
+    let onIncrement: () -> Void
+    let onDecrement: () -> Void
+
+    func makeUIView(context: Context) -> AdjustableTimelineView {
+        AdjustableTimelineView()
+    }
+
+    func updateUIView(_ uiView: AdjustableTimelineView, context: Context) {
+        uiView.accessibilityLabel = "Grid timeline"
+        uiView.accessibilityValue = value
+        uiView.accessibilityHint = "Adjust to move by one source interval."
+        uiView.onIncrement = onIncrement
+        uiView.onDecrement = onDecrement
+    }
+}
+
+private final class AdjustableTimelineView: UIView {
+    var onIncrement: (() -> Void)?
+    var onDecrement: (() -> Void)?
+
+    override init(frame: CGRect) {
+        super.init(frame: frame)
+        isAccessibilityElement = true
+        accessibilityTraits = .adjustable
+        backgroundColor = .clear
+    }
+
+    @available(*, unavailable)
+    required init?(coder: NSCoder) {
+        fatalError("init(coder:) has not been implemented")
+    }
+
+    override func accessibilityIncrement() {
+        onIncrement?()
+    }
+
+    override func accessibilityDecrement() {
+        onDecrement?()
     }
 }
 

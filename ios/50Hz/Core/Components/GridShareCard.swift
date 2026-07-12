@@ -51,7 +51,7 @@ struct GridShareCardPayload: Identifiable, Sendable {
                 ? "BRITAIN · FORECAST FRAME"
                 : (snapshot.freshness == .live ? "BRITAIN · LIVE GRID" : "BRITAIN · CONFIRMED SNAPSHOT"),
             title: "\(snapshot.headline.cleanliness) · \(snapshot.headline.balance) · \(snapshot.headline.energyPosition)",
-            detail: snapshot.headline.interpretation,
+            detail: snapshot.headline.publicInterpretation(for: snapshot.generation),
             timestamp: snapshot.timestamp,
             metrics: metrics,
             sourceLine: snapshot.demand.factClass == .forecast ? "50Hz forecast timeline" : sourceNames(snapshot.sources),

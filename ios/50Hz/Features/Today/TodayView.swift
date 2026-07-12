@@ -13,6 +13,7 @@ private struct TodayMoment: Identifiable {
 
 struct TodayView: View {
     @EnvironmentObject private var model: AppModel
+    @Environment(\.accessibilityReduceMotion) private var reduceMotion
     @State private var sharePayload: GridShareCardPayload?
 
     var body: some View {
@@ -50,7 +51,7 @@ struct TodayView: View {
                 }
                 .padding(.bottom, 6)
 
-                Text("Britain’s field log — what changed, and what the forecast suggests next.")
+                Text("Britain’s daily view — what changed, and what the forecast suggests next.")
                     .font(.subheadline)
                     .foregroundStyle(GridTheme.textSecondary)
                     .padding(.bottom, 28)
@@ -127,10 +128,15 @@ struct TodayView: View {
             }
             return
         }
-        withAnimation(.snappy(duration: 0.3)) {
+        let selectMoment = {
             model.selectedTime = moment.time
             model.selectedFuel = moment.subject
             model.selectedTab = .live
+        }
+        if reduceMotion {
+            selectMoment()
+        } else {
+            withAnimation(.snappy(duration: 0.3), selectMoment)
         }
     }
 
@@ -197,7 +203,7 @@ struct TodayView: View {
                 id: "now-\(snapshot.timestamp.timeIntervalSince1970)",
                 time: snapshot.timestamp,
                 title: [snapshot.headline.balance, snapshot.headline.energyPosition].joined(separator: " · "),
-                detail: snapshot.headline.interpretation,
+                detail: snapshot.headline.publicInterpretation(for: snapshot.generation),
                 factClass: .observed,
                 subject: snapshot.generation.min(by: { $0.rank < $1.rank })?.fuel,
                 importance: false,
