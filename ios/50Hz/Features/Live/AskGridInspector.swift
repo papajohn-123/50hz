@@ -4,11 +4,13 @@ struct AskGridInspector: View {
     let snapshot: GridSnapshot
     @EnvironmentObject private var model: AppModel
     @Environment(\.dismiss) private var dismiss
+    @AppStorage("ask.hasAcknowledgedProcessing") private var hasAcknowledgedProcessing = false
     @State private var question = ""
     @State private var askedQuestion: String?
     @State private var answer: AskGridAnswer?
     @State private var isAsking = false
     @State private var errorMessage: String?
+    @State private var askTask: Task<Void, Never>?
 
     var body: some View {
         NavigationStack {
@@ -49,6 +51,10 @@ struct AskGridInspector: View {
             }
         }
         .preferredColorScheme(.dark)
+        .onDisappear {
+            askTask?.cancel()
+            askTask = nil
+        }
     }
 
     private var heading: some View {
@@ -59,6 +65,10 @@ struct AskGridInspector: View {
             Label("Source-grounded analysis", systemImage: "checkmark.shield")
                 .font(.caption)
                 .foregroundStyle(GridTheme.liveCyan)
+            Label(scopeLabel, systemImage: "scope")
+                .font(.caption)
+                .foregroundStyle(GridTheme.textSecondary)
+                .accessibilityLabel("Question context, \(scopeLabel)")
         }
     }
 
@@ -71,6 +81,28 @@ struct AskGridInspector: View {
             Text("50Hz asks its backend to gather bounded evidence before the model answers. It will not diagnose an outage from an output change alone.")
                 .font(.caption)
                 .foregroundStyle(GridTheme.textTertiary)
+
+            if !hasAcknowledgedProcessing {
+                VStack(alignment: .leading, spacing: 10) {
+                    Label("Before your first question", systemImage: "hand.raised")
+                        .font(.subheadline.weight(.semibold))
+                    Text("The question you enter and this selected grid time go to the 50Hz API. The API may send them to an OpenRouter-hosted model after gathering evidence. Do not include personal or confidential information.")
+                        .font(.caption)
+                        .foregroundStyle(GridTheme.textSecondary)
+                        .lineSpacing(3)
+                    Button("I understand") {
+                        hasAcknowledgedProcessing = true
+                    }
+                    .font(.subheadline.weight(.semibold))
+                    .foregroundStyle(GridTheme.background)
+                    .frame(maxWidth: .infinity, minHeight: 48)
+                    .background(GridTheme.liveCyan, in: RoundedRectangle(cornerRadius: 11))
+                    .buttonStyle(.plain)
+                }
+                .padding(14)
+                .background(GridTheme.surface, in: RoundedRectangle(cornerRadius: 12))
+                .overlay(RoundedRectangle(cornerRadius: 12).stroke(GridTheme.hairline, lineWidth: 1))
+            }
         }
     }
 
@@ -179,9 +211,10 @@ struct AskGridInspector: View {
                     .overlay(alignment: .bottom) { Hairline() }
                 }
                 .buttonStyle(.plain)
-                .disabled(isAsking)
+                .disabled(isAsking || !hasAcknowledgedProcessing)
             }
         }
+        .opacity(hasAcknowledgedProcessing ? 1 : 0.55)
     }
 
     private var suggestionTexts: [String] {
@@ -204,14 +237,19 @@ struct AskGridInspector: View {
                 .background(GridTheme.surfaceRaised, in: Capsule())
                 .disabled(isAsking)
             Button(action: submit) {
-                Image(systemName: "arrow.up")
+                Image(systemName: isAsking ? "stop.fill" : "arrow.up")
                     .font(.headline)
                     .frame(width: 44, height: 44)
-                    .background(GridTheme.liveCyan, in: Circle())
+                    .background(isAsking ? GridTheme.staleAmber : GridTheme.liveCyan, in: Circle())
                     .foregroundStyle(GridTheme.background)
             }
-            .disabled(isAsking || question.trimmingCharacters(in: .whitespacesAndNewlines).count < 2)
-            .accessibilityLabel("Ask question")
+            .disabled(
+                !isAsking && (
+                    !hasAcknowledgedProcessing
+                        || question.trimmingCharacters(in: .whitespacesAndNewlines).count < 2
+                )
+            )
+            .accessibilityLabel(isAsking ? "Cancel question" : "Ask question")
         }
         .padding(.horizontal, GridTheme.horizontalPadding)
         .padding(.vertical, 10)
@@ -219,6 +257,11 @@ struct AskGridInspector: View {
     }
 
     private func submit() {
+        if isAsking {
+            cancelQuestion()
+            return
+        }
+        guard hasAcknowledgedProcessing else { return }
         let trimmed = question.trimmingCharacters(in: .whitespacesAndNewlines)
         guard trimmed.count >= 2 else { return }
         question = ""
@@ -226,20 +269,43 @@ struct AskGridInspector: View {
     }
 
     private func ask(_ text: String) {
-        guard !isAsking else { return }
+        guard !isAsking, hasAcknowledgedProcessing else { return }
         askedQuestion = text
         isAsking = true
         answer = nil
         errorMessage = nil
 
-        Task {
+        askTask?.cancel()
+        askTask = Task {
             do {
                 answer = try await model.askGrid(question: text)
             } catch {
                 guard !Task.isCancelled else { return }
                 errorMessage = error.localizedDescription
             }
+            guard !Task.isCancelled else { return }
             isAsking = false
+            askTask = nil
+        }
+    }
+
+    private func cancelQuestion() {
+        askTask?.cancel()
+        askTask = nil
+        isAsking = false
+        errorMessage = "Question cancelled. No answer was added."
+    }
+
+    private var scopeLabel: String {
+        let formatter = Date.FormatStyle(date: .abbreviated, time: .shortened)
+        let timestamp = snapshot.timestamp.formatted(formatter)
+        switch model.timelineModeLabel {
+        case "LIVE":
+            return "Live grid state · \(timestamp)"
+        case "FORECAST":
+            return "Forecast grid state · \(timestamp)"
+        default:
+            return "Observed replay · \(timestamp)"
         }
     }
 }
