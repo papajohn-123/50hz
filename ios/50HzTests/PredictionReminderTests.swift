@@ -184,6 +184,60 @@ final class PredictionReminderTests: XCTestCase {
         )
     }
 
+    func testColdLaunchDestinationSurvivesUntilRootConsumesItOnce() {
+        _ = NotificationNavigation.consumePendingDestination()
+
+        let retained = NotificationNavigation.retainDestination(
+            from: [
+                NotificationNavigation.userInfoKey:
+                    LocalNotificationDestination.local.rawValue
+            ]
+        )
+
+        XCTAssertEqual(retained, .mine)
+        XCTAssertEqual(NotificationNavigation.consumePendingDestination(), .mine)
+        XCTAssertNil(NotificationNavigation.consumePendingDestination())
+    }
+
+    func testLiveAcknowledgementDoesNotClearANewerDestination() {
+        _ = NotificationNavigation.consumePendingDestination()
+        NotificationNavigation.retainDestination(
+            from: [
+                NotificationNavigation.userInfoKey:
+                    LocalNotificationDestination.notebook.rawValue
+            ]
+        )
+
+        NotificationNavigation.acknowledge(.mine)
+        XCTAssertEqual(NotificationNavigation.consumePendingDestination(), .log)
+
+        NotificationNavigation.retainDestination(
+            from: [
+                NotificationNavigation.userInfoKey:
+                    LocalNotificationDestination.notebook.rawValue
+            ]
+        )
+        NotificationNavigation.acknowledge(.log)
+        XCTAssertNil(NotificationNavigation.consumePendingDestination())
+    }
+
+    func testInvalidDestinationCannotReplacePendingAllowlistedRoute() {
+        _ = NotificationNavigation.consumePendingDestination()
+        NotificationNavigation.retainDestination(
+            from: [
+                NotificationNavigation.userInfoKey:
+                    LocalNotificationDestination.local.rawValue
+            ]
+        )
+
+        XCTAssertNil(
+            NotificationNavigation.retainDestination(
+                from: [NotificationNavigation.userInfoKey: "untrusted-destination"]
+            )
+        )
+        XCTAssertEqual(NotificationNavigation.consumePendingDestination(), .mine)
+    }
+
     private func makeCoordinator(
         center: PredictionNotificationCenter,
         store: PredictionReminderStore

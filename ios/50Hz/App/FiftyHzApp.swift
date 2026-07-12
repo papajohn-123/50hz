@@ -12,10 +12,12 @@ struct FiftyHzApp: App {
                 .environmentObject(model)
                 .task {
                     await model.bootstrap()
+                    applyPendingNotificationDestination()
                     if scenePhase == .active { model.startForegroundRefresh() }
                 }
                 .onChange(of: scenePhase) { _, newPhase in
                     if newPhase == .active {
+                        applyPendingNotificationDestination()
                         model.startForegroundRefresh()
                         Task { await model.refresh() }
                     } else {
@@ -29,9 +31,16 @@ struct FiftyHzApp: App {
                 ) { notification in
                     if let tab = notification.object as? AppTab {
                         model.selectedTab = tab
+                        NotificationNavigation.acknowledge(tab)
                     }
                 }
                 .preferredColorScheme(.dark)
+        }
+    }
+
+    private func applyPendingNotificationDestination() {
+        if let tab = NotificationNavigation.consumePendingDestination() {
+            model.selectedTab = tab
         }
     }
 }
