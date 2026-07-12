@@ -14,6 +14,8 @@ from app.worker.contracts import (
     AdvisoryLockProvider,
     IngestionCheckpoint,
     IngestionRepository,
+    PostIngestionAction,
+    PostIngestionContext,
     PersistOutcome,
 )
 
@@ -129,6 +131,7 @@ class IngestionWorker:
         schedules: Iterable[PollSchedule],
         repository: IngestionRepository,
         locks: AdvisoryLockProvider,
+        post_success_actions: Iterable[PostIngestionAction] = (),
         clock: Callable[[], datetime] | None = None,
     ) -> None:
         self.schedules = tuple(schedules)
@@ -138,6 +141,7 @@ class IngestionWorker:
             raise ValueError("poll schedule job IDs must be unique")
         self.repository = repository
         self.locks = locks
+        self.post_success_actions = tuple(post_success_actions)
         self.clock = clock or (lambda: datetime.now(UTC))
 
     async def run_once(self, *, now: datetime | None = None) -> tuple[RunOutcome, ...]:
@@ -250,7 +254,7 @@ class IngestionWorker:
                     error_message=str(exc),
                 )
 
-        return RunOutcome(
+        outcome = RunOutcome(
             job_id=job_id,
             mode=mode,
             status=RunStatus.SUCCEEDED,
@@ -258,6 +262,24 @@ class IngestionWorker:
             record_count=len(result.records),
             persistence=persistence,
         )
+        context = PostIngestionContext(
+            job_id=job_id,
+            completed_at=completed_at,
+            persistence=persistence,
+        )
+        for action in self.post_success_actions:
+            try:
+                await action.after_success(context)
+            except Exception:
+                # The source transaction has already committed. Derived
+                # maintenance is retriable and must not make ingestion or the
+                # worker health endpoint look failed.
+                logger.exception(
+                    "Post-ingestion action %s failed after %s; source commit remains successful",
+                    type(action).__name__,
+                    job_id,
+                )
+        return outcome
 
     async def run_forever(
         self,

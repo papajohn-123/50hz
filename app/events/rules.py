@@ -59,7 +59,7 @@ def generation_leader_change(
         severity=Severity.NOTABLE,
         evidence_class=EvidenceClass.DERIVED,
         confidence=Confidence.HIGH,
-        confidence_reasons=["Calculated from a complete generation-mix observation"],
+        confidence_reasons=["Calculated from coherent generation-mix observations"],
         dedupe_key=f"generation.leader_change:{current_leader}:{bucket}",
         facts=[
             _fact("leader", "generation_leader", "largest generation source", current_leader, None, occurred_at, source_record_ids),
@@ -125,7 +125,7 @@ def renewable_share_milestone(
         severity=Severity.NOTABLE,
         evidence_class=EvidenceClass.DERIVED,
         confidence=Confidence.HIGH,
-        confidence_reasons=["Calculated from a complete generation-mix observation"],
+        confidence_reasons=["Calculated from a coherent generation-mix observation"],
         dedupe_key=f"generation.renewable_share:{threshold:.2f}:{day}",
         facts=[
             _fact("share", "renewable_share", "renewable share of generation", round(share * 100, 1), "%", occurred_at, source_record_ids),
@@ -198,4 +198,3 @@ def reported_unavailability(
         facts=facts,
         cause_reported=reported_cause is not None,
     )
-

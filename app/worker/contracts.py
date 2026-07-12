@@ -47,6 +47,27 @@ class PersistOutcome:
     unchanged: int = 0
 
 
+@dataclass(frozen=True, slots=True)
+class PostIngestionContext:
+    """Bounded facts exposed to an isolated action after a source commit."""
+
+    job_id: str
+    completed_at: datetime
+    persistence: PersistOutcome
+
+    def __post_init__(self) -> None:
+        object.__setattr__(
+            self,
+            "completed_at",
+            _utc(self.completed_at, "completed_at"),
+        )
+
+
+class PostIngestionAction(Protocol):
+    async def after_success(self, context: PostIngestionContext) -> None:
+        """Run after source persistence; failures must not change source status."""
+
+
 class IngestionRepository(Protocol):
     """Database operations expected to be transactional in the implementation."""
 
@@ -79,4 +100,3 @@ class IngestionRepository(Protocol):
 class AdvisoryLockProvider(Protocol):
     def acquire(self, lock_name: str) -> AsyncContextManager[bool]:
         """Return a lease yielding False when another worker holds the lock."""
-

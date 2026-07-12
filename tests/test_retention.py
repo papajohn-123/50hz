@@ -218,6 +218,7 @@ async def test_runtime_starts_retention_as_a_separate_worker_only_task(
     retention_started = asyncio.Event()
     clients: list[Any] = []
     captured: dict[str, Any] = {}
+    ingestion_kwargs: dict[str, Any] = {}
 
     class FakeClient:
         def __init__(self, **_: Any) -> None:
@@ -228,8 +229,8 @@ async def test_runtime_starts_retention_as_a_separate_worker_only_task(
             self.closed = True
 
     class FakeIngestionWorker:
-        def __init__(self, **_: Any) -> None:
-            pass
+        def __init__(self, **values: Any) -> None:
+            ingestion_kwargs.update(values)
 
         async def run_forever(self, stop_event, *, tick_interval) -> None:
             ingestion_started.set()
@@ -282,6 +283,11 @@ async def test_runtime_starts_retention_as_a_separate_worker_only_task(
             "retention": timedelta(hours=72),
             "interval": timedelta(hours=1),
         }
+        assert len(ingestion_kwargs["post_success_actions"]) == 1
+        assert (
+            type(ingestion_kwargs["post_success_actions"][0]).__name__
+            == "ObservedEventMaintenanceAction"
+        )
 
     assert all(client.closed for client in clients)
     runtime_module.dispose_engine.assert_awaited_once()

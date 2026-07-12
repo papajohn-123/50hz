@@ -8,9 +8,14 @@ from fastapi import FastAPI
 from app.config import get_settings
 from app.db import dispose_engine, get_session_factory
 from app.persistence import PostgresAdvisoryLockProvider, PostgresIngestionRepository
+from app.persistence.observed_events import (
+    PostgresObservedEventRepository,
+    PostgresObservedEvidenceLoader,
+)
 from app.persistence.retention import RawPayloadRetentionRepository
 from app.sources import AsyncJSONClient
 from app.worker.production import build_production_schedules
+from app.worker.observed_events import ObservedEventMaintenanceAction
 from app.worker.retention import RawPayloadRetentionWorker
 from app.worker.scheduler import IngestionWorker
 
@@ -38,13 +43,20 @@ async def lifespan(app: FastAPI):
             base_url=settings.carbon_intensity_base_url.rstrip("/") + "/"
         )
         session_factory = get_session_factory()
+        locks = PostgresAdvisoryLockProvider(session_factory)
+        observed_event_action = ObservedEventMaintenanceAction(
+            loader=PostgresObservedEvidenceLoader(session_factory),
+            store=PostgresObservedEventRepository(session_factory),
+            locks=locks,
+        )
         worker = IngestionWorker(
             schedules=build_production_schedules(
                 elexon_client=elexon_client,
                 carbon_client=carbon_client,
             ),
             repository=PostgresIngestionRepository(session_factory),
-            locks=PostgresAdvisoryLockProvider(session_factory),
+            locks=locks,
+            post_success_actions=(observed_event_action,),
         )
         stop_event = asyncio.Event()
         task = asyncio.create_task(

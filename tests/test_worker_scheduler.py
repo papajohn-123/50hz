@@ -174,6 +174,33 @@ def test_worker_records_source_failure_without_stopping_other_ticks() -> None:
     assert repository.failures[0]["error_message"] == "upstream unavailable"
 
 
+def test_post_success_action_failure_does_not_change_committed_source_outcome(
+    caplog,
+) -> None:
+    class BrokenAction:
+        async def after_success(self, context) -> None:
+            assert context.job_id == "test.job"
+            raise RuntimeError("derived maintenance unavailable")
+
+    adapter = FakeAdapter()
+    repository = FakeRepository()
+    worker = IngestionWorker(
+        schedules=[schedule(adapter)],
+        repository=repository,
+        locks=FakeLocks(),
+        post_success_actions=(BrokenAction(),),
+        clock=lambda: NOW,
+    )
+
+    with caplog.at_level("ERROR"):
+        outcome = asyncio.run(worker.run_once(now=NOW))[0]
+
+    assert outcome.status is RunStatus.SUCCEEDED
+    assert len(repository.successes) == 1
+    assert repository.failures == []
+    assert "source commit remains successful" in caplog.text
+
+
 def test_forever_loop_recovers_when_a_tick_crashes(caplog) -> None:
     stop_event = asyncio.Event()
 
