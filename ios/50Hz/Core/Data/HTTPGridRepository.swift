@@ -61,7 +61,7 @@ actor HTTPGridRepository: GridRepository {
         case predictionResolution(localDate: String)
         case todayBriefing(localDate: String)
         case region(String)
-        case localWindows(postcode: String, durationMinutes: Int)
+        case localWindows(LocalWindowsRequest)
 
         var cacheKey: GridCacheKey {
             switch self {
@@ -72,8 +72,13 @@ actor HTTPGridRepository: GridRepository {
             case .predictionResolution(let localDate): .predictionResolution(localDate: localDate)
             case .todayBriefing(let localDate): .todayBriefing(localDate: localDate)
             case .region(let postcode): .region(postcode)
-            case .localWindows(let postcode, let durationMinutes):
-                .localWindows(postcode: postcode, durationMinutes: durationMinutes)
+            case .localWindows(let request):
+                .localWindows(
+                    postcode: request.outwardPostcode,
+                    durationMinutes: request.durationMinutes,
+                    earliest: request.earliest,
+                    latest: request.latest
+                )
             }
         }
     }
@@ -148,10 +153,24 @@ actor HTTPGridRepository: GridRepository {
 
     func cachedLocalWindows(postcode: String, durationMinutes: Int) async -> LocalWindowsResponse? {
         guard let outward = PostcodePrivacy.validatedOutwardCode(from: postcode) else { return nil }
-        let request = LocalWindowsRequest(postcode: outward, durationMinutes: durationMinutes)
+        return await cachedLocalWindows(
+            request: LocalWindowsRequest(
+                postcode: outward,
+                durationMinutes: durationMinutes
+            )
+        )
+    }
+
+    func cachedLocalWindows(request: LocalWindowsRequest) async -> LocalWindowsResponse? {
+        guard PostcodePrivacy.validatedOutwardCode(
+            from: request.outwardPostcode,
+            defaultWhenEmpty: false
+        ) == request.outwardPostcode else { return nil }
         let key = GridCacheKey.localWindows(
             postcode: request.outwardPostcode,
-            durationMinutes: request.durationMinutes
+            durationMinutes: request.durationMinutes,
+            earliest: request.earliest,
+            latest: request.latest
         )
         guard let entry = await cache.entry(for: key) else { return nil }
         do {
@@ -296,14 +315,25 @@ actor HTTPGridRepository: GridRepository {
         guard let outward = PostcodePrivacy.validatedOutwardCode(from: postcode) else {
             throw GridAPIError.invalidPostcode
         }
-        let request = LocalWindowsRequest(postcode: outward, durationMinutes: durationMinutes)
+        return try await localWindows(
+            request: LocalWindowsRequest(
+                postcode: outward,
+                durationMinutes: durationMinutes
+            )
+        )
+    }
+
+    func localWindows(request: LocalWindowsRequest) async throws -> LocalWindowsResponse {
+        guard PostcodePrivacy.validatedOutwardCode(
+            from: request.outwardPostcode,
+            defaultWhenEmpty: false
+        ) == request.outwardPostcode else {
+            throw GridAPIError.invalidPostcode
+        }
         if let task = localWindowsTasks[request] { return try await task.value }
 
         let task = Task<LocalWindowsResponse, Error> {
-            let endpoint = Endpoint.localWindows(
-                postcode: request.outwardPostcode,
-                durationMinutes: request.durationMinutes
-            )
+            let endpoint = Endpoint.localWindows(request)
             let response = try await Self.fetch(
                 endpoint: endpoint,
                 requestURL: try Self.localWindowsURL(baseURL: baseURL, request: request),
@@ -497,6 +527,18 @@ actor HTTPGridRepository: GridRepository {
         components.queryItems = [
             URLQueryItem(name: "durationMinutes", value: String(request.durationMinutes))
         ]
+        let formatter = ISO8601DateFormatter()
+        formatter.formatOptions = [.withInternetDateTime]
+        if let earliest = request.earliest {
+            components.queryItems?.append(
+                URLQueryItem(name: "earliest", value: formatter.string(from: earliest))
+            )
+        }
+        if let latest = request.latest {
+            components.queryItems?.append(
+                URLQueryItem(name: "latest", value: formatter.string(from: latest))
+            )
+        }
         guard let url = components.url else { throw GridAPIError.invalidBaseURL }
         return url
     }

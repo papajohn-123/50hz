@@ -43,10 +43,19 @@ enum PostcodePrivacy {
 struct LocalWindowsRequest: Hashable, Sendable {
     let outwardPostcode: String
     let durationMinutes: Int
+    let earliest: Date?
+    let latest: Date?
 
-    init(postcode: String, durationMinutes: Int) {
+    init(
+        postcode: String,
+        durationMinutes: Int,
+        earliest: Date? = nil,
+        latest: Date? = nil
+    ) {
         outwardPostcode = PostcodePrivacy.outwardCode(from: postcode)
         self.durationMinutes = durationMinutes
+        self.earliest = earliest
+        self.latest = latest
     }
 }
 
@@ -336,8 +345,17 @@ extension LocalWindowsResponse {
             from: postcode,
             defaultWhenEmpty: false
         ) else { return false }
-        return responseOutward == request.outwardPostcode
+        guard responseOutward == request.outwardPostcode
             && plan.requestedDurationMinutes == request.durationMinutes
-            && hasSafeNationalForecastScope
+            && hasSafeNationalForecastScope else { return false }
+        if let earliest = request.earliest,
+           bounds?.earliestStart != earliest {
+            return false
+        }
+        if let latest = request.latest,
+           bounds?.latestFinish != latest {
+            return false
+        }
+        return true
     }
 }

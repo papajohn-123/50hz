@@ -23,9 +23,22 @@ struct GridCacheKey: Hashable, Sendable {
         return GridCacheKey(rawValue: "region-\(outward)")
     }
 
-    static func localWindows(postcode: String, durationMinutes: Int) -> GridCacheKey {
+    static func localWindows(
+        postcode: String,
+        durationMinutes: Int,
+        earliest: Date? = nil,
+        latest: Date? = nil
+    ) -> GridCacheKey {
         let outward = PostcodePrivacy.outwardCode(from: postcode).lowercased()
-        return GridCacheKey(rawValue: "local-windows-\(outward)-\(durationMinutes)")
+        if earliest == nil, latest == nil {
+            return GridCacheKey(rawValue: "local-windows-\(outward)-\(durationMinutes)")
+        }
+        let bounds = [earliest, latest]
+            .map { $0.map { String(Int($0.timeIntervalSince1970)) } ?? "default" }
+            .joined(separator: "-")
+        return GridCacheKey(
+            rawValue: "local-windows-\(outward)-\(durationMinutes)-\(bounds)"
+        )
     }
 }
 

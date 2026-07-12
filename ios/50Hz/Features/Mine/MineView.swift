@@ -21,6 +21,8 @@ struct MineView: View {
     @StateObject private var reminder = LocalReminderCoordinator()
     @State private var draftPostcode = ""
     @State private var postcodeInputError: String?
+    @State private var usesCustomPlanningBounds = false
+    @State private var planningBounds = LocalPlanningBoundsPolicy.defaults()
     @FocusState private var postcodeFocused: Bool
 
     private let londonTimeZone = TimeZone(identifier: "Europe/London") ?? .current
@@ -34,7 +36,12 @@ struct MineView: View {
     }
 
     private var selectedRequest: LocalWindowsRequest {
-        LocalWindowsRequest(postcode: postcode, durationMinutes: selectedDurationMinutes)
+        LocalWindowsRequest(
+            postcode: postcode,
+            durationMinutes: selectedDurationMinutes,
+            earliest: usesCustomPlanningBounds ? planningBounds.earliest : nil,
+            latest: usesCustomPlanningBounds ? planningBounds.latest : nil
+        )
     }
 
     private var lastPlannedActivity: LocalActivityPreset {
@@ -47,6 +54,59 @@ struct MineView: View {
 
     private var nationalCarbon: Double {
         model.regionalContext?.nationalCarbonIntensity ?? model.snapshot?.carbonIntensity.value ?? 0
+    }
+
+    private var planningBoundsIssue: LocalPlanningBoundsIssue? {
+        guard usesCustomPlanningBounds else { return nil }
+        return LocalPlanningBoundsPolicy.issue(
+            for: planningBounds,
+            durationMinutes: selectedDurationMinutes
+        )
+    }
+
+    private var planningHorizonStart: Date {
+        LocalPlanningBoundsPolicy.nextHalfHour(atOrAfter: Date())
+    }
+
+    private var planningHorizonEnd: Date {
+        planningHorizonStart.addingTimeInterval(LocalPlanningBoundsPolicy.maximumHorizon)
+    }
+
+    private var earliestPickerRange: ClosedRange<Date> {
+        let lastStart = planningHorizonEnd.addingTimeInterval(
+            -TimeInterval(selectedDurationMinutes * 60)
+        )
+        return planningHorizonStart...max(planningHorizonStart, lastStart)
+    }
+
+    private var latestPickerRange: ClosedRange<Date> {
+        let firstFinish = planningBounds.earliest.addingTimeInterval(
+            TimeInterval(selectedDurationMinutes * 60)
+        )
+        return firstFinish...max(firstFinish, planningHorizonEnd)
+    }
+
+    private var earliestPlanningBinding: Binding<Date> {
+        Binding(
+            get: { planningBounds.earliest },
+            set: { value in
+                let range = earliestPickerRange
+                let snapped = LocalPlanningBoundsPolicy.nextHalfHour(atOrAfter: value)
+                planningBounds.earliest = min(max(snapped, range.lowerBound), range.upperBound)
+                normalizePlanningBounds()
+            }
+        )
+    }
+
+    private var latestPlanningBinding: Binding<Date> {
+        Binding(
+            get: { planningBounds.latest },
+            set: { value in
+                let range = latestPickerRange
+                let snapped = LocalPlanningBoundsPolicy.nextHalfHour(atOrAfter: value)
+                planningBounds.latest = min(max(snapped, range.lowerBound), range.upperBound)
+            }
+        )
     }
 
     var body: some View {
@@ -67,6 +127,15 @@ struct MineView: View {
         .gridPageBackground()
         .onAppear {
             draftPostcode = PostcodePrivacy.outwardCode(from: postcode)
+        }
+        .onChange(of: usesCustomPlanningBounds) { _, isEnabled in
+            if isEnabled {
+                planningBounds = LocalPlanningBoundsPolicy.defaults()
+                normalizePlanningBounds()
+            }
+        }
+        .onChange(of: selectedDurationMinutes) { _, _ in
+            normalizePlanningBounds()
         }
         .task(id: postcode) {
             await model.loadRegion(postcode: postcode)
@@ -201,6 +270,7 @@ struct MineView: View {
             if selectedActivity == .custom {
                 customDurationControl
             }
+            planningWindowControl
             Text(LocalPlannerCopy.support)
                 .font(.caption)
                 .foregroundStyle(GridTheme.textSecondary)
@@ -303,6 +373,51 @@ struct MineView: View {
         .accessibilityHint("Adjusts in 30-minute steps from 30 minutes to 12 hours")
     }
 
+    private var planningWindowControl: some View {
+        VStack(alignment: .leading, spacing: 12) {
+            Toggle(isOn: $usesCustomPlanningBounds) {
+                VStack(alignment: .leading, spacing: 2) {
+                    Text("Choose start and deadline")
+                        .font(.subheadline.weight(.medium))
+                    Text("Optional · otherwise 50Hz checks the next 24 hours")
+                        .font(.caption2)
+                        .foregroundStyle(GridTheme.textSecondary)
+                }
+            }
+            .tint(GridTheme.liveCyan)
+
+            if usesCustomPlanningBounds {
+                Hairline()
+                DatePicker(
+                    "Earliest start",
+                    selection: earliestPlanningBinding,
+                    in: earliestPickerRange,
+                    displayedComponents: [.date, .hourAndMinute]
+                )
+                .font(.subheadline)
+                DatePicker(
+                    "Latest finish",
+                    selection: latestPlanningBinding,
+                    in: latestPickerRange,
+                    displayedComponents: [.date, .hourAndMinute]
+                )
+                .font(.subheadline)
+                Text("UK time · the activity must fit continuously between these bounds. Half-hour boundaries only, within the next 48 hours.")
+                    .font(.caption2)
+                    .foregroundStyle(GridTheme.textTertiary)
+                if let planningBoundsIssue {
+                    Label(planningBoundsIssue.message, systemImage: "exclamationmark.circle")
+                        .font(.caption)
+                        .foregroundStyle(GridTheme.staleAmber)
+                }
+            }
+        }
+        .padding(14)
+        .background(GridTheme.surface, in: RoundedRectangle(cornerRadius: 12))
+        .overlay(RoundedRectangle(cornerRadius: 12).stroke(GridTheme.hairline, lineWidth: 1))
+        .environment(\.timeZone, londonTimeZone)
+    }
+
     private var plannerButton: some View {
         Button(action: requestPlan) {
             HStack(spacing: 9) {
@@ -319,8 +434,8 @@ struct MineView: View {
             .frame(maxWidth: .infinity, minHeight: 50)
             .background(GridTheme.liveCyan, in: RoundedRectangle(cornerRadius: 12))
         }
-        .disabled(model.isRefreshingLocalWindows)
-        .opacity(model.isRefreshingLocalWindows ? 0.75 : 1)
+        .disabled(model.isRefreshingLocalWindows || planningBoundsIssue != nil)
+        .opacity(model.isRefreshingLocalWindows || planningBoundsIssue != nil ? 0.75 : 1)
         .accessibilityLabel(model.isRefreshingLocalWindows ? "Checking the GB forecast" : plannerButtonTitle)
     }
 
@@ -335,9 +450,31 @@ struct MineView: View {
         Task {
             await model.loadLocalWindows(
                 postcode: postcode,
-                durationMinutes: selectedDurationMinutes
+                durationMinutes: selectedDurationMinutes,
+                earliest: usesCustomPlanningBounds ? planningBounds.earliest : nil,
+                latest: usesCustomPlanningBounds ? planningBounds.latest : nil
             )
         }
+    }
+
+    private func normalizePlanningBounds() {
+        guard usesCustomPlanningBounds else { return }
+        let earliestRange = earliestPickerRange
+        planningBounds.earliest = min(
+            max(
+                LocalPlanningBoundsPolicy.nextHalfHour(atOrAfter: planningBounds.earliest),
+                earliestRange.lowerBound
+            ),
+            earliestRange.upperBound
+        )
+        let latestRange = latestPickerRange
+        planningBounds.latest = min(
+            max(
+                LocalPlanningBoundsPolicy.nextHalfHour(atOrAfter: planningBounds.latest),
+                latestRange.lowerBound
+            ),
+            latestRange.upperBound
+        )
     }
 
     @ViewBuilder
@@ -398,6 +535,11 @@ struct MineView: View {
                 Text("\(lastPlannedActivity.title) · \(LocalPlannerCopy.durationLabel(minutes: response.plan.requestedDurationMinutes)) continuous")
                     .font(.caption)
                     .foregroundStyle(GridTheme.textSecondary)
+                if let range = searchedRangeLabel(response) {
+                    Text("Searched \(range) · UK time")
+                        .font(.caption2)
+                        .foregroundStyle(GridTheme.textTertiary)
+                }
             }
 
             Hairline()
@@ -659,10 +801,11 @@ struct MineView: View {
     }
 
     private func unavailablePlannerState(_ response: LocalWindowsResponse) -> some View {
-        LocalPlannerPlaceholder(
+        let searched = searchedRangeLabel(response).map { " Searched \($0) UK time." } ?? ""
+        return LocalPlannerPlaceholder(
             systemImage: "rectangle.and.text.magnifyingglass",
             title: LocalPlannerCopy.resultTitle(for: response),
-            message: "The forecast does not contain a complete continuous window for this duration. \(LocalPlannerCopy.coverageSummary(response.plan.coverage)). \(gapSummary(response.plan.coverage.gapStarts))"
+            message: "The forecast does not contain a complete continuous window for this duration.\(searched) \(LocalPlannerCopy.coverageSummary(response.plan.coverage)). \(gapSummary(response.plan.coverage.gapStarts))"
         )
     }
 
@@ -696,6 +839,19 @@ struct MineView: View {
         }
         let full = Date.FormatStyle(date: .abbreviated, time: .shortened, timeZone: londonTimeZone)
         return "\(window.start.formatted(full))–\(window.end.formatted(full))"
+    }
+
+    private func searchedRangeLabel(_ response: LocalWindowsResponse) -> String? {
+        guard let start = response.bounds?.earliestStart ?? response.plan.earliestStart,
+              let end = response.bounds?.latestFinish ?? response.plan.latestFinish else {
+            return nil
+        }
+        let full = Date.FormatStyle(
+            date: .abbreviated,
+            time: .shortened,
+            timeZone: londonTimeZone
+        )
+        return "\(start.formatted(full))–\(end.formatted(full))"
     }
 
     private func capturedLabel(_ capturedAt: Date?) -> String {

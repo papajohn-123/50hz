@@ -202,7 +202,12 @@ final class AppModel: ObservableObject {
         }
     }
 
-    func loadLocalWindows(postcode: String, durationMinutes: Int) async {
+    func loadLocalWindows(
+        postcode: String,
+        durationMinutes: Int,
+        earliest: Date? = nil,
+        latest: Date? = nil
+    ) async {
         guard let outward = PostcodePrivacy.validatedOutwardCode(from: postcode) else {
             let message = GridAPIError.invalidPostcode.localizedDescription
             localWindowsError = message
@@ -216,7 +221,28 @@ final class AppModel: ObservableObject {
             return
         }
 
-        let request = LocalWindowsRequest(postcode: outward, durationMinutes: durationMinutes)
+        if (earliest == nil) != (latest == nil) {
+            let message = "Choose both an earliest start and a latest finish."
+            localWindowsError = message
+            localWindowsLoadPhase = localWindows == nil ? .failed(message) : .loaded
+            return
+        }
+        if let earliest, let latest,
+           let issue = LocalPlanningBoundsPolicy.issue(
+            for: LocalPlanningBounds(earliest: earliest, latest: latest),
+            durationMinutes: durationMinutes
+           ) {
+            localWindowsError = issue.message
+            localWindowsLoadPhase = localWindows == nil ? .failed(issue.message) : .loaded
+            return
+        }
+
+        let request = LocalWindowsRequest(
+            postcode: outward,
+            durationMinutes: durationMinutes,
+            earliest: earliest,
+            latest: latest
+        )
         localWindowsRequest = request
         localWindowsError = nil
         isRefreshingLocalWindows = true
@@ -231,10 +257,7 @@ final class AppModel: ObservableObject {
             localWindowsIsFromCache = false
             localWindowsLoadPhase = .loading
 
-            if let cached = await repository.cachedLocalWindows(
-                postcode: request.outwardPostcode,
-                durationMinutes: request.durationMinutes
-            ) {
+            if let cached = await repository.cachedLocalWindows(request: request) {
                 guard !Task.isCancelled, localWindowsRequest == request else { return }
                 if Self.matches(cached, request: request) {
                     localWindows = cached
@@ -249,10 +272,7 @@ final class AppModel: ObservableObject {
         guard !Task.isCancelled, localWindowsRequest == request else { return }
 
         do {
-            let refreshed = try await repository.localWindows(
-                postcode: request.outwardPostcode,
-                durationMinutes: request.durationMinutes
-            )
+            let refreshed = try await repository.localWindows(request: request)
             guard !Task.isCancelled, localWindowsRequest == request else { return }
             guard Self.matches(refreshed, request: request) else {
                 throw GridAPIError.decoding("Local window response did not match its request.")

@@ -5,6 +5,7 @@ protocol GridRepository: Sendable {
     func cachedTimeline() async -> GridTimeline?
     func cachedRegion(postcode: String) async -> RegionalGridContext?
     func cachedLocalWindows(postcode: String, durationMinutes: Int) async -> LocalWindowsResponse?
+    func cachedLocalWindows(request: LocalWindowsRequest) async -> LocalWindowsResponse?
     func cachedTodayBriefing(localDate: String) async -> TodayBriefing?
     func cachedPredictionResolution(localDate: String) async -> PredictionResolution?
     func cachedEvents() async -> [GridEvent]?
@@ -13,6 +14,7 @@ protocol GridRepository: Sendable {
     func timeline() async throws -> GridTimeline
     func region(postcode: String) async throws -> RegionalGridContext
     func localWindows(postcode: String, durationMinutes: Int) async throws -> LocalWindowsResponse
+    func localWindows(request: LocalWindowsRequest) async throws -> LocalWindowsResponse
     func todayBriefing(localDate: String) async throws -> TodayBriefing
     func predictionResolution(localDate: String) async throws -> PredictionResolution
     func events() async throws -> [GridEvent]
@@ -27,6 +29,12 @@ extension GridRepository {
     func cachedTimeline() async -> GridTimeline? { nil }
     func cachedRegion(postcode: String) async -> RegionalGridContext? { nil }
     func cachedLocalWindows(postcode: String, durationMinutes: Int) async -> LocalWindowsResponse? { nil }
+    func cachedLocalWindows(request: LocalWindowsRequest) async -> LocalWindowsResponse? {
+        await cachedLocalWindows(
+            postcode: request.outwardPostcode,
+            durationMinutes: request.durationMinutes
+        )
+    }
     func cachedTodayBriefing(localDate: String) async -> TodayBriefing? { nil }
     func cachedPredictionResolution(localDate: String) async -> PredictionResolution? { nil }
     func cachedEvents() async -> [GridEvent]? { nil }
@@ -38,6 +46,13 @@ extension GridRepository {
 
     func localWindows(postcode: String, durationMinutes: Int) async throws -> LocalWindowsResponse {
         throw GridRepositoryError.unsupportedFeature("Local flexible-use windows")
+    }
+
+    func localWindows(request: LocalWindowsRequest) async throws -> LocalWindowsResponse {
+        try await localWindows(
+            postcode: request.outwardPostcode,
+            durationMinutes: request.durationMinutes
+        )
     }
 
     func todayBriefing(localDate: String) async throws -> TodayBriefing {

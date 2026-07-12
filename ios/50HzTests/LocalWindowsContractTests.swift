@@ -77,12 +77,29 @@ final class LocalWindowsContractTests: XCTestCase {
         let twoHours = GridCacheKey.localWindows(postcode: "SW1A 1AA", durationMinutes: 120)
         let fourHours = GridCacheKey.localWindows(postcode: "sw1a", durationMinutes: 240)
         let malformed = GridCacheKey.localWindows(postcode: "ARBITRARY123456", durationMinutes: 120)
+        let earliest = Date(timeIntervalSince1970: 1_783_798_200)
+        let latest = earliest.addingTimeInterval(24 * 60 * 60)
+        let bounded = GridCacheKey.localWindows(
+            postcode: "SW1A 1AA",
+            durationMinutes: 120,
+            earliest: earliest,
+            latest: latest
+        )
+        let shifted = GridCacheKey.localWindows(
+            postcode: "SW1A",
+            durationMinutes: 120,
+            earliest: earliest.addingTimeInterval(30 * 60),
+            latest: latest
+        )
 
         XCTAssertEqual(twoHours.rawValue, "local-windows-sw1a-120")
         XCTAssertEqual(fourHours.rawValue, "local-windows-sw1a-240")
         XCTAssertFalse(twoHours.rawValue.localizedCaseInsensitiveContains("1aa"))
         XCTAssertFalse(malformed.rawValue.localizedCaseInsensitiveContains("arbitrary"))
         XCTAssertNotEqual(twoHours, fourHours)
+        XCTAssertNotEqual(twoHours, bounded)
+        XCTAssertNotEqual(bounded, shifted)
+        XCTAssertFalse(bounded.rawValue.localizedCaseInsensitiveContains("1aa"))
     }
 
     func testMalformedPostcodeFailsBeforeAnyRequestOrCacheLookup() async {
@@ -166,6 +183,117 @@ final class LocalWindowsContractTests: XCTestCase {
         XCTAssertTrue(
             FileManager.default.fileExists(
                 atPath: directory.appendingPathComponent("grid-local-windows-sw1a-120.json").path
+            )
+        )
+    }
+
+    func testRepositorySendsExactCustomBoundsAndCachesOnlyThatRequest() async throws {
+        let directory = temporaryDirectory()
+        defer { try? FileManager.default.removeItem(at: directory) }
+        let parser = ISO8601DateFormatter()
+        let earliest = try XCTUnwrap(parser.date(from: "2026-07-11T19:30:00Z"))
+        let latest = try XCTUnwrap(parser.date(from: "2026-07-12T19:30:00Z"))
+        let request = LocalWindowsRequest(
+            postcode: "SW1A 1AA",
+            durationMinutes: 120,
+            earliest: earliest,
+            latest: latest
+        )
+        let recorder = URLRecorder()
+        LocalWindowsURLProtocol.handler = { urlRequest in
+            recorder.record(urlRequest.url)
+            return (
+                HTTPURLResponse(url: urlRequest.url!, statusCode: 200, httpVersion: nil, headerFields: nil)!,
+                LocalWindowsFixture.successData(durationMinutes: 120)
+            )
+        }
+        let repository = HTTPGridRepository(
+            baseURL: URL(string: "https://unit.test")!,
+            session: stubSession(),
+            cache: GridDiskCache(directory: directory)
+        )
+
+        let response = try await repository.localWindows(request: request)
+        let boundedCache = await repository.cachedLocalWindows(request: request)
+        let defaultCache = await repository.cachedLocalWindows(
+            postcode: "SW1A",
+            durationMinutes: 120
+        )
+        let url = try XCTUnwrap(recorder.url)
+        let items = try XCTUnwrap(
+            URLComponents(url: url, resolvingAgainstBaseURL: false)?.queryItems
+        )
+        let values = Dictionary(
+            uniqueKeysWithValues: items.compactMap { item in
+                item.value.map { (item.name, $0) }
+            }
+        )
+        let key = GridCacheKey.localWindows(
+            postcode: request.outwardPostcode,
+            durationMinutes: request.durationMinutes,
+            earliest: earliest,
+            latest: latest
+        )
+
+        XCTAssertEqual(url.path, "/v1/regions/SW1A/windows")
+        XCTAssertEqual(values["durationMinutes"], "120")
+        XCTAssertEqual(values["earliest"], "2026-07-11T19:30:00Z")
+        XCTAssertEqual(values["latest"], "2026-07-12T19:30:00Z")
+        XCTAssertTrue(response.matches(request))
+        XCTAssertNotNil(boundedCache)
+        XCTAssertNil(defaultCache)
+        XCTAssertTrue(
+            FileManager.default.fileExists(
+                atPath: directory.appendingPathComponent("grid-\(key.rawValue).json").path
+            )
+        )
+    }
+
+    func testMismatchedCustomBoundsAreRejectedAndPurged() async throws {
+        let directory = temporaryDirectory()
+        defer { try? FileManager.default.removeItem(at: directory) }
+        let parser = ISO8601DateFormatter()
+        let earliest = try XCTUnwrap(parser.date(from: "2026-07-11T19:30:00Z"))
+        let latest = try XCTUnwrap(parser.date(from: "2026-07-12T20:00:00Z"))
+        let request = LocalWindowsRequest(
+            postcode: "SW1A",
+            durationMinutes: 120,
+            earliest: earliest,
+            latest: latest
+        )
+        LocalWindowsURLProtocol.handler = { urlRequest in
+            (
+                HTTPURLResponse(url: urlRequest.url!, statusCode: 200, httpVersion: nil, headerFields: nil)!,
+                LocalWindowsFixture.successData(durationMinutes: 120)
+            )
+        }
+        let repository = HTTPGridRepository(
+            baseURL: URL(string: "https://unit.test")!,
+            session: stubSession(),
+            cache: GridDiskCache(directory: directory)
+        )
+
+        do {
+            _ = try await repository.localWindows(request: request)
+            XCTFail("Expected mismatched response bounds to be rejected")
+        } catch {
+            XCTAssertEqual(
+                error.localizedDescription,
+                "The grid service returned data from an incompatible contract."
+            )
+        }
+
+        let cached = await repository.cachedLocalWindows(request: request)
+        XCTAssertNil(cached)
+        let key = GridCacheKey.localWindows(
+            postcode: request.outwardPostcode,
+            durationMinutes: request.durationMinutes,
+            earliest: earliest,
+            latest: latest
+        )
+        XCTAssertFalse(
+            FileManager.default.fileExists(
+                atPath: directory.appendingPathComponent("grid-\(key.rawValue).json").path
             )
         )
     }
@@ -407,6 +535,46 @@ final class LocalWindowsAppModelTests: XCTestCase {
 
         XCTAssertEqual(model.localWindowsLoadPhase, .failed("Enter a valid UK outward or full postcode."))
         XCTAssertEqual(model.localWindowsError, "Enter a valid UK outward or full postcode.")
+        XCTAssertEqual(callCount, 0)
+    }
+
+    func testInvalidCustomBoundsFailBeforeRepositoryAccess() async {
+        let repository = CountingLocalRepository()
+        let model = AppModel(repository: repository)
+        let earliest = LocalPlanningBoundsPolicy.nextHalfHour(atOrAfter: Date())
+
+        await model.loadLocalWindows(
+            postcode: "SW1A",
+            durationMinutes: 120,
+            earliest: earliest,
+            latest: earliest.addingTimeInterval(60 * 60)
+        )
+        let callCount = await repository.callCount
+
+        XCTAssertEqual(
+            model.localWindowsLoadPhase,
+            .failed("The selected time range is too short for this activity.")
+        )
+        XCTAssertEqual(callCount, 0)
+    }
+
+    func testPartialCustomBoundsFailBeforeRepositoryAccess() async {
+        let repository = CountingLocalRepository()
+        let model = AppModel(repository: repository)
+        let earliest = LocalPlanningBoundsPolicy.nextHalfHour(atOrAfter: Date())
+
+        await model.loadLocalWindows(
+            postcode: "SW1A",
+            durationMinutes: 120,
+            earliest: earliest,
+            latest: nil
+        )
+        let callCount = await repository.callCount
+
+        XCTAssertEqual(
+            model.localWindowsLoadPhase,
+            .failed("Choose both an earliest start and a latest finish.")
+        )
         XCTAssertEqual(callCount, 0)
     }
 }
