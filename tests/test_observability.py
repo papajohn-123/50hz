@@ -228,6 +228,9 @@ def test_production_command_disables_uvicorn_raw_access_log() -> None:
 
     assert "uvicorn app.main:app" in dockerfile
     assert "--no-access-log" in dockerfile
+    assert dockerfile.index("pip install --no-cache-dir --requirement") < dockerfile.index(
+        "COPY app ./app"
+    )
 
 
 def test_production_request_logger_writes_success_records_to_stdout() -> None:
