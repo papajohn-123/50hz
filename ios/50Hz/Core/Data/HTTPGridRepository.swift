@@ -58,6 +58,7 @@ actor HTTPGridRepository: GridRepository {
         case timeline
         case events
         case dailyGame
+        case predictionResolution(localDate: String)
         case todayBriefing(localDate: String)
         case region(String)
         case localWindows(postcode: String, durationMinutes: Int)
@@ -68,6 +69,7 @@ actor HTTPGridRepository: GridRepository {
             case .timeline: .timeline
             case .events: .events
             case .dailyGame: .dailyGame
+            case .predictionResolution(let localDate): .predictionResolution(localDate: localDate)
             case .todayBriefing(let localDate): .todayBriefing(localDate: localDate)
             case .region(let postcode): .region(postcode)
             case .localWindows(let postcode, let durationMinutes):
@@ -83,6 +85,7 @@ actor HTTPGridRepository: GridRepository {
     private var timelineTask: Task<GridTimeline, Error>?
     private var eventsTask: Task<[GridEvent], Error>?
     private var dailyGameTask: Task<DailyGame, Error>?
+    private var predictionResolutionTasks: [PredictionResolutionRequest: Task<PredictionResolution, Error>] = [:]
     private var todayBriefingTasks: [TodayBriefingRequest: Task<TodayBriefing, Error>] = [:]
     private var regionTasks: [String: Task<RegionalGridContext, Error>] = [:]
     private var localWindowsTasks: [LocalWindowsRequest: Task<LocalWindowsResponse, Error>] = [:]
@@ -191,6 +194,24 @@ actor HTTPGridRepository: GridRepository {
         guard let entry = await cache.entry(for: key) else { return nil }
         do {
             let decoded = try GridJSON.decoder.decode(TodayBriefing.self, from: entry.data)
+            guard decoded.matches(request) else {
+                await cache.remove(key)
+                return nil
+            }
+            return decoded
+        } catch {
+            await cache.remove(key)
+            return nil
+        }
+    }
+
+    func cachedPredictionResolution(localDate: String) async -> PredictionResolution? {
+        let request = PredictionResolutionRequest(localDate: localDate)
+        guard request.localDate != "unknown-date" else { return nil }
+        let key = GridCacheKey.predictionResolution(localDate: request.localDate)
+        guard let entry = await cache.entry(for: key) else { return nil }
+        do {
+            let decoded = try GridJSON.decoder.decode(PredictionResolution.self, from: entry.data)
             guard decoded.matches(request) else {
                 await cache.remove(key)
                 return nil
@@ -336,6 +357,36 @@ actor HTTPGridRepository: GridRepository {
         }
     }
 
+    func predictionResolution(localDate: String) async throws -> PredictionResolution {
+        let request = PredictionResolutionRequest(localDate: localDate)
+        guard request.localDate != "unknown-date" else { throw GridAPIError.invalidResponse }
+        if let task = predictionResolutionTasks[request] { return try await task.value }
+
+        let task = Task<PredictionResolution, Error> {
+            let endpoint = Endpoint.predictionResolution(localDate: request.localDate)
+            let response = try await Self.fetch(
+                endpoint: endpoint,
+                requestURL: Self.predictionResolutionURL(baseURL: baseURL, localDate: request.localDate),
+                session: session,
+                cache: cache,
+                as: PredictionResolution.self
+            )
+            guard response.matches(request) else {
+                await cache.remove(endpoint.cacheKey)
+                throw GridAPIError.decoding("Prediction resolution did not match the requested London date or evidence contract.")
+            }
+            return response
+        }
+        predictionResolutionTasks[request] = task
+        defer { predictionResolutionTasks[request] = nil }
+
+        return try await withTaskCancellationHandler {
+            try await task.value
+        } onCancel: {
+            task.cancel()
+        }
+    }
+
     func events() async throws -> [GridEvent] {
         if let eventsTask { return try await eventsTask.value }
 
@@ -463,6 +514,13 @@ actor HTTPGridRepository: GridRepository {
 
     private nonisolated static func dailyGameURL(baseURL: URL) -> URL {
         baseURL.appendingPathComponent("v1/game/today")
+    }
+
+    private nonisolated static func predictionResolutionURL(baseURL: URL, localDate: String) -> URL {
+        baseURL
+            .appendingPathComponent("v1/game")
+            .appendingPathComponent(localDate)
+            .appendingPathComponent("resolution")
     }
 
     private nonisolated static func eventURL(baseURL: URL, id: String) -> URL {

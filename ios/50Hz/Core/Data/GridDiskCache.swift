@@ -13,6 +13,11 @@ struct GridCacheKey: Hashable, Sendable {
         return GridCacheKey(rawValue: "briefing-\(safeDate)")
     }
 
+    static func predictionResolution(localDate: String) -> GridCacheKey {
+        let safeDate = LondonDay.isValidLocalDateKey(localDate) ? localDate : "unknown-date"
+        return GridCacheKey(rawValue: "game-resolution-\(safeDate)")
+    }
+
     static func region(_ postcode: String) -> GridCacheKey {
         let outward = PostcodePrivacy.outwardCode(from: postcode).lowercased()
         return GridCacheKey(rawValue: "region-\(outward)")

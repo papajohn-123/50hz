@@ -1,416 +1,605 @@
 import SwiftUI
 
-private struct ObservedGridMoment: Identifiable {
-    let id: String
-    let symbol: String
-    let color: Color
-    let title: String
-    let time: Date
-    let evidence: String
+private struct NotebookPredictionDefinition {
+    let predictionID: String
+    let date: String
+    let question: String
+    let choices: [GamePredictionChoice]
+    let locksAt: Date
+    let evidenceTo: Date
+    let state: PredictionResolutionState?
+    let supportsLocalChoiceContract: Bool
+
+    init(_ prediction: GamePrediction, date: String) {
+        predictionID = prediction.predictionID
+        self.date = date
+        question = prediction.question
+        choices = prediction.choices
+        locksAt = prediction.locksAt
+        evidenceTo = prediction.resolvesTo
+        state = nil
+        supportsLocalChoiceContract = prediction.metric == "net_interconnector_flow_mw"
+            && prediction.ruleVersion == 1
+            && prediction.choices.count == 2
+            && Set(prediction.choices) == Set([.importing, .exporting])
+    }
+
+    init(_ resolution: PredictionResolution) {
+        predictionID = resolution.predictionID
+        date = resolution.date
+        question = resolution.question
+        choices = resolution.choices
+        locksAt = resolution.locksAt
+        evidenceTo = resolution.evidenceTo
+        state = resolution.state
+        supportsLocalChoiceContract = resolution.supportsLocalChoiceContract
+    }
 }
 
 struct LogView: View {
     @EnvironmentObject private var model: AppModel
     @Environment(\.accessibilityReduceMotion) private var reduceMotion
-    @AppStorage("log.prediction") private var predictionChoice = ""
-    @AppStorage("log.prediction.id") private var predictionID = ""
-    @AppStorage("log.prediction.date") private var predictionDate = ""
-    @AppStorage("log.mission.completions") private var missionCompletions = ""
     @AppStorage("log.participation.days") private var participationDays = ""
+    @State private var savedPredictions: [SavedPrediction] = []
+    @State private var missionProgress: [MissionProgress] = []
+    @State private var feedbackTrigger = 0
+    @State private var currentLondonDate = LondonDay.localDateKey()
+
+    private let predictionStore = PredictionJournalStore()
+    private let missionStore = MissionProgressStore()
 
     var body: some View {
-        ScrollView {
-            VStack(alignment: .leading, spacing: 28) {
-                header
-                gameState
-                predictionSection
-                missionList
-                observedMoments
-                notebookNote
+        TimelineView(.periodic(from: .now, by: 60)) { context in
+            ScrollView {
+                VStack(alignment: .leading, spacing: 28) {
+                    header
+                    gameState
+                    predictionSection
+                    missionSection
+                    resultSection
+                    learnedSection
+                    notebookNote
+                }
+                .padding(.horizontal, GridTheme.horizontalPadding)
+                .padding(.top, 12)
+                .padding(.bottom, 36)
             }
-            .padding(.horizontal, GridTheme.horizontalPadding)
-            .padding(.top, 12)
-            .padding(.bottom, 32)
+            .scrollIndicators(.hidden)
+            .gridPageBackground()
+            .onChange(of: LondonDay.localDateKey(at: context.date), initial: true) { _, localDate in
+                currentLondonDate = localDate
+            }
         }
-        .scrollIndicators(.hidden)
-        .gridPageBackground()
-        .onAppear(perform: normalizeDailyState)
-        .onChange(of: model.dailyGame?.prediction?.predictionID) { _, _ in
-            normalizeDailyState()
+        .onAppear(perform: loadLocalNotebook)
+        .onChange(of: model.dailyGame?.date) { _, _ in loadLocalNotebook() }
+        .task(id: currentLondonDate) { await model.refreshDailyGame() }
+        .task(id: resolutionRequestSignature) {
+            for date in resolutionRequestDates {
+                guard !Task.isCancelled else { return }
+                await loadResolutionAfterAnyCancelledRequestClears(date)
+            }
         }
-        .task { await model.refreshDailyGame() }
+        .sensoryFeedback(.selection, trigger: feedbackTrigger)
     }
 
     private var header: some View {
         VStack(alignment: .leading, spacing: 8) {
-            HStack(alignment: .firstTextBaseline) {
-                Text("Notebook")
-                    .font(.system(.largeTitle, design: .rounded, weight: .medium))
-                    .tracking(-1.3)
-                    .accessibilityAddTraits(.isHeader)
-                Spacer()
-                VStack(alignment: .trailing, spacing: 1) {
-                    Text(currentStreak.formatted())
-                        .font(.system(.title2, design: .monospaced, weight: .medium))
-                        .foregroundStyle(GridTheme.liveCyan)
-                    Text("DAY STREAK")
-                        .font(.system(size: 8, weight: .semibold, design: .monospaced))
-                        .tracking(0.7)
-                        .foregroundStyle(GridTheme.textTertiary)
+            ViewThatFits(in: .horizontal) {
+                HStack(alignment: .firstTextBaseline, spacing: 12) {
+                    headerTitle
+                    Spacer(minLength: 8)
+                    streakBadge
+                    GlobalInfoButton()
                 }
-                GlobalInfoButton()
+                VStack(alignment: .leading, spacing: 4) {
+                    HStack(alignment: .center) {
+                        headerTitle
+                        Spacer(minLength: 8)
+                        GlobalInfoButton()
+                    }
+                    streakBadge
+                }
             }
-            Text("Observe. Predict. Learn how Britain’s grid changes.")
+            Text("Make a call, inspect the evidence, then keep what you learned.")
                 .font(.subheadline)
                 .foregroundStyle(GridTheme.textSecondary)
+        }
+    }
+
+    private var headerTitle: some View {
+        Text("Notebook")
+            .font(.system(.largeTitle, design: .rounded, weight: .medium))
+            .tracking(-1.3)
+            .accessibilityAddTraits(.isHeader)
+    }
+
+    @ViewBuilder
+    private var streakBadge: some View {
+        if currentStreak == 0 {
+            Text("START TODAY")
+                .font(.caption2.weight(.semibold))
+                .fontDesign(.monospaced)
+                .tracking(0.6)
+                .foregroundStyle(GridTheme.liveCyan)
+                .accessibilityLabel("Start today")
+        } else {
+            VStack(alignment: .trailing, spacing: 1) {
+                Text(currentStreak.formatted())
+                    .font(.system(.title2, design: .monospaced, weight: .medium))
+                    .foregroundStyle(GridTheme.liveCyan)
+                Text("DAY STREAK")
+                    .font(.system(size: 8, weight: .semibold, design: .monospaced))
+                    .tracking(0.7)
+                    .foregroundStyle(GridTheme.textTertiary)
+            }
+            .accessibilityElement(children: .ignore)
+            .accessibilityLabel("\(currentStreak) day streak")
         }
     }
 
     @ViewBuilder
     private var gameState: some View {
         if let error = model.gameRefreshError, currentGame != nil {
-            HStack(alignment: .top, spacing: 10) {
-                Image(systemName: "clock.badge.exclamationmark")
-                    .foregroundStyle(GridTheme.staleAmber)
-                VStack(alignment: .leading, spacing: 3) {
-                    Text("Using today’s cached game plan")
-                        .font(.subheadline.weight(.semibold))
-                    Text("Mission availability may have changed. \(error)")
-                        .font(.caption)
-                        .foregroundStyle(GridTheme.textSecondary)
-                }
-                Spacer(minLength: 4)
-                Button("Retry") { Task { await model.refreshDailyGame() } }
+            notice(
+                symbol: "clock.badge.exclamationmark",
+                title: "Using the saved daily plan",
+                detail: "Mission availability may have changed. \(error)",
+                color: GridTheme.staleAmber,
+                retry: { Task { await model.refreshDailyGame() } }
+            )
+        } else if currentGame == nil, activePrediction == nil {
+            notice(
+                symbol: model.gameLoadPhase == .loading ? "hourglass" : "book.closed",
+                title: model.gameLoadPhase == .loading ? "Loading today’s notebook…" : "Today’s plan is unavailable",
+                detail: model.gameRefreshError ?? "50Hz will keep your saved choices and notes on this device.",
+                color: GridTheme.textTertiary,
+                retry: model.gameLoadPhase == .loading ? nil : { Task { await model.refreshDailyGame() } }
+            )
+        }
+    }
+
+    private func notice(
+        symbol: String,
+        title: String,
+        detail: String,
+        color: Color,
+        retry: (() -> Void)?
+    ) -> some View {
+        HStack(alignment: .top, spacing: 11) {
+            Image(systemName: symbol)
+                .foregroundStyle(color)
+                .frame(width: 22)
+            VStack(alignment: .leading, spacing: 4) {
+                Text(title).font(.subheadline.weight(.semibold))
+                Text(detail)
+                    .font(.caption)
+                    .foregroundStyle(GridTheme.textSecondary)
+                    .fixedSize(horizontal: false, vertical: true)
+            }
+            Spacer(minLength: 4)
+            if let retry {
+                Button("Retry", action: retry)
                     .font(.caption.weight(.semibold))
-                    .foregroundStyle(GridTheme.staleAmber)
+                    .foregroundStyle(color)
                     .frame(minHeight: 44)
             }
-            .padding(12)
-            .background(GridTheme.staleAmber.opacity(0.07), in: RoundedRectangle(cornerRadius: 12))
-        } else if currentGame == nil {
-            HStack(alignment: .top, spacing: 10) {
-                if model.gameLoadPhase == .loading {
-                    ProgressView().tint(GridTheme.liveCyan)
-                } else {
-                    Image(systemName: "gamecontroller")
-                        .foregroundStyle(GridTheme.staleAmber)
-                }
-                VStack(alignment: .leading, spacing: 3) {
-                    Text(model.gameLoadPhase == .loading ? "Loading today’s game plan…" : "Today’s game plan is unavailable")
-                        .font(.subheadline.weight(.semibold))
-                    if let cachedDate = model.dailyGame?.date, cachedDate != todayKey {
-                        Text("The cached plan is from \(cachedDate), so 50Hz is not presenting it as today’s plan.")
-                            .font(.caption)
-                            .foregroundStyle(GridTheme.textSecondary)
-                    } else if let error = model.gameRefreshError {
-                        Text(error)
-                            .font(.caption)
-                            .foregroundStyle(GridTheme.textSecondary)
-                    }
-                }
-                Spacer(minLength: 0)
-            }
-            .padding(12)
-            .background(GridTheme.surface.opacity(0.7), in: RoundedRectangle(cornerRadius: 12))
         }
+        .padding(13)
+        .background(color.opacity(0.07), in: RoundedRectangle(cornerRadius: 12))
     }
 
     @ViewBuilder
     private var predictionSection: some View {
-        if let prediction = currentGame?.prediction {
-            predictionCard(prediction)
+        if let prediction = activePrediction {
+            TimelineView(.periodic(from: prediction.locksAt, by: 60)) { context in
+                predictionCard(prediction, now: context.date)
+            }
         } else {
-            predictionUnavailable
+            VStack(alignment: .leading, spacing: 9) {
+                SectionLabel("Prediction", trailing: "LOCAL CHOICE")
+                Text(savedPredictionForToday == nil ? "No prediction is open" : "Today’s prediction is closed")
+                    .font(.title3.weight(.medium))
+                if let saved = savedPredictionForToday {
+                    Text("Your \(saved.choice.displayName.lowercased()) choice is still saved on this device. The published result is unavailable right now.")
+                        .font(.caption)
+                        .foregroundStyle(GridTheme.textSecondary)
+                } else {
+                    Text("A prediction appears only when the backend has a date-matched definition. 50Hz will not invent one while the feed is unavailable.")
+                        .font(.caption)
+                        .foregroundStyle(GridTheme.textSecondary)
+                }
+            }
+            .padding(17)
+            .background(GridTheme.surface.opacity(0.72), in: RoundedRectangle(cornerRadius: GridTheme.cornerRadius))
         }
     }
 
-    private func predictionCard(_ prediction: GamePrediction) -> some View {
-        let locked = Date() >= prediction.locksAt
+    private func predictionCard(_ prediction: NotebookPredictionDefinition, now: Date) -> some View {
+        let canSelect = PredictionInteractionPolicy.canSelect(
+            now: now,
+            locksAt: prediction.locksAt,
+            state: prediction.state,
+            supportsLocalChoiceContract: prediction.supportsLocalChoiceContract
+        )
+        let locked = !canSelect
+        let saved = savedPredictions.first { $0.predictionID == prediction.predictionID && $0.date == prediction.date }
         return VStack(alignment: .leading, spacing: 15) {
-            HStack {
-                Label("TODAY’S PREDICTION", systemImage: "scope")
+            HStack(alignment: .firstTextBaseline, spacing: 10) {
+                Label("PREDICTION", systemImage: "scope")
                     .font(.caption2.weight(.semibold))
                     .fontDesign(.monospaced)
                     .tracking(0.7)
                     .foregroundStyle(GridTheme.forecastViolet)
-                Spacer()
-                Text(locked ? "LOCKED" : "LOCKS \(prediction.locksAt.formatted(.dateTime.hour().minute()))")
+                Spacer(minLength: 4)
+                Text(locked ? "LOCKED · \(ukTime(prediction.locksAt)) UK" : "LOCKS \(ukTime(prediction.locksAt)) UK")
                     .font(.caption2)
                     .fontDesign(.monospaced)
                     .foregroundStyle(GridTheme.textTertiary)
+                    .multilineTextAlignment(.trailing)
             }
+
             Text(prediction.question)
                 .font(.title3.weight(.medium))
                 .fixedSize(horizontal: false, vertical: true)
-            HStack(spacing: 10) {
+
+            VStack(spacing: 10) {
                 ForEach(prediction.choices.filter { $0 != .other }) { choice in
-                    predictionButton(choice, prediction: prediction, locked: locked)
+                    predictionButton(choice, prediction: prediction, saved: saved, locked: locked)
                 }
             }
-            if !predictionChoice.isEmpty, predictionDate == todayKey {
-                Text("Saved only on this device. 50Hz does not submit or score this prediction on the server.")
+
+            if let saved {
+                Text("Saved on this device: \(saved.choice.displayName). Your choice is never submitted.")
                     .font(.caption2)
                     .foregroundStyle(GridTheme.textTertiary)
+            } else if !prediction.supportsLocalChoiceContract {
+                Text("This prediction uses a newer or unsupported rule. Choices are disabled and 50Hz will not infer how to score it.")
+                    .font(.caption2)
+                    .foregroundStyle(GridTheme.staleAmber)
+            } else if locked {
+                Text("Choices closed at the backend’s published lock time. No local choice was saved.")
+                    .font(.caption2)
+                    .foregroundStyle(GridTheme.textTertiary)
+            }
+
+            if prediction.state == .pending, now >= prediction.locksAt {
+                Text("Awaiting the evidence window through \(ukTime(prediction.evidenceTo)) UK. Pending is not a result.")
+                    .font(.caption)
+                    .foregroundStyle(GridTheme.textSecondary)
             }
         }
         .padding(17)
         .background(GridTheme.forecastViolet.opacity(0.07), in: RoundedRectangle(cornerRadius: GridTheme.cornerRadius))
-        .overlay(RoundedRectangle(cornerRadius: GridTheme.cornerRadius).stroke(GridTheme.forecastViolet.opacity(0.20), lineWidth: 1))
-    }
-
-    private var predictionUnavailable: some View {
-        VStack(alignment: .leading, spacing: 10) {
-            Label("TODAY’S PREDICTION", systemImage: "scope")
-                .font(.caption2.weight(.semibold))
-                .fontDesign(.monospaced)
-                .tracking(0.7)
-                .foregroundStyle(GridTheme.textTertiary)
-            if !predictionChoice.isEmpty, predictionDate == todayKey {
-                Text("Today’s prediction is closed")
-                    .font(.title3.weight(.medium))
-                Text("Your local choice, \(predictionChoice.capitalized), remains on this device. 50Hz does not submit or score it on the server.")
-                    .font(.caption)
-                    .foregroundStyle(GridTheme.textSecondary)
-            } else {
-                Text("No prediction is currently open")
-                    .font(.title3.weight(.medium))
-                Text(currentGame?.sourceFresh == false
-                    ? "The backend withheld today’s prediction because its source-freshness requirement was not met."
-                    : "The daily plan may be loading, unavailable, or past its backend-defined lock time.")
-                    .font(.caption)
-                    .foregroundStyle(GridTheme.textSecondary)
-            }
-        }
-        .padding(17)
-        .background(GridTheme.surface.opacity(0.7), in: RoundedRectangle(cornerRadius: GridTheme.cornerRadius))
+        .overlay(
+            RoundedRectangle(cornerRadius: GridTheme.cornerRadius)
+                .stroke(GridTheme.forecastViolet.opacity(0.20), lineWidth: 1)
+        )
     }
 
     private func predictionButton(
         _ choice: GamePredictionChoice,
-        prediction: GamePrediction,
+        prediction: NotebookPredictionDefinition,
+        saved: SavedPrediction?,
         locked: Bool
     ) -> some View {
-        let selected = predictionChoice == choice.rawValue && predictionID == prediction.predictionID
+        let selected = saved?.choice == choice
         let symbol = choice == .importing ? "arrow.down.left" : "arrow.up.right"
         return Button {
-            guard !locked else { return }
-            animateIfAllowed(duration: 0.22) {
-                predictionChoice = choice.rawValue
-                predictionID = prediction.predictionID
-                predictionDate = currentGame?.date ?? todayKey
-                registerParticipation()
-            }
+            guard !locked,
+                  PredictionInteractionPolicy.canSelect(
+                    now: Date(),
+                    locksAt: prediction.locksAt,
+                    state: prediction.state,
+                    supportsLocalChoiceContract: prediction.supportsLocalChoiceContract
+                  ) else { return }
+            predictionStore.save(
+                predictionID: prediction.predictionID,
+                date: prediction.date,
+                choice: choice
+            )
+            registerParticipation()
+            updateWithFeedback { savedPredictions = predictionStore.predictions() }
         } label: {
-            Label(choice.displayName, systemImage: symbol)
-                .font(.subheadline.weight(.semibold))
-                .frame(maxWidth: .infinity, minHeight: 46)
-                .background(selected ? GridTheme.forecastViolet : GridTheme.surfaceRaised, in: RoundedRectangle(cornerRadius: 11))
-                .foregroundStyle(selected ? GridTheme.background : GridTheme.textSecondary)
-                .overlay(RoundedRectangle(cornerRadius: 11).stroke(GridTheme.forecastViolet.opacity(selected ? 0 : 0.18), lineWidth: 1))
+            HStack(spacing: 10) {
+                Image(systemName: symbol)
+                Text(choice.displayName)
+                Spacer(minLength: 0)
+                if selected { Image(systemName: "checkmark") }
+            }
+            .font(.subheadline.weight(.semibold))
+            .padding(.horizontal, 14)
+            .frame(maxWidth: .infinity, minHeight: 48)
+            .background(selected ? GridTheme.forecastViolet : GridTheme.surfaceRaised, in: RoundedRectangle(cornerRadius: 11))
+            .foregroundStyle(selected ? GridTheme.background : GridTheme.textSecondary)
+            .overlay(
+                RoundedRectangle(cornerRadius: 11)
+                    .stroke(GridTheme.forecastViolet.opacity(selected ? 0 : 0.18), lineWidth: 1)
+            )
         }
         .buttonStyle(.plain)
         .disabled(locked)
         .accessibilityAddTraits(selected ? .isSelected : [])
+        .accessibilityHint(
+            !prediction.supportsLocalChoiceContract
+                ? "Unavailable because this prediction uses an unsupported rule"
+                : locked
+                    ? "The published lock time has passed"
+                    : "Saves this choice only on this device"
+        )
     }
 
-    private var missionList: some View {
-        VStack(alignment: .leading, spacing: 2) {
+    private var missionSection: some View {
+        VStack(alignment: .leading, spacing: 4) {
             SectionLabel(
-                "Daily missions",
-                trailing: currentGame.map { "\(completedMissionCount)/\($0.missions.count) LOCAL" } ?? "UNAVAILABLE"
+                "Missions",
+                trailing: currentGame.map { "\(completedMissionCount)/\(min($0.missions.count, 3)) LOCAL" } ?? "UNAVAILABLE"
             )
-                .padding(.bottom, 8)
-            if let missions = currentGame?.missions, !missions.isEmpty {
-                ForEach(missions) { mission in
-                    missionRow(mission)
-                }
-                Text("Mission completion is a local notebook checkmark; it is not verified by the backend.")
+            .padding(.bottom, 6)
+
+            if let missions = currentGame?.missions.prefix(3), !missions.isEmpty {
+                ForEach(Array(missions)) { mission in missionRow(mission) }
+                Text("Open the linked context first. ‘Mark done’ is a local, unverified notebook checkmark.")
                     .font(.caption2)
                     .foregroundStyle(GridTheme.textTertiary)
-                    .padding(.top, 8)
+                    .padding(.top, 7)
             } else {
-                Text("Mission titles and availability will appear only when today’s backend plan is available.")
+                Text("Up to three date-matched missions will appear when the daily plan is available.")
                     .font(.caption)
                     .foregroundStyle(GridTheme.textSecondary)
-                    .padding(.vertical, 10)
+                    .padding(.vertical, 9)
             }
         }
     }
 
-    private var completedMissionCount: Int {
-        guard let missions = currentGame?.missions else { return 0 }
-        return missions.filter { completedMissionIDs.contains($0.missionID) }.count
-    }
-
+    @ViewBuilder
     private func missionRow(_ mission: GameMission) -> some View {
-        let isDone = completedMissionIDs.contains(mission.missionID)
-        return Button {
-            guard mission.available else { return }
-            animateIfAllowed(duration: 0.2) {
-                toggleMission(mission.missionID)
-                registerParticipation()
-            }
-        } label: {
-            HStack(spacing: 13) {
-                Image(systemName: isDone ? "checkmark.circle.fill" : missionSymbol(mission.kind))
-                    .frame(width: 25)
-                    .foregroundStyle(isDone ? GridTheme.liveCyan : (mission.available ? GridTheme.textSecondary : GridTheme.textTertiary))
-                VStack(alignment: .leading, spacing: 3) {
-                    Text(mission.title)
-                        .font(.subheadline.weight(.medium))
-                        .foregroundStyle(isDone || !mission.available ? GridTheme.textSecondary : GridTheme.textPrimary)
-                    Text(missionDetail(mission))
-                        .font(.caption2)
-                        .foregroundStyle(mission.available ? GridTheme.textTertiary : GridTheme.staleAmber)
+        let progress = progress(for: mission)
+        let target = MissionNavigationTarget.resolve(mission, events: model.events)
+        VStack(alignment: .leading, spacing: 0) {
+            if let target, mission.available {
+                Button { openMission(mission, target: target) } label: {
+                    missionLabel(mission, progress: progress, target: target)
                 }
-                Spacer(minLength: 0)
-                Image(systemName: mission.available ? "chevron.right" : "lock")
-                    .font(.caption2)
-                    .foregroundStyle(GridTheme.textTertiary)
+                .buttonStyle(.plain)
+                .accessibilityLabel("\(mission.title). \(target.label)")
+                .accessibilityHint("Opens the evidence context; completion is recorded separately after you return")
+            } else {
+                missionLabel(mission, progress: progress, target: nil)
+                    .accessibilityElement(children: .combine)
             }
-            .frame(minHeight: 66)
-            .contentShape(Rectangle())
-            .overlay(alignment: .bottom) { Hairline() }
+
+            if let progress, !progress.isCompleted, mission.available {
+                Button {
+                    guard missionStore.markCompleted(mission, date: currentGame?.date ?? todayKey) else { return }
+                    registerParticipation()
+                    updateWithFeedback { missionProgress = missionStore.progress() }
+                } label: {
+                    Label("Mark done", systemImage: "checkmark.circle")
+                        .font(.caption.weight(.semibold))
+                        .foregroundStyle(GridTheme.liveCyan)
+                        .frame(maxWidth: .infinity, minHeight: 44, alignment: .leading)
+                        .padding(.leading, 38)
+                }
+                .buttonStyle(.plain)
+                .accessibilityHint("Records an unverified completion only on this device")
+            } else if progress?.isCompleted == true {
+                Label("Done · local and unverified", systemImage: "checkmark.circle.fill")
+                    .font(.caption2.weight(.medium))
+                    .foregroundStyle(GridTheme.liveCyan)
+                    .frame(minHeight: 44, alignment: .leading)
+                    .padding(.leading, 38)
+                    .accessibilityLabel("Done, local and unverified")
+            }
+            Hairline()
         }
-        .buttonStyle(.plain)
-        .disabled(!mission.available)
-        .accessibilityElement(children: .combine)
-        .accessibilityAddTraits(isDone ? .isSelected : [])
     }
 
-    private func missionDetail(_ mission: GameMission) -> String {
-        if !mission.available {
-            return mission.unavailableReason ?? "Unavailable in the current daily plan"
+    private func missionLabel(
+        _ mission: GameMission,
+        progress: MissionProgress?,
+        target: MissionNavigationTarget?
+    ) -> some View {
+        HStack(alignment: .center, spacing: 13) {
+            Image(systemName: progress?.isCompleted == true ? "checkmark.circle.fill" : missionSymbol(mission.kind))
+                .frame(width: 25)
+                .foregroundStyle(progress?.isCompleted == true ? GridTheme.liveCyan : mission.available ? GridTheme.textSecondary : GridTheme.textTertiary)
+            VStack(alignment: .leading, spacing: 4) {
+                Text(mission.title)
+                    .font(.subheadline.weight(.medium))
+                    .foregroundStyle(mission.available ? GridTheme.textPrimary : GridTheme.textSecondary)
+                    .fixedSize(horizontal: false, vertical: true)
+                Text(missionSubtitle(mission, target: target))
+                    .font(.caption2)
+                    .foregroundStyle(mission.available ? GridTheme.textTertiary : GridTheme.staleAmber)
+                    .fixedSize(horizontal: false, vertical: true)
+            }
+            Spacer(minLength: 6)
+            if let target {
+                VStack(alignment: .trailing, spacing: 3) {
+                    Image(systemName: "arrow.up.right")
+                    Text(target.label.replacingOccurrences(of: "Open ", with: ""))
+                        .lineLimit(1)
+                }
+                .font(.caption2.weight(.semibold))
+                .foregroundStyle(GridTheme.liveCyan)
+            } else if !mission.available {
+                Image(systemName: "lock").font(.caption2).foregroundStyle(GridTheme.textTertiary)
+            }
         }
+        .frame(minHeight: 68)
+        .contentShape(Rectangle())
+    }
+
+    private func missionSubtitle(_ mission: GameMission, target: MissionNavigationTarget?) -> String {
+        if !mission.available { return mission.unavailableReason ?? "Unavailable in this daily plan" }
+        if target == nil { return "No safe destination is defined for this mission." }
         return switch mission.kind {
-        case .findCleanWindow: "Use Today or the Live timeline, then mark this locally."
-        case .identifyLargestSource: "Inspect the current supply ranking, then mark this locally."
-        case .inspectInterconnector: "Inspect the current interconnector direction, then mark this locally."
-        case .openEventEvidence: "Open a reported event’s evidence, then mark this locally."
-        case .other: "Explore the requested grid state, then mark this locally."
+        case .findCleanWindow: "Compare forecast windows in your Local view."
+        case .identifyLargestSource: "Inspect the current observed supply ranking."
+        case .inspectInterconnector: "Inspect the signed flows shown in Live."
+        case .openEventEvidence: "Read the event claim, sources and limitations."
+        case .other: "Inspect the linked grid context."
         }
     }
 
-    private func missionSymbol(_ kind: GameMissionKind) -> String {
-        switch kind {
-        case .findCleanWindow: "leaf"
-        case .identifyLargestSource: "bolt"
-        case .inspectInterconnector: "arrow.left.arrow.right"
-        case .openEventEvidence: "doc.text.magnifyingglass"
-        case .other: "scope"
-        }
-    }
-
-    private var observedMoments: some View {
+    @ViewBuilder
+    private var resultSection: some View {
         VStack(alignment: .leading, spacing: 12) {
-            SectionLabel("Moments in view", trailing: observedMomentData.isEmpty ? "NONE" : "\(observedMomentData.count) DATA-BACKED")
-            if observedMomentData.isEmpty {
-                Text("No source-backed grid moments are available in the current snapshot or timeline. 50Hz will not invent notebook entries.")
+            SectionLabel("Newest saved result", trailing: "LOCAL COMPARISON")
+            if let saved = resultPrediction {
+                if let resolution = matchingResolution(for: saved),
+                   let result = LocalPredictionResult.derive(saved: saved, resolution: resolution) {
+                    resultCard(saved: saved, resolution: resolution, result: result)
+                } else {
+                    unavailableResult(saved)
+                }
+            } else {
+                Text("Save a prediction to begin a private result history. 50Hz compares it on this device only after evidence is published.")
                     .font(.caption)
                     .foregroundStyle(GridTheme.textSecondary)
-                    .padding(.vertical, 8)
-            } else {
-                ForEach(observedMomentData) { moment in
-                    momentRow(moment)
-                }
+                    .padding(.vertical, 7)
             }
         }
     }
 
-    private func momentRow(_ moment: ObservedGridMoment) -> some View {
-        HStack(spacing: 13) {
-            Image(systemName: moment.symbol)
-                .font(.subheadline)
-                .foregroundStyle(moment.color)
-                .frame(width: 34, height: 34)
-                .background(moment.color.opacity(0.09), in: Circle())
-            VStack(alignment: .leading, spacing: 3) {
-                Text(moment.title).font(.subheadline.weight(.medium))
-                Text(moment.evidence).font(.caption2).foregroundStyle(GridTheme.textTertiary)
+    private func resultCard(
+        saved: SavedPrediction,
+        resolution: PredictionResolution,
+        result: LocalPredictionResult
+    ) -> some View {
+        VStack(alignment: .leading, spacing: 13) {
+            HStack(alignment: .firstTextBaseline, spacing: 10) {
+                Text(resultTitle(result.status))
+                    .font(.title2.weight(.semibold))
+                    .foregroundStyle(resultColor(result.status))
+                Spacer(minLength: 8)
+                Text(saved.date)
+                    .font(.caption)
+                    .fontDesign(.monospaced)
+                    .foregroundStyle(GridTheme.textTertiary)
             }
-            Spacer()
-            Text(moment.time.formatted(.dateTime.hour().minute()))
+
+            Text(resultSummary(saved: saved, resolution: resolution, status: result.status))
+                .font(.subheadline)
+                .foregroundStyle(GridTheme.textSecondary)
+                .fixedSize(horizontal: false, vertical: true)
+
+            if resolution.isCorrection {
+                Label("Result revised from published evidence · revision \(resolution.resolutionRevision)", systemImage: "arrow.triangle.2.circlepath")
+                    .font(.caption.weight(.semibold))
+                    .foregroundStyle(GridTheme.staleAmber)
+                    .fixedSize(horizontal: false, vertical: true)
+            }
+
+            if let value = resolution.observedValueMW {
+                evidenceLine(
+                    label: "Observed position",
+                    value: "\(signedMegawatts(value)) signed net interconnector flow"
+                )
+            }
+            if let observedAt = resolution.observedAt {
+                evidenceLine(label: "Observed at", value: "\(ukDateTime(observedAt)) UK")
+            }
+            evidenceLine(
+                label: "Coverage",
+                value: "\(resolution.coverage.observedConnectorCount) of \(resolution.coverage.expectedConnectorCount) connectors · \(coveragePercent(resolution.coverage.coverageFraction))"
+            )
+            evidenceLine(
+                label: "Evidence window",
+                value: "\(ukTime(resolution.evidenceFrom))–\(ukTime(resolution.evidenceTo)) UK · target \(ukTime(resolution.targetAt))"
+            )
+            evidenceLine(
+                label: "Evidence trail",
+                value: evidenceTrail(resolution)
+            )
+
+            Text(resolution.reason)
                 .font(.caption)
-                .fontDesign(.monospaced)
+                .foregroundStyle(GridTheme.textSecondary)
+                .padding(.top, 2)
+                .fixedSize(horizontal: false, vertical: true)
+
+            if let error = model.predictionResolutionErrors[saved.date],
+               model.predictionResolutionCacheDates.contains(saved.date) {
+                Label("Showing the protected saved result; refresh unavailable. \(error)", systemImage: "wifi.slash")
+                    .font(.caption2)
+                    .foregroundStyle(GridTheme.staleAmber)
+                    .fixedSize(horizontal: false, vertical: true)
+            }
+
+            Text("Choice saved locally · published outcome from resolution schema \(resolution.schemaVersion)")
+                .font(.caption2)
                 .foregroundStyle(GridTheme.textTertiary)
         }
-        .frame(minHeight: 48)
+        .padding(16)
+        .background(resultColor(result.status).opacity(0.06), in: RoundedRectangle(cornerRadius: GridTheme.cornerRadius))
+        .overlay(
+            RoundedRectangle(cornerRadius: GridTheme.cornerRadius)
+                .stroke(resultColor(result.status).opacity(0.18), lineWidth: 1)
+        )
+        .accessibilityElement(children: .contain)
     }
 
-    private var observedMomentData: [ObservedGridMoment] {
-        var moments: [ObservedGridMoment] = []
-
-        let reportedEvents = model.events.isEmpty
-            ? model.snapshot?.activeEvent.map { [$0] } ?? []
-            : model.events
-        moments.append(contentsOf: reportedEvents.prefix(2).map { event in
-            ObservedGridMoment(
-                id: "event-\(event.id)",
-                symbol: "exclamationmark.triangle",
-                color: GridTheme.warning,
-                title: event.title,
-                time: event.startedAt,
-                evidence: event.evidenceClass.capitalized
-            )
-        })
-
-        if let snapshot = model.snapshot,
-           let leader = snapshot.generation.max(by: { $0.megawatts < $1.megawatts }) {
-            moments.append(
-                ObservedGridMoment(
-                    id: "leader-\(snapshot.timestamp.timeIntervalSince1970)-\(leader.fuel.rawValue)",
-                    symbol: leader.fuel == .wind ? "wind" : "bolt",
-                    color: GridTheme.fuel(leader.fuel),
-                    title: "\(leader.fuel.displayName) leads at \((leader.megawatts / 1_000).formatted(.number.precision(.fractionLength(1)))) GW",
-                    time: snapshot.timestamp,
-                    evidence: leader.factClass.rawValue.capitalized
-                )
-            )
+    private func unavailableResult(_ saved: SavedPrediction) -> some View {
+        let isLoading = model.predictionResolutionLoadingDates.contains(saved.date)
+        let error = model.predictionResolutionErrors[saved.date]
+        return VStack(alignment: .leading, spacing: 8) {
+            HStack(spacing: 9) {
+                if isLoading { ProgressView().tint(GridTheme.liveCyan) }
+                Image(systemName: isLoading ? "clock" : "wifi.slash")
+                    .foregroundStyle(GridTheme.textTertiary)
+                Text(isLoading ? "Checking the published result…" : "Result unavailable")
+                    .font(.subheadline.weight(.semibold))
+            }
+            Text("Your \(saved.choice.displayName.lowercased()) choice for \(saved.date) remains on this device. It has not been marked correct or incorrect.")
+                .font(.caption)
+                .foregroundStyle(GridTheme.textSecondary)
+            if let error, !isLoading {
+                Text(error)
+                    .font(.caption2)
+                    .foregroundStyle(GridTheme.textTertiary)
+            }
         }
+        .padding(15)
+        .background(GridTheme.surface.opacity(0.72), in: RoundedRectangle(cornerRadius: GridTheme.cornerRadius))
+    }
 
-        if let snapshot = model.snapshot, !snapshot.interconnectors.isEmpty {
-            let net = snapshot.interconnectors.reduce(0) { $0 + $1.megawatts }
-            let direction = net > 0 ? "Net imports" : (net < 0 ? "Net exports" : "Net interchange")
-            moments.append(
-                ObservedGridMoment(
-                    id: "interconnectors-\(snapshot.timestamp.timeIntervalSince1970)",
-                    symbol: "arrow.left.arrow.right",
-                    color: GridTheme.fuel(.imports),
-                    title: "\(direction) at \(abs(Int(net.rounded())).formatted()) MW",
-                    time: snapshot.timestamp,
-                    evidence: "Observed flows"
-                )
-            )
+    @ViewBuilder
+    private var learnedSection: some View {
+        VStack(alignment: .leading, spacing: 10) {
+            SectionLabel("Learned concepts", trailing: learnedNotes.isEmpty ? "NONE YET" : "LOCAL NOTES")
+            if learnedNotes.isEmpty {
+                Text("Complete a mission after visiting its evidence context. A short, deterministic concept note will stay here on this device.")
+                    .font(.caption)
+                    .foregroundStyle(GridTheme.textSecondary)
+            } else {
+                ForEach(learnedNotes) { note in
+                    HStack(alignment: .top, spacing: 12) {
+                        Image(systemName: "lightbulb.min")
+                            .foregroundStyle(GridTheme.liveCyan)
+                            .frame(width: 24)
+                        VStack(alignment: .leading, spacing: 3) {
+                            Text(note.learnedNote ?? "")
+                                .font(.subheadline)
+                                .fixedSize(horizontal: false, vertical: true)
+                            Text("Learned \(note.date) · local note")
+                                .font(.caption2)
+                                .foregroundStyle(GridTheme.textTertiary)
+                        }
+                    }
+                    .padding(.vertical, 5)
+                }
+            }
         }
-
-        if let solarHigh = model.timeline?.samples
-            .filter({ $0.factClass != .forecast })
-            .compactMap({ sample -> (GridTimelineSample, FuelReading)? in
-                guard let solar = sample.generation.first(where: { $0.fuel == .solar }), solar.megawatts > 0 else { return nil }
-                return (sample, solar)
-            })
-            .max(by: { $0.1.megawatts < $1.1.megawatts }) {
-            moments.append(
-                ObservedGridMoment(
-                    id: "solar-high-\(solarHigh.0.timestamp.timeIntervalSince1970)",
-                    symbol: "sun.max",
-                    color: GridTheme.fuel(.solar),
-                    title: "Solar timeline high: \((solarHigh.1.megawatts / 1_000).formatted(.number.precision(.fractionLength(1)))) GW",
-                    time: solarHigh.0.timestamp,
-                    evidence: solarHigh.1.factClass.rawValue.capitalized
-                )
-            )
-        }
-
-        return Array(moments.prefix(5))
     }
 
     private var notebookNote: some View {
-        VStack(alignment: .leading, spacing: 7) {
+        VStack(alignment: .leading, spacing: 8) {
             Hairline()
-            Text("Completions, predictions and streaks stay on this device. They are participation notes, not server-verified results or scores.")
+            Text("Predictions, completions, streaks and learned notes stay on this device. Results come from published grid evidence; 50Hz does not submit your choice or verify mission completion.")
                 .font(.caption2)
                 .foregroundStyle(GridTheme.textTertiary)
+                .fixedSize(horizontal: false, vertical: true)
             HStack(spacing: 14) {
                 Link("Privacy", destination: URL(string: "https://50hz-api-production.up.railway.app/privacy")!)
                 Link("Support", destination: URL(string: "https://50hz-api-production.up.railway.app/support")!)
@@ -426,44 +615,103 @@ struct LogView: View {
         return model.dailyGame
     }
 
-    private var completedMissionIDs: Set<String> {
-        guard let data = missionCompletions.data(using: .utf8),
-              let identifiers = try? JSONDecoder().decode([String].self, from: data) else {
-            return Set(missionCompletions.split(separator: ",").map(String.init))
+    private var activePrediction: NotebookPredictionDefinition? {
+        if let resolution = model.predictionResolutions[todayKey],
+           resolution.matches(PredictionResolutionRequest(localDate: todayKey)) {
+            return NotebookPredictionDefinition(resolution)
         }
-        return Set(identifiers)
+        if let game = currentGame, let prediction = game.prediction {
+            return NotebookPredictionDefinition(prediction, date: game.date)
+        }
+        return nil
     }
 
-    private var britishCalendar: Calendar {
-        var calendar = Calendar(identifier: .gregorian)
-        calendar.timeZone = TimeZone(identifier: "Europe/London") ?? .current
-        return calendar
+    private var savedPredictionForToday: SavedPrediction? {
+        savedPredictions.first { $0.date == todayKey }
     }
 
-    private var todayKey: String { dayKey(Date()) }
-
-    private var currentStreak: Int {
-        let participated = Set(participationDays.split(separator: ",").map(String.init))
-        guard !participated.isEmpty else { return 0 }
-        var cursor = Date()
-        if !participated.contains(dayKey(cursor)) {
-            guard let yesterday = britishCalendar.date(byAdding: .day, value: -1, to: cursor),
-                  participated.contains(dayKey(yesterday)) else { return 0 }
-            cursor = yesterday
+    private var resultPrediction: SavedPrediction? {
+        let terminal = savedPredictions.first { saved in
+            guard let resolution = matchingResolution(for: saved) else { return false }
+            return resolution.state == .resolved || resolution.state == .void
         }
-
-        var count = 0
-        while participated.contains(dayKey(cursor)) {
-            count += 1
-            guard let previous = britishCalendar.date(byAdding: .day, value: -1, to: cursor) else { break }
-            cursor = previous
-        }
-        return count
+        return terminal ?? savedPredictions.first
     }
 
-    private func dayKey(_ date: Date) -> String {
-        let components = britishCalendar.dateComponents([.year, .month, .day], from: date)
-        return String(format: "%04d-%02d-%02d", components.year ?? 0, components.month ?? 0, components.day ?? 0)
+    private func matchingResolution(for saved: SavedPrediction) -> PredictionResolution? {
+        guard let resolution = model.predictionResolutions[saved.date],
+              resolution.predictionID == saved.predictionID,
+              resolution.matches(PredictionResolutionRequest(localDate: saved.date)) else { return nil }
+        return resolution
+    }
+
+    private var resolutionRequestDates: [String] {
+        var dates: [String] = [todayKey]
+        for date in predictionStore.predictions().map(\.date) where !dates.contains(date) {
+            dates.append(date)
+            if dates.count == 4 { break }
+        }
+        return dates.filter(LondonDay.isValidLocalDateKey)
+    }
+
+    private var resolutionRequestSignature: String { resolutionRequestDates.joined(separator: "|") }
+
+    private var completedMissionCount: Int {
+        guard let game = currentGame else { return 0 }
+        let IDs = Set(missionProgress.filter { $0.date == game.date && $0.isCompleted }.map(\.missionID))
+        return game.missions.prefix(3).filter { IDs.contains($0.missionID) }.count
+    }
+
+    private func progress(for mission: GameMission) -> MissionProgress? {
+        guard let date = currentGame?.date else { return nil }
+        return missionProgress.first { $0.date == date && $0.missionID == mission.missionID }
+    }
+
+    private var learnedNotes: [MissionProgress] {
+        var seen = Set<String>()
+        return missionProgress.filter { progress in
+            guard progress.isCompleted, let note = progress.learnedNote, !note.isEmpty else { return false }
+            return seen.insert(note).inserted
+        }
+        .prefix(6)
+        .map { $0 }
+    }
+
+    private func openMission(_ mission: GameMission, target: MissionNavigationTarget) {
+        guard let date = currentGame?.date else { return }
+        missionStore.markVisited(mission, date: date)
+        missionProgress = missionStore.progress()
+
+        switch target {
+        case .live:
+            model.selectedTab = .live
+            if mission.kind == .identifyLargestSource {
+                model.selectedFuel = model.snapshot?.generation.max(by: { $0.megawatts < $1.megawatts })?.fuel
+            } else {
+                model.selectedFuel = nil
+            }
+        case .today:
+            model.selectedTab = .today
+        case .local:
+            model.selectedTab = .mine
+        case .event(let eventID):
+            model.selectedTab = .live
+            model.selectedEvent = model.events.first { $0.id == eventID }
+                ?? model.snapshot?.activeEvent.flatMap { $0.id == eventID ? $0 : nil }
+            if model.selectedEvent == nil {
+                Task {
+                    if let event = try? await model.eventDetails(id: eventID) {
+                        model.selectedEvent = event
+                    }
+                }
+            }
+        }
+    }
+
+    private func loadLocalNotebook() {
+        predictionStore.migrateLegacyPredictionIfNeeded()
+        savedPredictions = predictionStore.predictions()
+        missionProgress = missionStore.progress()
     }
 
     private func registerParticipation() {
@@ -472,41 +720,130 @@ struct LogView: View {
         participationDays = days.sorted().suffix(90).joined(separator: ",")
     }
 
-    private func toggleMission(_ missionID: String) {
-        var completed = completedMissionIDs
-        if completed.contains(missionID) {
-            completed.remove(missionID)
-        } else {
-            completed.insert(missionID)
+    private var todayKey: String { currentLondonDate }
+
+    private func loadResolutionAfterAnyCancelledRequestClears(_ date: String) async {
+        while model.predictionResolutionLoadingDates.contains(date) {
+            do {
+                try await Task.sleep(for: .milliseconds(50))
+            } catch {
+                return
+            }
         }
-        let retained = Array(completed.sorted().suffix(120))
-        if let data = try? JSONEncoder().encode(retained),
-           let encoded = String(data: data, encoding: .utf8) {
-            missionCompletions = encoded
-        }
+        guard !Task.isCancelled else { return }
+        await model.loadPredictionResolution(localDate: date)
     }
 
-    private func normalizeDailyState() {
-        if predictionDate != todayKey {
-            predictionChoice = ""
-            predictionID = ""
-            predictionDate = todayKey
+    private var currentStreak: Int {
+        let participated = Set(participationDays.split(separator: ",").map(String.init))
+        guard !participated.isEmpty else { return 0 }
+        var calendar = Calendar(identifier: .gregorian)
+        calendar.timeZone = LondonDay.timeZone
+        var cursor = Date()
+        if !participated.contains(LondonDay.localDateKey(at: cursor)) {
+            guard let yesterday = calendar.date(byAdding: .day, value: -1, to: cursor),
+                  participated.contains(LondonDay.localDateKey(at: yesterday)) else { return 0 }
+            cursor = yesterday
         }
-        if predictionChoice == "Importing" { predictionChoice = GamePredictionChoice.importing.rawValue }
-        if predictionChoice == "Exporting" { predictionChoice = GamePredictionChoice.exporting.rawValue }
-        if let activeID = currentGame?.prediction?.predictionID,
-           !predictionID.isEmpty,
-           predictionID != activeID {
-            predictionChoice = ""
-            predictionID = ""
+        var count = 0
+        while participated.contains(LondonDay.localDateKey(at: cursor)) {
+            count += 1
+            guard let prior = calendar.date(byAdding: .day, value: -1, to: cursor) else { break }
+            cursor = prior
         }
+        return count
     }
 
-    private func animateIfAllowed(duration: Double, updates: () -> Void) {
+    private func updateWithFeedback(_ updates: () -> Void) {
         if reduceMotion {
             updates()
         } else {
-            withAnimation(.snappy(duration: duration), updates)
+            withAnimation(.snappy(duration: 0.2), updates)
         }
+        feedbackTrigger += 1
+    }
+
+    private func missionSymbol(_ kind: GameMissionKind) -> String {
+        switch kind {
+        case .findCleanWindow: "leaf"
+        case .identifyLargestSource: "bolt"
+        case .inspectInterconnector: "arrow.left.arrow.right"
+        case .openEventEvidence: "doc.text.magnifyingglass"
+        case .other: "scope"
+        }
+    }
+
+    private func resultTitle(_ status: LocalPredictionResultStatus) -> String {
+        switch status {
+        case .correct: "Correct"
+        case .incorrect: "Incorrect"
+        case .void: "Void"
+        case .pending: "Pending"
+        case .unsupported: "Result unsupported"
+        }
+    }
+
+    private func resultColor(_ status: LocalPredictionResultStatus) -> Color {
+        switch status {
+        case .correct: GridTheme.liveCyan
+        case .incorrect: GridTheme.staleAmber
+        case .void, .pending, .unsupported: GridTheme.textSecondary
+        }
+    }
+
+    private func resultSummary(
+        saved: SavedPrediction,
+        resolution: PredictionResolution,
+        status: LocalPredictionResultStatus
+    ) -> String {
+        switch status {
+        case .correct:
+            "You chose \(saved.choice.displayName.lowercased()); the published outcome was \(resolution.outcome?.rawValue ?? "unknown"). Correctness was calculated locally."
+        case .incorrect:
+            "You chose \(saved.choice.displayName.lowercased()); the published outcome was \(resolution.outcome?.rawValue ?? "unknown"). Correctness was calculated locally."
+        case .void:
+            "There is no winning choice. Your \(saved.choice.displayName.lowercased()) prediction remains in the notebook without a correct or incorrect mark."
+        case .pending:
+            "The evidence window has not closed. Your local choice is saved and has not been scored."
+        case .unsupported:
+            "The server returned a newer or unsupported result state. Your local choice is preserved and has not been scored."
+        }
+    }
+
+    private func evidenceLine(label: String, value: String) -> some View {
+        VStack(alignment: .leading, spacing: 2) {
+            Text(label.uppercased())
+                .font(.system(size: 9, weight: .semibold, design: .monospaced))
+                .tracking(0.5)
+                .foregroundStyle(GridTheme.textTertiary)
+            Text(value)
+                .font(.caption)
+                .foregroundStyle(GridTheme.textSecondary)
+                .fixedSize(horizontal: false, vertical: true)
+        }
+    }
+
+    private func evidenceTrail(_ resolution: PredictionResolution) -> String {
+        let publisher = resolution.sourceIDs.isEmpty ? "No source IDs" : resolution.sourceIDs.prefix(2).joined(separator: ", ")
+        return "\(publisher) · \(resolution.sourceRecordIDs.count) records · \(resolution.sourceRevisionKeys.count) revision keys · rule \(resolution.ruleVersion) / registry \(resolution.connectorRegistryVersion)"
+    }
+
+    private func signedMegawatts(_ value: Double) -> String {
+        let formatted = abs(value).formatted(.number.precision(.fractionLength(value.rounded() == value ? 0 : 1)))
+        if value > 0 { return "+\(formatted) MW" }
+        if value < 0 { return "−\(formatted) MW" }
+        return "0 MW"
+    }
+
+    private func coveragePercent(_ value: Double) -> String {
+        value.formatted(.percent.precision(.fractionLength(0)))
+    }
+
+    private func ukTime(_ date: Date) -> String {
+        date.formatted(Date.FormatStyle(date: .omitted, time: .shortened, timeZone: LondonDay.timeZone))
+    }
+
+    private func ukDateTime(_ date: Date) -> String {
+        date.formatted(Date.FormatStyle(date: .abbreviated, time: .shortened, timeZone: LondonDay.timeZone))
     }
 }

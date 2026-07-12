@@ -6,6 +6,7 @@ protocol GridRepository: Sendable {
     func cachedRegion(postcode: String) async -> RegionalGridContext?
     func cachedLocalWindows(postcode: String, durationMinutes: Int) async -> LocalWindowsResponse?
     func cachedTodayBriefing(localDate: String) async -> TodayBriefing?
+    func cachedPredictionResolution(localDate: String) async -> PredictionResolution?
     func cachedEvents() async -> [GridEvent]?
     func cachedDailyGame() async -> DailyGame?
     func currentSnapshot() async throws -> GridSnapshot
@@ -13,6 +14,7 @@ protocol GridRepository: Sendable {
     func region(postcode: String) async throws -> RegionalGridContext
     func localWindows(postcode: String, durationMinutes: Int) async throws -> LocalWindowsResponse
     func todayBriefing(localDate: String) async throws -> TodayBriefing
+    func predictionResolution(localDate: String) async throws -> PredictionResolution
     func events() async throws -> [GridEvent]
     func dailyGame() async throws -> DailyGame
     func event(id: String) async throws -> GridEvent
@@ -26,6 +28,7 @@ extension GridRepository {
     func cachedRegion(postcode: String) async -> RegionalGridContext? { nil }
     func cachedLocalWindows(postcode: String, durationMinutes: Int) async -> LocalWindowsResponse? { nil }
     func cachedTodayBriefing(localDate: String) async -> TodayBriefing? { nil }
+    func cachedPredictionResolution(localDate: String) async -> PredictionResolution? { nil }
     func cachedEvents() async -> [GridEvent]? { nil }
     func cachedDailyGame() async -> DailyGame? { nil }
 
@@ -39,6 +42,10 @@ extension GridRepository {
 
     func todayBriefing(localDate: String) async throws -> TodayBriefing {
         throw GridRepositoryError.unsupportedFeature("Today briefing")
+    }
+
+    func predictionResolution(localDate: String) async throws -> PredictionResolution {
+        throw GridRepositoryError.unsupportedFeature("Prediction resolution")
     }
 
     func events() async throws -> [GridEvent] { [] }

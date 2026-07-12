@@ -42,6 +42,10 @@ final class AppModel: ObservableObject {
     @Published var briefingRequestDate: String?
     @Published var briefingIsFromCache = false
     @Published var isRefreshingBriefing = false
+    @Published private(set) var predictionResolutions: [String: PredictionResolution] = [:]
+    @Published private(set) var predictionResolutionErrors: [String: String] = [:]
+    @Published private(set) var predictionResolutionLoadingDates: Set<String> = []
+    @Published private(set) var predictionResolutionCacheDates: Set<String> = []
 
     init(repository: any GridRepository = FixtureGridRepository()) {
         self.repository = repository
@@ -320,6 +324,43 @@ final class AppModel: ObservableObject {
                   !Self.isCancellation(error) else { return }
             briefingError = error.localizedDescription
             briefingLoadPhase = todayBriefing == nil ? .failed(error.localizedDescription) : .loaded
+        }
+    }
+
+    func loadPredictionResolution(localDate: String = LondonDay.localDateKey()) async {
+        let request = PredictionResolutionRequest(localDate: localDate)
+        guard request.localDate != "unknown-date" else { return }
+        guard !predictionResolutionLoadingDates.contains(request.localDate) else { return }
+
+        predictionResolutionLoadingDates.insert(request.localDate)
+        predictionResolutionErrors[request.localDate] = nil
+        defer { predictionResolutionLoadingDates.remove(request.localDate) }
+
+        if predictionResolutions[request.localDate]?.matches(request) != true {
+            predictionResolutions[request.localDate] = nil
+            predictionResolutionCacheDates.remove(request.localDate)
+            if let cached = await repository.cachedPredictionResolution(localDate: request.localDate) {
+                guard !Task.isCancelled else { return }
+                if cached.matches(request) {
+                    predictionResolutions[request.localDate] = cached
+                    predictionResolutionCacheDates.insert(request.localDate)
+                }
+            }
+        }
+
+        guard !Task.isCancelled else { return }
+        do {
+            let refreshed = try await repository.predictionResolution(localDate: request.localDate)
+            guard !Task.isCancelled else { return }
+            guard refreshed.matches(request) else {
+                throw GridAPIError.decoding("Prediction resolution did not match its requested London date.")
+            }
+            predictionResolutions[request.localDate] = refreshed
+            predictionResolutionCacheDates.remove(request.localDate)
+            predictionResolutionErrors[request.localDate] = nil
+        } catch {
+            guard !Task.isCancelled, !Self.isCancellation(error) else { return }
+            predictionResolutionErrors[request.localDate] = error.localizedDescription
         }
     }
 
