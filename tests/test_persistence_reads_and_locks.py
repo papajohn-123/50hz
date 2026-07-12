@@ -4,6 +4,8 @@ import asyncio
 from datetime import UTC, datetime, timedelta
 from typing import Any
 
+import pytest
+
 from app.db.models import (
     CarbonObservation,
     DemandObservation,
@@ -277,6 +279,48 @@ def test_carbon_forecast_history_preserves_bounded_vintages_for_compatibility() 
     statement = str(session.executed[0][0])
     assert "forecast_observations.retrieved_at" in statement
     assert "row_number" not in statement.casefold()
+
+
+def test_interconnector_evidence_read_is_source_compatible_inclusive_and_bounded() -> None:
+    row = InterconnectorObservation(
+        **common_observation(NOW, "elexon.fuelinst"),
+        connector_code="INTFR",
+        asset_id=None,
+        counterparty="France",
+        flow_mw=400,
+    )
+    row.revision = 3
+    session = FakeSession([FakeResult([row])])
+    repository = GridReadRepository(lambda: session)
+
+    readings = asyncio.run(
+        repository.get_interconnector_observations(
+            window_start=NOW - timedelta(minutes=5),
+            window_end=NOW + timedelta(minutes=5),
+            retrieved_before=NOW + timedelta(minutes=10),
+        )
+    )
+
+    assert readings[0].connector_id == "INTFR"
+    assert readings[0].megawatts == 400
+    assert readings[0].provenance.revision == 3
+    statement = str(session.executed[0][0])
+    assert "interconnector_observations.source_id =" in statement
+    assert "interconnector_observations.observed_at <=" in statement
+    assert "interconnector_observations.retrieved_at <=" in statement
+
+
+def test_interconnector_evidence_read_rejects_unbounded_history() -> None:
+    repository = GridReadRepository(lambda: FakeSession([]))
+
+    with pytest.raises(ValueError, match="cannot exceed one hour"):
+        asyncio.run(
+            repository.get_interconnector_observations(
+                window_start=NOW - timedelta(hours=2),
+                window_end=NOW,
+                retrieved_before=NOW,
+            )
+        )
 
 
 def test_advisory_lock_key_is_stable_signed_bigint() -> None:

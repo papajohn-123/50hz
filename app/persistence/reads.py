@@ -33,6 +33,7 @@ class ReadProvenance:
     observed_at: datetime
     published_at: datetime | None
     retrieved_at: datetime
+    revision: int = 0
 
 
 @dataclass(frozen=True, slots=True)
@@ -283,6 +284,54 @@ class GridReadRepository:
             rows = (
                 await session.execute(_latest_interconnector_statement(cutoff))
             ).scalars().all()
+        return tuple(map_interconnector_read(row) for row in rows)
+
+    async def get_interconnector_observations(
+        self,
+        *,
+        window_start: datetime,
+        window_end: datetime,
+        retrieved_before: datetime,
+        source_id: str = "elexon.fuelinst",
+    ) -> tuple[InterconnectorRead, ...]:
+        """Read a bounded, source-compatible evidence window with revisions.
+
+        The inclusive end reflects the prediction rule's explicitly published
+        evidence window. All eligible stored revisions are retained here; the
+        deterministic resolver chooses the latest publisher revision for each
+        connector and observation timestamp.
+        """
+
+        start = as_utc(window_start, field_name="window_start")
+        end = as_utc(window_end, field_name="window_end")
+        captured = as_utc(retrieved_before, field_name="retrieved_before")
+        normalized_source_id = source_id.strip()
+        if start >= end:
+            raise ValueError("interconnector window_start must precede window_end")
+        if end - start > timedelta(hours=1):
+            raise ValueError("interconnector evidence window cannot exceed one hour")
+        if captured < start:
+            raise ValueError("retrieved_before cannot precede the evidence window")
+        if not normalized_source_id:
+            raise ValueError("source_id cannot be blank")
+
+        statement = (
+            select(InterconnectorObservation)
+            .where(
+                InterconnectorObservation.source_id == normalized_source_id,
+                InterconnectorObservation.observed_at >= start,
+                InterconnectorObservation.observed_at <= end,
+                InterconnectorObservation.retrieved_at <= captured,
+            )
+            .order_by(
+                InterconnectorObservation.observed_at,
+                InterconnectorObservation.connector_code,
+                InterconnectorObservation.revision,
+                InterconnectorObservation.retrieved_at,
+            )
+        )
+        async with self._session_factory() as session:
+            rows = (await session.execute(statement)).scalars().all()
         return tuple(map_interconnector_read(row) for row in rows)
 
     async def get_latest_carbon(
@@ -743,6 +792,7 @@ def _provenance(row: Any) -> ReadProvenance:
         observed_at=row.observed_at,
         published_at=row.published_at,
         retrieved_at=row.retrieved_at,
+        revision=row.revision,
     )
 
 

@@ -1,4 +1,4 @@
-from datetime import UTC, datetime, time, timedelta
+from datetime import UTC, date, datetime, time, timedelta
 from zoneinfo import ZoneInfo
 
 from app.game.models import (
@@ -41,19 +41,23 @@ def build_daily_game(*, now: datetime, source_fresh: bool, has_forecast: bool, h
         ),
     ]
 
-    lock_local = datetime.combine(day, time(17, 45), tzinfo=LONDON)
-    resolve_local = datetime.combine(day, time(18, 0), tzinfo=LONDON)
+    definition = prediction_definition_for_date(day)
     prediction = None
-    if source_fresh and local_now < lock_local:
-        prediction = PredictionDefinition(
-            prediction_id=f"{day}:energy-position-1800",
-            question="Will Britain be importing or exporting at 18:00?",
-            choices=[PredictionChoice.IMPORTING, PredictionChoice.EXPORTING],
-            locks_at=lock_local.astimezone(UTC),
-            metric="net_interconnector_flow_mw",
-            resolves_from=(resolve_local - timedelta(minutes=5)).astimezone(UTC),
-            resolves_to=(resolve_local + timedelta(minutes=5)).astimezone(UTC),
-        )
+    if source_fresh and local_now < definition.locks_at.astimezone(LONDON):
+        prediction = definition
 
     return DailyGame(date=day.isoformat(), missions=missions, prediction=prediction, source_fresh=source_fresh)
 
+
+def prediction_definition_for_date(day: date) -> PredictionDefinition:
+    lock_local = datetime.combine(day, time(17, 45), tzinfo=LONDON)
+    resolve_local = datetime.combine(day, time(18, 0), tzinfo=LONDON)
+    return PredictionDefinition(
+        prediction_id=f"{day}:energy-position-1800",
+        question="Will Britain be importing or exporting at 18:00?",
+        choices=[PredictionChoice.IMPORTING, PredictionChoice.EXPORTING],
+        locks_at=lock_local.astimezone(UTC),
+        metric="net_interconnector_flow_mw",
+        resolves_from=(resolve_local - timedelta(minutes=5)).astimezone(UTC),
+        resolves_to=(resolve_local + timedelta(minutes=5)).astimezone(UTC),
+    )

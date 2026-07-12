@@ -1,4 +1,8 @@
 from app.persistence.ingestion import PostgresIngestionRepository
+from app.persistence.game import (
+    PostgresPredictionResolutionLedger,
+    PredictionResolutionLedger,
+)
 from app.persistence.locks import PostgresAdvisoryLockProvider, advisory_lock_key
 from app.persistence.reads import (
     CarbonRead,
@@ -25,8 +29,10 @@ __all__ = [
     "GridReadRepository",
     "GridTimelineRead",
     "InterconnectorRead",
+    "PostgresPredictionResolutionLedger",
     "PostgresAdvisoryLockProvider",
     "PostgresIngestionRepository",
+    "PredictionResolutionLedger",
     "ReadProvenance",
     "ReportedNoticeRead",
     "SourceMetadataRead",

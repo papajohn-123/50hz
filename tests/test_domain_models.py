@@ -207,6 +207,7 @@ def test_initial_metadata_contains_all_foundation_tables() -> None:
         "comparison_baselines",
         "event_lifecycle_revisions",
         "event_lifecycle_deltas",
+        "prediction_resolution_revisions",
         "detected_events",
         "event_explanations",
         "reported_notice_explanations",

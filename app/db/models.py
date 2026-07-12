@@ -926,6 +926,72 @@ class EventLifecycleDelta(Base):
     )
 
 
+class PredictionResolutionRevision(Base):
+    """One immutable, auditable result for a daily prediction rule."""
+
+    __tablename__ = "prediction_resolution_revisions"
+
+    id: Mapped[uuid.UUID] = mapped_column(Uuid, primary_key=True, default=uuid.uuid4)
+    prediction_id: Mapped[str] = mapped_column(String(200), nullable=False)
+    prediction_date: Mapped[date] = mapped_column(Date, nullable=False)
+    rule_version: Mapped[int] = mapped_column(Integer, nullable=False)
+    resolution_revision: Mapped[int] = mapped_column(Integer, nullable=False)
+    state: Mapped[str] = mapped_column(String(24), nullable=False)
+    outcome: Mapped[str | None] = mapped_column(String(24))
+    evidence_checksum: Mapped[str] = mapped_column(String(64), nullable=False)
+    revision_watermark_at: Mapped[datetime | None] = mapped_column(
+        DateTime(timezone=True)
+    )
+    computed_at: Mapped[datetime] = mapped_column(
+        DateTime(timezone=True), nullable=False
+    )
+    payload: Mapped[dict[str, Any]] = mapped_column(JSON_DOCUMENT, nullable=False)
+    created_at: Mapped[datetime] = mapped_column(
+        DateTime(timezone=True), nullable=False, server_default=func.now()
+    )
+
+    __table_args__ = (
+        CheckConstraint(
+            "rule_version > 0",
+            name="positive_prediction_resolution_rule_version",
+        ),
+        CheckConstraint(
+            "resolution_revision > 0",
+            name="positive_prediction_resolution_revision",
+        ),
+        CheckConstraint(
+            "state IN ('resolved', 'void')",
+            name="terminal_prediction_resolution_state",
+        ),
+        CheckConstraint(
+            "(state = 'resolved' AND outcome IN ('importing', 'exporting')) OR "
+            "(state = 'void' AND outcome IS NULL)",
+            name="prediction_resolution_outcome_matches_state",
+        ),
+        CheckConstraint(
+            "char_length(evidence_checksum) = 64",
+            name="prediction_resolution_sha256_length",
+        ),
+        UniqueConstraint(
+            "prediction_id",
+            "rule_version",
+            "resolution_revision",
+            name="uq_prediction_resolution_revision",
+        ),
+        UniqueConstraint(
+            "prediction_id",
+            "rule_version",
+            "evidence_checksum",
+            name="uq_prediction_resolution_evidence",
+        ),
+        Index(
+            "ix_prediction_resolution_date",
+            "prediction_date",
+            "rule_version",
+        ),
+    )
+
+
 class DetectedEvent(TimestampMixin, Base):
     __tablename__ = "detected_events"
 
