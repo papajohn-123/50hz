@@ -8,6 +8,10 @@ reported system events, regional carbon guidance, and evidence-grounded
 explanations. The first layer is designed for curious people; source timing and
 provenance remain visible for professional users.
 
+The execution-grade product, UX, data, release, and validation roadmap is in
+[PRODUCT_ROADMAP.md](docs/PRODUCT_ROADMAP.md). It is the source of truth for what
+we build next; this README describes the current implemented baseline.
+
 The repository is a release candidate, not a TestFlight release. The native app,
 Railway API/worker, source adapters, persistence, public routes, and OpenRouter
 integration are implemented and production-smoked. Apple signing, a signed
@@ -258,7 +262,9 @@ The owner needs to provide or confirm:
 After the owner inputs are supplied, engineering must configure signing, create a
 signed Release archive, install it on a physical iPhone, complete
 accessibility/offline/battery QA, upload it, and verify the processed TestFlight
-build. See [IMPLEMENTATION_PLAN.md](docs/IMPLEMENTATION_PLAN.md) for sequencing,
+build. See [PRODUCT_ROADMAP.md](docs/PRODUCT_ROADMAP.md) for the product and
+delivery sequence, [IMPLEMENTATION_PLAN.md](docs/IMPLEMENTATION_PLAN.md) for the
+implemented technical baseline,
 [OPERATIONS.md](docs/OPERATIONS.md) for deployment checks, and
 [APP_STORE_RELEASE.md](docs/APP_STORE_RELEASE.md) for ready-to-paste metadata and
 the Apple handoff.

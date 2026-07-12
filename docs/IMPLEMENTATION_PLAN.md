@@ -3,6 +3,10 @@
 Last reconciled with the repository and release-candidate production smoke test
 on 11 July 2026.
 
+This document records the implemented technical baseline. The prioritised
+product, UX, backend, TestFlight, and public-release sequence now lives in
+[PRODUCT_ROADMAP.md](PRODUCT_ROADMAP.md).
+
 ## Product objective
 
 50Hz makes Britain's electricity system feel alive without making the data less
