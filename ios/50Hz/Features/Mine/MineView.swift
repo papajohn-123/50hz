@@ -1,4 +1,5 @@
 import SwiftUI
+import UIKit
 
 enum RegionalGridCopy {
     static func methodology(source: SourceReference?) -> String {
@@ -11,10 +12,13 @@ enum RegionalGridCopy {
 
 struct MineView: View {
     @EnvironmentObject private var model: AppModel
+    @Environment(\.openURL) private var openURL
     @AppStorage("mine.postcode") private var postcode = ""
     @AppStorage("mine.activity") private var activityRawValue = LocalActivityPreset.laundry.rawValue
     @AppStorage("mine.customDurationMinutes") private var customDurationMinutes = 120
     @AppStorage("mine.lastPlannedActivity") private var lastPlannedActivityRawValue = LocalActivityPreset.laundry.rawValue
+    @AppStorage("mine.reminderActivity") private var reminderActivityRawValue = ""
+    @StateObject private var reminder = LocalReminderCoordinator()
     @State private var draftPostcode = ""
     @State private var postcodeInputError: String?
     @FocusState private var postcodeFocused: Bool
@@ -74,6 +78,9 @@ struct MineView: View {
                 postcode: postcode,
                 durationMinutes: selectedDurationMinutes
             )
+        }
+        .task(id: reminderPlan) {
+            await reminder.refresh(for: reminderPlan)
         }
     }
 
@@ -199,6 +206,7 @@ struct MineView: View {
             }
 
             plannerResult
+            reminderManagement
         }
     }
 
@@ -415,7 +423,195 @@ struct MineView: View {
         .padding(16)
         .background(GridTheme.forecastViolet.opacity(0.075), in: RoundedRectangle(cornerRadius: GridTheme.cornerRadius))
         .overlay(RoundedRectangle(cornerRadius: GridTheme.cornerRadius).stroke(GridTheme.forecastViolet.opacity(0.2), lineWidth: 1))
-        .accessibilityElement(children: .combine)
+    }
+
+    private var reminderPlan: LocalReminderPlan? {
+        guard let response = model.localWindows,
+              response.hasSafeNationalForecastScope,
+              !LocalPlannerCopy.isTooOldToRecommend(response),
+              let window = response.plan.recommendedWindow,
+              let capturedAt = response.forecast.capturedAt,
+              let outward = PostcodePrivacy.validatedOutwardCode(
+                from: response.postcode,
+                defaultWhenEmpty: false
+              )
+        else { return nil }
+
+        return LocalReminderPlan(
+            localIdentifier: LocalReminderCoordinator.localIdentifier,
+            activityLabel: lastPlannedActivity.title,
+            outwardRegion: outward,
+            scope: .gbNational,
+            forecastCapturedAt: capturedAt,
+            start: window.start,
+            end: window.end,
+            averageIntensityGCO2KWh: window.averageIntensityGCO2KWh
+        )
+    }
+
+    @ViewBuilder
+    private var reminderManagement: some View {
+        if let scheduled = reminder.scheduledMetadata {
+            VStack(alignment: .leading, spacing: 12) {
+                Label {
+                    VStack(alignment: .leading, spacing: 3) {
+                        Text("Reminder set")
+                            .font(.subheadline.weight(.semibold))
+                        Text(reminderDateLabel(scheduled.start))
+                            .font(.caption)
+                            .foregroundStyle(GridTheme.textSecondary)
+                    }
+                } icon: {
+                    Image(systemName: "bell.badge.fill")
+                        .foregroundStyle(GridTheme.forecastViolet)
+                }
+
+                if reminderNeedsUpdate, let plan = reminderPlan {
+                    Text("The activity or forecast window has changed. Your existing reminder has not moved.")
+                        .font(.caption)
+                        .foregroundStyle(GridTheme.staleAmber)
+                    reminderActionButton(
+                        title: "Update reminder",
+                        systemImage: "bell.and.waves.left.and.right",
+                        primary: true
+                    ) {
+                        scheduleReminder(plan)
+                    }
+                }
+
+                Button {
+                    Task {
+                        if await reminder.cancel() {
+                            reminderActivityRawValue = ""
+                        }
+                    }
+                } label: {
+                    Label("Cancel reminder", systemImage: "bell.slash")
+                        .font(.subheadline.weight(.semibold))
+                        .frame(maxWidth: .infinity, minHeight: 44)
+                }
+                .buttonStyle(.plain)
+                .foregroundStyle(GridTheme.textSecondary)
+                .disabled(reminder.isWorking)
+
+                reminderFeedback
+            }
+            .padding(14)
+            .background(GridTheme.surface, in: RoundedRectangle(cornerRadius: 12))
+            .overlay(RoundedRectangle(cornerRadius: 12).stroke(GridTheme.hairline, lineWidth: 1))
+        } else if let plan = reminderPlan {
+            VStack(alignment: .leading, spacing: 10) {
+                Text("Keep the window")
+                    .font(.subheadline.weight(.semibold))
+                Text("50Hz can remind you at the forecast start time. The reminder stays on this device and will not move unless you update it.")
+                    .font(.caption)
+                    .foregroundStyle(GridTheme.textSecondary)
+                reminderActionButton(
+                    title: "Remind me at the start",
+                    systemImage: "bell",
+                    primary: true
+                ) {
+                    scheduleReminder(plan)
+                }
+                reminderFeedback
+            }
+            .padding(14)
+            .background(GridTheme.surface, in: RoundedRectangle(cornerRadius: 12))
+            .overlay(RoundedRectangle(cornerRadius: 12).stroke(GridTheme.hairline, lineWidth: 1))
+        } else if reminder.feedback == .cancelled {
+            Text("Reminder cancelled.")
+                .font(.caption)
+                .foregroundStyle(GridTheme.textSecondary)
+        }
+    }
+
+    private var reminderNeedsUpdate: Bool {
+        let activityChanged = !reminderActivityRawValue.isEmpty
+            && reminderActivityRawValue != lastPlannedActivityRawValue
+        return reminder.hasMaterialChange || activityChanged
+    }
+
+    private func reminderActionButton(
+        title: String,
+        systemImage: String,
+        primary: Bool,
+        action: @escaping () -> Void
+    ) -> some View {
+        Button(action: action) {
+            HStack(spacing: 8) {
+                if reminder.isWorking {
+                    ProgressView()
+                        .tint(primary ? GridTheme.background : GridTheme.textPrimary)
+                } else {
+                    Image(systemName: systemImage)
+                }
+                Text(title)
+            }
+            .font(.subheadline.weight(.semibold))
+            .foregroundStyle(primary ? GridTheme.background : GridTheme.textPrimary)
+            .frame(maxWidth: .infinity, minHeight: 48)
+            .background(
+                primary ? GridTheme.forecastViolet : GridTheme.surfaceRaised,
+                in: RoundedRectangle(cornerRadius: 11)
+            )
+        }
+        .buttonStyle(.plain)
+        .disabled(reminder.isWorking)
+        .opacity(reminder.isWorking ? 0.72 : 1)
+    }
+
+    @ViewBuilder
+    private var reminderFeedback: some View {
+        switch reminder.feedback {
+        case .denied:
+            VStack(alignment: .leading, spacing: 7) {
+                Text("Notifications are off for 50Hz. The forecast plan is still available here.")
+                    .font(.caption)
+                    .foregroundStyle(GridTheme.staleAmber)
+                Button("Open Settings") {
+                    guard let url = URL(string: UIApplication.openSettingsURLString) else { return }
+                    openURL(url)
+                }
+                .font(.caption.weight(.semibold))
+                .frame(minWidth: 44, minHeight: 44, alignment: .leading)
+            }
+        case .notAvailable:
+            Text("Reminders are not available on this device.")
+                .font(.caption)
+                .foregroundStyle(GridTheme.staleAmber)
+        case .invalid:
+            Text("This forecast window cannot be scheduled. Refresh the forecast and try again.")
+                .font(.caption)
+                .foregroundStyle(GridTheme.staleAmber)
+        case .past:
+            Text("That window has already started. Refresh to find the next available time.")
+                .font(.caption)
+                .foregroundStyle(GridTheme.staleAmber)
+        case .error:
+            Text("The reminder could not be changed. Nothing was rescheduled.")
+                .font(.caption)
+                .foregroundStyle(GridTheme.staleAmber)
+        case .scheduled, .cancelled, .none:
+            EmptyView()
+        }
+    }
+
+    private func scheduleReminder(_ plan: LocalReminderPlan) {
+        Task {
+            if await reminder.schedule(plan) {
+                reminderActivityRawValue = lastPlannedActivityRawValue
+            }
+        }
+    }
+
+    private func reminderDateLabel(_ date: Date) -> String {
+        date.formatted(
+            Date.FormatStyle(
+                date: .abbreviated,
+                time: .shortened,
+                timeZone: londonTimeZone
+            )
+        )
     }
 
     private func plannerFact(value: String, label: String) -> some View {
