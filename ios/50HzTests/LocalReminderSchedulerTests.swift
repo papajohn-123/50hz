@@ -116,6 +116,7 @@ final class LocalReminderSchedulerTests: XCTestCase {
         XCTAssertEqual(result, .scheduled(identifier: "50hz.local.laundry"))
         let delivery = try XCTUnwrap(center.deliveries["50hz.local.laundry"])
         XCTAssertEqual(delivery.fireDate, requested.start)
+        XCTAssertEqual(delivery.destination, .local)
         XCTAssertTrue(delivery.title.contains("Forecast reminder"))
         XCTAssertTrue(delivery.title.contains("Laundry"))
         XCTAssertTrue(delivery.body.contains("Laundry"))

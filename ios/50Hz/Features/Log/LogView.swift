@@ -1,4 +1,5 @@
 import SwiftUI
+import UIKit
 
 private struct NotebookPredictionDefinition {
     let predictionID: String
@@ -39,11 +40,13 @@ private struct NotebookPredictionDefinition {
 struct LogView: View {
     @EnvironmentObject private var model: AppModel
     @Environment(\.accessibilityReduceMotion) private var reduceMotion
+    @Environment(\.openURL) private var openURL
     @AppStorage("log.participation.days") private var participationDays = ""
     @State private var savedPredictions: [SavedPrediction] = []
     @State private var missionProgress: [MissionProgress] = []
     @State private var feedbackTrigger = 0
     @State private var currentLondonDate = LondonDay.localDateKey()
+    @StateObject private var predictionReminder = PredictionReminderCoordinator()
 
     private let predictionStore = PredictionJournalStore()
     private let missionStore = MissionProgressStore()
@@ -78,6 +81,13 @@ struct LogView: View {
                 guard !Task.isCancelled else { return }
                 await loadResolutionAfterAnyCancelledRequestClears(date)
             }
+        }
+        .task(id: predictionReminderSignature) {
+            guard let prediction = activePrediction else { return }
+            await predictionReminder.refresh(
+                predictionID: prediction.predictionID,
+                date: prediction.date
+            )
         }
         .sensoryFeedback(.selection, trigger: feedbackTrigger)
     }
@@ -267,6 +277,8 @@ struct LogView: View {
                     .font(.caption)
                     .foregroundStyle(GridTheme.textSecondary)
             }
+
+            predictionReminderControls(prediction, saved: saved, now: now)
         }
         .padding(17)
         .background(GridTheme.forecastViolet.opacity(0.07), in: RoundedRectangle(cornerRadius: GridTheme.cornerRadius))
@@ -325,6 +337,197 @@ struct LogView: View {
                 : locked
                     ? "The published lock time has passed"
                     : "Saves this choice only on this device"
+        )
+    }
+
+    @ViewBuilder
+    private func predictionReminderControls(
+        _ prediction: NotebookPredictionDefinition,
+        saved: SavedPrediction?,
+        now: Date
+    ) -> some View {
+        let lockPlan = predictionReminderPlan(
+            kind: .lock,
+            prediction: prediction,
+            saved: saved,
+            now: now
+        )
+        let resultPlan = predictionReminderPlan(
+            kind: .result,
+            prediction: prediction,
+            saved: saved,
+            now: now
+        )
+        let hasStoredReminder = PredictionReminderKind.allCases.contains {
+            predictionReminder.scheduled[$0] != nil
+        }
+
+        if lockPlan != nil || resultPlan != nil || hasStoredReminder {
+            Hairline()
+            VStack(alignment: .leading, spacing: 10) {
+                Text("KEEP THIS PREDICTION")
+                    .font(.caption2.weight(.semibold))
+                    .fontDesign(.monospaced)
+                    .tracking(0.7)
+                    .foregroundStyle(GridTheme.textTertiary)
+
+                predictionReminderRow(
+                    kind: .lock,
+                    plan: lockPlan,
+                    prediction: prediction
+                )
+                predictionReminderRow(
+                    kind: .result,
+                    plan: resultPlan,
+                    prediction: prediction
+                )
+
+                Text("Reminders stay on this device. A result reminder only asks you to check; it never claims evidence has already resolved.")
+                    .font(.caption2)
+                    .foregroundStyle(GridTheme.textTertiary)
+                    .fixedSize(horizontal: false, vertical: true)
+            }
+        }
+    }
+
+    @ViewBuilder
+    private func predictionReminderRow(
+        kind: PredictionReminderKind,
+        plan: PredictionReminderPlan?,
+        prediction: NotebookPredictionDefinition
+    ) -> some View {
+        if let metadata = predictionReminder.scheduled[kind] {
+            HStack(alignment: .center, spacing: 10) {
+                Image(systemName: kind == .lock ? "bell.badge" : "bell.and.waves.left.and.right")
+                    .foregroundStyle(GridTheme.forecastViolet)
+                    .frame(width: 22)
+                VStack(alignment: .leading, spacing: 2) {
+                    Text(kind == .lock ? "Lock reminder set" : "Result-check reminder set")
+                        .font(.caption.weight(.semibold))
+                    Text("\(ukDateTime(metadata.fireDate)) UK")
+                        .font(.caption2)
+                        .foregroundStyle(GridTheme.textSecondary)
+                }
+                Spacer(minLength: 4)
+                Button("Cancel") {
+                    Task {
+                        if await predictionReminder.cancel(kind: kind, date: prediction.date) {
+                            feedbackTrigger += 1
+                        }
+                    }
+                }
+                .font(.caption.weight(.semibold))
+                .foregroundStyle(GridTheme.textSecondary)
+                .frame(minWidth: 44, minHeight: 44)
+                .disabled(predictionReminder.workingKinds.contains(kind))
+            }
+            predictionReminderFeedback(kind)
+        } else if let plan {
+            Button {
+                Task {
+                    if await predictionReminder.schedule(plan) {
+                        feedbackTrigger += 1
+                    }
+                }
+            } label: {
+                HStack(spacing: 9) {
+                    if predictionReminder.workingKinds.contains(kind) {
+                        ProgressView().tint(GridTheme.textPrimary)
+                    } else {
+                        Image(systemName: kind == .lock ? "bell" : "bell.and.waves.left.and.right")
+                    }
+                    Text(
+                        kind == .lock
+                            ? "Remind me 15 min before lock"
+                            : "Remind me after evidence closes"
+                    )
+                    Spacer(minLength: 0)
+                }
+                .font(.caption.weight(.semibold))
+                .foregroundStyle(GridTheme.textPrimary)
+                .padding(.horizontal, 12)
+                .frame(maxWidth: .infinity, minHeight: 44)
+                .background(GridTheme.surfaceRaised, in: RoundedRectangle(cornerRadius: 10))
+                .overlay(
+                    RoundedRectangle(cornerRadius: 10)
+                        .stroke(GridTheme.forecastViolet.opacity(0.18), lineWidth: 1)
+                )
+            }
+            .buttonStyle(.plain)
+            .disabled(predictionReminder.workingKinds.contains(kind))
+            predictionReminderFeedback(kind)
+        }
+    }
+
+    @ViewBuilder
+    private func predictionReminderFeedback(_ kind: PredictionReminderKind) -> some View {
+        switch predictionReminder.feedback[kind] ?? .none {
+        case .denied:
+            HStack(spacing: 10) {
+                Text("Notifications are off for 50Hz.")
+                    .font(.caption2)
+                    .foregroundStyle(GridTheme.staleAmber)
+                Button("Open Settings") {
+                    guard let url = URL(string: UIApplication.openSettingsURLString) else { return }
+                    openURL(url)
+                }
+                .font(.caption2.weight(.semibold))
+                .frame(minWidth: 44, minHeight: 44)
+            }
+        case .notAvailable:
+            reminderFeedbackText("Reminders are not available on this device.")
+        case .invalid:
+            reminderFeedbackText("This reminder time is no longer valid.")
+        case .past:
+            reminderFeedbackText("That reminder time has already passed.")
+        case .error:
+            reminderFeedbackText("The reminder could not be changed.")
+        case .cancelled:
+            Text("Reminder cancelled.")
+                .font(.caption2)
+                .foregroundStyle(GridTheme.textSecondary)
+        case .scheduled, .none:
+            EmptyView()
+        }
+    }
+
+    private func reminderFeedbackText(_ text: String) -> some View {
+        Text(text)
+            .font(.caption2)
+            .foregroundStyle(GridTheme.staleAmber)
+            .fixedSize(horizontal: false, vertical: true)
+    }
+
+    private func predictionReminderPlan(
+        kind: PredictionReminderKind,
+        prediction: NotebookPredictionDefinition,
+        saved: SavedPrediction?,
+        now: Date
+    ) -> PredictionReminderPlan? {
+        guard prediction.supportsLocalChoiceContract,
+              prediction.state != .resolved,
+              prediction.state != .void else { return nil }
+
+        let fireDate: Date
+        switch kind {
+        case .lock:
+            fireDate = prediction.locksAt.addingTimeInterval(
+                -PredictionReminderValidation.lockLeadTime
+            )
+        case .result:
+            guard saved != nil else { return nil }
+            fireDate = prediction.evidenceTo.addingTimeInterval(
+                PredictionReminderValidation.resultDelay
+            )
+        }
+        guard fireDate > now else { return nil }
+        return PredictionReminderPlan(
+            predictionID: prediction.predictionID,
+            date: prediction.date,
+            kind: kind,
+            fireDate: fireDate,
+            locksAt: prediction.locksAt,
+            evidenceTo: prediction.evidenceTo
         )
     }
 
@@ -655,6 +858,11 @@ struct LogView: View {
     }
 
     private var resolutionRequestSignature: String { resolutionRequestDates.joined(separator: "|") }
+
+    private var predictionReminderSignature: String {
+        guard let prediction = activePrediction else { return "none" }
+        return "\(prediction.predictionID)|\(prediction.date)"
+    }
 
     private var completedMissionCount: Int {
         guard let game = currentGame else { return 0 }

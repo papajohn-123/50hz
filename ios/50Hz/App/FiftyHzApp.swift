@@ -2,6 +2,7 @@ import SwiftUI
 
 @main
 struct FiftyHzApp: App {
+    @UIApplicationDelegateAdaptor(FiftyHzAppDelegate.self) private var appDelegate
     @Environment(\.scenePhase) private var scenePhase
     @StateObject private var model = AppModel(repository: HTTPGridRepository())
 
@@ -19,6 +20,15 @@ struct FiftyHzApp: App {
                         Task { await model.refresh() }
                     } else {
                         model.stopForegroundRefresh()
+                    }
+                }
+                .onReceive(
+                    NotificationCenter.default.publisher(
+                        for: NotificationNavigation.didSelectDestination
+                    )
+                ) { notification in
+                    if let tab = notification.object as? AppTab {
+                        model.selectedTab = tab
                     }
                 }
                 .preferredColorScheme(.dark)

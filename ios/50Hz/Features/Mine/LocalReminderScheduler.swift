@@ -58,11 +58,17 @@ enum LocalNotificationAuthorizationState: Equatable, Sendable {
     case notAvailable
 }
 
+enum LocalNotificationDestination: String, Equatable, Sendable {
+    case local
+    case notebook
+}
+
 struct LocalNotificationDelivery: Equatable, Sendable {
     let identifier: String
     let title: String
     let body: String
     let fireDate: Date
+    let destination: LocalNotificationDestination
 }
 
 protocol LocalNotificationCenter: AnyObject {
@@ -134,7 +140,8 @@ final class LocalReminderScheduler {
             identifier: validated.metadata.identifier,
             title: "Forecast reminder: \(validated.activityLabel)",
             body: reminderBody(for: validated),
-            fireDate: validated.metadata.start
+            fireDate: validated.metadata.start,
+            destination: .local
         )
         do {
             // UNUserNotificationCenter replaces a pending request atomically
@@ -377,6 +384,9 @@ final class SystemLocalNotificationCenter: LocalNotificationCenter {
         content.title = delivery.title
         content.body = delivery.body
         content.sound = .default
+        content.userInfo = [
+            NotificationNavigation.userInfoKey: delivery.destination.rawValue
+        ]
         var calendar = Calendar(identifier: .gregorian)
         calendar.timeZone = .autoupdatingCurrent
         var components = calendar.dateComponents(
