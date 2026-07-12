@@ -266,6 +266,13 @@ class GenerationObservation(ObservationMixin, Base):
         ),
         Index("ix_generation_observed_at", "observed_at"),
         Index("ix_generation_fuel_observed", "fuel_type", "observed_at"),
+        Index(
+            "ix_generation_verify_source_time",
+            "source_id",
+            "series_key",
+            "observed_at",
+            "revision",
+        ),
     )
 
 
@@ -292,6 +299,14 @@ class DemandObservation(ObservationMixin, Base):
             name="valid_settlement_period",
         ),
         Index("ix_demand_observed_at", "observed_at"),
+        Index(
+            "ix_demand_verify_source_time",
+            "source_id",
+            "series_key",
+            "demand_type",
+            "observed_at",
+            "revision",
+        ),
     )
 
 
@@ -359,6 +374,13 @@ class CarbonObservation(ObservationMixin, Base):
         ),
         CheckConstraint("intensity_gco2_kwh >= 0", name="nonnegative_intensity"),
         Index("ix_carbon_region_observed", "region_code", "observed_at"),
+        Index(
+            "ix_carbon_verify_source_time",
+            "source_id",
+            "region_code",
+            "observed_at",
+            "revision",
+        ),
     )
 
 
@@ -424,6 +446,15 @@ class ForecastObservation(Base):
         ),
         Index("ix_forecast_metric_valid", "metric_type", "valid_from"),
         Index("ix_forecast_series_issue", "series_key", "issued_at"),
+        Index(
+            "ix_forecast_verify_source_metric_valid",
+            "source_id",
+            "metric_type",
+            "series_key",
+            "valid_from",
+            "issued_at",
+            "revision",
+        ),
     )
 
 
@@ -938,6 +969,308 @@ class HistoryMaterializationRun(Base):
             "output_start_date",
             "output_end_date",
         ),
+    )
+
+
+class ForecastVerificationPair(Base):
+    """Immutable pairing of one reviewed forecast vintage and one outturn."""
+
+    __tablename__ = "forecast_verification_pairs"
+
+    id: Mapped[uuid.UUID] = mapped_column(Uuid, primary_key=True, default=uuid.uuid4)
+    metric_id: Mapped[str] = mapped_column(String(120), nullable=False)
+    horizon_bucket: Mapped[str] = mapped_column(String(16), nullable=False)
+    valid_from: Mapped[datetime] = mapped_column(DateTime(timezone=True), nullable=False)
+    forecast_source_id: Mapped[str] = mapped_column(
+        ForeignKey("source_metadata.id", ondelete="RESTRICT"), nullable=False
+    )
+    outturn_source_id: Mapped[str] = mapped_column(
+        ForeignKey("source_metadata.id", ondelete="RESTRICT"), nullable=False
+    )
+    forecast_observation_id: Mapped[uuid.UUID] = mapped_column(
+        ForeignKey("forecast_observations.id", ondelete="RESTRICT"), nullable=False
+    )
+    # Outturns live in one of three reviewed normalized tables. The table is
+    # fixed by ``metric_id``; keeping this UUID polymorphic avoids a nullable FK
+    # for every possible table while retaining the exact immutable evidence ID.
+    outturn_observation_id: Mapped[uuid.UUID] = mapped_column(Uuid, nullable=False)
+    forecast_vintage_at: Mapped[datetime] = mapped_column(
+        DateTime(timezone=True), nullable=False
+    )
+    forecast_source_issued_at: Mapped[datetime | None] = mapped_column(
+        DateTime(timezone=True)
+    )
+    forecast_captured_at: Mapped[datetime] = mapped_column(
+        DateTime(timezone=True), nullable=False
+    )
+    issue_time_basis: Mapped[str] = mapped_column(String(64), nullable=False)
+    effective_vintage_time_basis: Mapped[str] = mapped_column(
+        String(32), nullable=False
+    )
+    forecast_value: Mapped[float] = mapped_column(Float, nullable=False)
+    outturn_value: Mapped[float] = mapped_column(Float, nullable=False)
+    signed_error: Mapped[float] = mapped_column(Float, nullable=False)
+    absolute_error: Mapped[float] = mapped_column(Float, nullable=False)
+    unit: Mapped[str] = mapped_column(String(32), nullable=False)
+    forecast_revision: Mapped[int] = mapped_column(Integer, nullable=False)
+    outturn_revision: Mapped[int] = mapped_column(Integer, nullable=False)
+    forecast_methodology_version: Mapped[str] = mapped_column(
+        String(120), nullable=False
+    )
+    outturn_methodology_version: Mapped[str] = mapped_column(
+        String(120), nullable=False
+    )
+    verification_methodology_version: Mapped[str] = mapped_column(
+        String(120), nullable=False
+    )
+    registry_version: Mapped[str] = mapped_column(String(80), nullable=False)
+    revision: Mapped[int] = mapped_column(
+        Integer, nullable=False, default=0, server_default="0"
+    )
+    content_sha256: Mapped[str] = mapped_column(String(64), nullable=False)
+    created_at: Mapped[datetime] = mapped_column(
+        DateTime(timezone=True), nullable=False, server_default=func.now()
+    )
+
+    __table_args__ = (
+        CheckConstraint(
+            "horizon_bucket IN ('0_3h', '3_12h', '12_24h', '24_48h')",
+            name="valid_forecast_verification_horizon",
+        ),
+        CheckConstraint(
+            "issue_time_basis IN "
+            "('source_published_at', 'source_does_not_publish_issue_time')",
+            name="valid_forecast_issue_time_basis",
+        ),
+        CheckConstraint(
+            "effective_vintage_time_basis IN ('source_published_at', 'retrieved_at')",
+            name="valid_forecast_effective_vintage_basis",
+        ),
+        CheckConstraint(
+            "forecast_vintage_at <= valid_from",
+            name="forecast_vintage_precedes_valid_time",
+        ),
+        CheckConstraint(
+            "(issue_time_basis = 'source_published_at' "
+            "AND effective_vintage_time_basis = 'source_published_at' "
+            "AND forecast_source_issued_at IS NOT NULL "
+            "AND forecast_vintage_at = forecast_source_issued_at) OR "
+            "(issue_time_basis = 'source_does_not_publish_issue_time' "
+            "AND effective_vintage_time_basis = 'retrieved_at' "
+            "AND forecast_source_issued_at IS NULL "
+            "AND forecast_vintage_at = forecast_captured_at)",
+            name="forecast_vintage_basis_matches_timestamps",
+        ),
+        CheckConstraint(
+            "absolute_error >= 0", name="nonnegative_forecast_absolute_error"
+        ),
+        CheckConstraint(
+            "forecast_revision >= 0 AND outturn_revision >= 0 AND revision >= 0",
+            name="nonnegative_forecast_verification_revisions",
+        ),
+        CheckConstraint(
+            "length(content_sha256) = 64",
+            name="valid_forecast_pair_content_sha256",
+        ),
+        UniqueConstraint(
+            "metric_id",
+            "horizon_bucket",
+            "valid_from",
+            "forecast_vintage_at",
+            "verification_methodology_version",
+            "revision",
+            name="uq_forecast_pair_identity_revision",
+        ),
+        Index(
+            "ix_forecast_pairs_metric_window",
+            "metric_id",
+            "horizon_bucket",
+            "valid_from",
+        ),
+    )
+
+
+class ForecastVerificationResult(Base):
+    """Append-only aggregate of compatible forecast/outturn evidence."""
+
+    __tablename__ = "forecast_verification_results"
+
+    id: Mapped[uuid.UUID] = mapped_column(Uuid, primary_key=True, default=uuid.uuid4)
+    metric_id: Mapped[str] = mapped_column(String(120), nullable=False)
+    horizon_bucket: Mapped[str] = mapped_column(String(16), nullable=False)
+    window_start: Mapped[datetime] = mapped_column(
+        DateTime(timezone=True), nullable=False
+    )
+    window_end: Mapped[datetime] = mapped_column(DateTime(timezone=True), nullable=False)
+    status: Mapped[str] = mapped_column(String(32), nullable=False)
+    reason: Mapped[str] = mapped_column(String(64), nullable=False)
+    mae: Mapped[float | None] = mapped_column(Float)
+    bias: Mapped[float | None] = mapped_column(Float)
+    wape_percent: Mapped[float | None] = mapped_column(Float)
+    verified_sample_count: Mapped[int] = mapped_column(Integer, nullable=False)
+    expected_sample_count: Mapped[int] = mapped_column(Integer, nullable=False)
+    coverage_fraction: Mapped[float] = mapped_column(Float, nullable=False)
+    unit: Mapped[str] = mapped_column(String(32), nullable=False)
+    forecast_source_id: Mapped[str] = mapped_column(
+        ForeignKey("source_metadata.id", ondelete="RESTRICT"), nullable=False
+    )
+    outturn_source_id: Mapped[str] = mapped_column(
+        ForeignKey("source_metadata.id", ondelete="RESTRICT"), nullable=False
+    )
+    issue_time_basis: Mapped[str] = mapped_column(String(64), nullable=False)
+    effective_vintage_time_basis: Mapped[str] = mapped_column(
+        String(32), nullable=False
+    )
+    forecast_methodology_version: Mapped[str] = mapped_column(
+        String(120), nullable=False
+    )
+    outturn_methodology_version: Mapped[str] = mapped_column(
+        String(120), nullable=False
+    )
+    verification_methodology_version: Mapped[str] = mapped_column(
+        String(120), nullable=False
+    )
+    registry_version: Mapped[str] = mapped_column(String(80), nullable=False)
+    evidence_checksum: Mapped[str] = mapped_column(String(64), nullable=False)
+    source_watermark_at: Mapped[datetime | None] = mapped_column(
+        DateTime(timezone=True)
+    )
+    revision: Mapped[int] = mapped_column(
+        Integer, nullable=False, default=0, server_default="0"
+    )
+    computed_at: Mapped[datetime] = mapped_column(
+        DateTime(timezone=True), nullable=False, server_default=func.now()
+    )
+
+    __table_args__ = (
+        CheckConstraint("window_end > window_start", name="valid_forecast_verify_window"),
+        CheckConstraint(
+            "horizon_bucket IN ('0_3h', '3_12h', '12_24h', '24_48h')",
+            name="valid_forecast_result_horizon",
+        ),
+        CheckConstraint(
+            "status IN ('available', 'insufficient_data')",
+            name="valid_forecast_verification_status",
+        ),
+        CheckConstraint(
+            "verified_sample_count >= 0 AND expected_sample_count >= 0 "
+            "AND verified_sample_count <= expected_sample_count",
+            name="valid_forecast_verification_samples",
+        ),
+        CheckConstraint(
+            "coverage_fraction >= 0 AND coverage_fraction <= 1",
+            name="bounded_forecast_verification_coverage",
+        ),
+        CheckConstraint(
+            "mae IS NULL OR mae >= 0", name="nonnegative_forecast_verification_mae"
+        ),
+        CheckConstraint(
+            "wape_percent IS NULL OR wape_percent >= 0",
+            name="nonnegative_forecast_verification_wape",
+        ),
+        CheckConstraint(
+            "(verified_sample_count = 0 AND mae IS NULL AND bias IS NULL "
+            "AND wape_percent IS NULL) OR "
+            "(verified_sample_count > 0 AND mae IS NOT NULL AND bias IS NOT NULL)",
+            name="forecast_metrics_match_samples",
+        ),
+        CheckConstraint(
+            "status <> 'available' OR "
+            "(verified_sample_count >= 100 AND coverage_fraction >= 0.9)",
+            name="forecast_display_threshold",
+        ),
+        CheckConstraint(
+            "issue_time_basis IN "
+            "('source_published_at', 'source_does_not_publish_issue_time')",
+            name="valid_result_issue_time_basis",
+        ),
+        CheckConstraint(
+            "(issue_time_basis = 'source_published_at' "
+            "AND effective_vintage_time_basis = 'source_published_at') OR "
+            "(issue_time_basis = 'source_does_not_publish_issue_time' "
+            "AND effective_vintage_time_basis = 'retrieved_at')",
+            name="valid_result_effective_vintage_basis",
+        ),
+        CheckConstraint("revision >= 0", name="nonnegative_forecast_result_revision"),
+        CheckConstraint(
+            "length(evidence_checksum) = 64",
+            name="valid_forecast_result_evidence_checksum",
+        ),
+        UniqueConstraint(
+            "metric_id",
+            "horizon_bucket",
+            "window_start",
+            "window_end",
+            "verification_methodology_version",
+            "revision",
+            name="uq_forecast_result_identity_revision",
+        ),
+        Index(
+            "ix_forecast_results_public_latest",
+            "metric_id",
+            "horizon_bucket",
+            "window_end",
+            "revision",
+        ),
+    )
+
+
+class ForecastVerificationRun(Base):
+    """Payload-free mutable checkpoint for a bounded operator refresh."""
+
+    __tablename__ = "forecast_verification_runs"
+
+    id: Mapped[uuid.UUID] = mapped_column(Uuid, primary_key=True, default=uuid.uuid4)
+    job_key: Mapped[str] = mapped_column(String(200), nullable=False)
+    metric_id: Mapped[str] = mapped_column(String(120), nullable=False)
+    registry_version: Mapped[str] = mapped_column(String(80), nullable=False)
+    window_start_date: Mapped[date] = mapped_column(Date, nullable=False)
+    window_end_date: Mapped[date] = mapped_column(Date, nullable=False)
+    status: Mapped[str] = mapped_column(String(32), nullable=False)
+    attempt_count: Mapped[int] = mapped_column(
+        Integer, nullable=False, default=0, server_default="0"
+    )
+    pairs_written: Mapped[int] = mapped_column(
+        Integer, nullable=False, default=0, server_default="0"
+    )
+    results_written: Mapped[int] = mapped_column(
+        Integer, nullable=False, default=0, server_default="0"
+    )
+    result_checksum: Mapped[str | None] = mapped_column(String(64))
+    started_at: Mapped[datetime] = mapped_column(
+        DateTime(timezone=True), nullable=False, server_default=func.now()
+    )
+    completed_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True))
+    error_type: Mapped[str | None] = mapped_column(String(120))
+
+    __table_args__ = (
+        UniqueConstraint("job_key", name="uq_forecast_verification_job_key"),
+        CheckConstraint(
+            "window_end_date > window_start_date",
+            name="valid_forecast_verification_run_range",
+        ),
+        CheckConstraint(
+            "status IN ('running', 'succeeded', 'failed')",
+            name="valid_forecast_verification_run_status",
+        ),
+        CheckConstraint(
+            "attempt_count >= 0 AND pairs_written >= 0 AND results_written >= 0",
+            name="nonnegative_forecast_verification_run_counts",
+        ),
+        CheckConstraint(
+            "(status = 'running' AND completed_at IS NULL "
+            "AND result_checksum IS NULL AND error_type IS NULL) OR "
+            "(status = 'succeeded' AND completed_at IS NOT NULL "
+            "AND result_checksum IS NOT NULL AND error_type IS NULL) OR "
+            "(status = 'failed' AND completed_at IS NOT NULL "
+            "AND result_checksum IS NULL AND error_type IS NOT NULL)",
+            name="forecast_verification_run_state_complete",
+        ),
+        CheckConstraint(
+            "result_checksum IS NULL OR length(result_checksum) = 64",
+            name="valid_forecast_verification_run_checksum",
+        ),
+        Index("ix_forecast_verify_runs_status", "status", "started_at"),
     )
 
 

@@ -39,6 +39,9 @@ DEFAULT_POLICIES = (
     RateLimitPolicy("GET", "/v1/export", per_client=6, global_limit=30),
     RateLimitPolicy("GET", "/v1/briefing/today", per_client=30, global_limit=120),
     RateLimitPolicy("GET", "/v1/sources/status", per_client=30, global_limit=120),
+    RateLimitPolicy(
+        "GET", "/v1/forecasts/verification", per_client=12, global_limit=60
+    ),
     RateLimitPolicy("GET", "/v1/game/", per_client=12, global_limit=60),
 )
 

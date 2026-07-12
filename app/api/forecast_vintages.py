@@ -9,18 +9,16 @@ from datetime import datetime, timedelta
 from typing import Protocol
 
 from app.charging import CarbonForecastPoint, CarbonForecastSeries
+from app.forecast_contract import (
+    CAPTURE_TIME_ISSUE_BASIS,
+    NATIONAL_FORECAST_METHODOLOGY_VERSION,
+    SOURCE_ISSUE_TIME_UNAVAILABLE,
+)
 from app.persistence import ForecastRead
 
 
 NATIONAL_FORECAST_GEOGRAPHY = "GB"
 NATIONAL_FORECAST_SCOPE = "national"
-NATIONAL_FORECAST_METHODOLOGY_VERSION = (
-    "50hz.neso-carbon-intensity.national-forecast.v1"
-)
-SOURCE_ISSUE_TIME_UNAVAILABLE = "source_does_not_publish_issue_time"
-CAPTURE_TIME_ISSUE_BASIS = "retrieved_at"
-
-
 class ForecastHistoryRepository(Protocol):
     async def get_carbon_forecast_history(
         self,
