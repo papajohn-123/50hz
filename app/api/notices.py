@@ -6,9 +6,8 @@ system warnings remain labelled as reported facts all the way to the API.
 
 from __future__ import annotations
 
-from hashlib import sha256
-
 from app.api.models import GridEvent
+from app.events.identity import reported_notice_event_id as _reported_notice_event_id
 from app.persistence.reads import ReportedNoticeRead
 
 
@@ -18,8 +17,11 @@ _SEVERITY_RANK = {"important": 2, "notable": 1, "info": 0}
 def reported_notice_event_id(notice: ReportedNoticeRead) -> str:
     """Return a revision-independent event ID for one source notice identity."""
 
-    identity = f"reported-notice:v1:{notice.source_id}:{notice.notice_kind}:{notice.external_id}"
-    return f"evt_{sha256(identity.encode('utf-8')).hexdigest()[:20]}"
+    return _reported_notice_event_id(
+        source_id=notice.source_id,
+        notice_kind=notice.notice_kind,
+        external_id=notice.external_id,
+    )
 
 
 def reported_notice_to_grid_event(notice: ReportedNoticeRead) -> GridEvent:

@@ -404,6 +404,11 @@ def map_remit_notice_record(
         "revisionNumber": record.revision_number,
         "outageProfile": outage_profile,
     }
+    source_content = asdict(record)
+    # Retrieval time is local delivery metadata, not part of the source's
+    # revision.  Including it would manufacture a new evidence checksum on
+    # every poll even when Elexon returned the same REMIT revision unchanged.
+    source_content.pop("retrieved_at", None)
     return {
         "source_id": source_id,
         "raw_payload_id": raw_payload_id,
@@ -412,7 +417,7 @@ def map_remit_notice_record(
         "revision_key": f"r{record.revision_number}",
         "revision_number": record.revision_number,
         "source_record_id": record.source_key,
-        "content_sha256": _content_checksum(asdict(record)),
+        "content_sha256": _content_checksum(source_content),
         "classification": "reported",
         "published_at": as_utc(record.published_at, field_name="published_at"),
         "source_created_at": as_utc(record.created_at, field_name="created_at"),

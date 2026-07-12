@@ -2,6 +2,7 @@ from __future__ import annotations
 
 import asyncio
 import hashlib
+from dataclasses import replace
 from datetime import UTC, datetime, timedelta
 from typing import Any
 from uuid import UUID
@@ -234,6 +235,28 @@ def test_remit_mapping_keeps_reported_cause_and_profile_without_inference() -> N
     assert len(values["content_sha256"]) == 64
 
 
+def test_remit_evidence_checksum_excludes_local_retrieval_time() -> None:
+    original = remit()
+    repeated = replace(
+        original,
+        retrieved_at=original.retrieved_at + timedelta(minutes=5),
+    )
+
+    first = map_remit_notice_record(
+        original,
+        source_id="elexon.remit",
+        raw_payload_id=RAW_ID,
+    )
+    second = map_remit_notice_record(
+        repeated,
+        source_id="elexon.remit",
+        raw_payload_id=RAW_ID,
+    )
+
+    assert first["retrieved_at"] != second["retrieved_at"]
+    assert first["content_sha256"] == second["content_sha256"]
+
+
 def test_syswarn_text_corrections_share_identity_but_keep_distinct_revisions() -> None:
     first = map_system_warning_record(
         warning("First reported text"),
@@ -304,6 +327,10 @@ def test_remit_revisions_persist_as_two_reported_notice_rows() -> None:
             FakeResult([RAW_ID]),
             FakeResult([True, True]),
             FakeResult(),
+            FakeResult(),
+            FakeResult(),
+            FakeResult(),
+            FakeResult(),
         ]
     )
     repository = PostgresIngestionRepository(lambda: session)
@@ -337,6 +364,13 @@ def test_remit_revisions_persist_as_two_reported_notice_rows() -> None:
         == "reported_notices"
     )
     assert notice_statement.table.name == "reported_notices"
+    assert {
+        getattr(getattr(statement, "table", None), "name", None)
+        for statement in session.executed
+    } >= {
+        "event_lifecycle_revisions",
+        "event_lifecycle_deltas",
+    }
 
 
 def test_forecast_and_active_notice_reads_are_source_neutral() -> None:

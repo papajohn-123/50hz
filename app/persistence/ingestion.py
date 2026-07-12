@@ -27,6 +27,7 @@ from app.db.models import (
     SourceMetadata,
 )
 from app.domain.enums import IngestionRunStatus
+from app.persistence.event_lifecycle import materialize_reported_notice_rows
 from app.persistence.records import (
     job_source_metadata_values,
     map_carbon_actual_record,
@@ -381,7 +382,10 @@ class PostgresIngestionRepository:
                 inserted = 0
                 updated_count = 0
                 unchanged = 0
+                reported_notice_rows: list[dict[str, Any]] = []
                 for spec, rows in batches:
+                    if spec is _REPORTED_NOTICE_SPEC:
+                        reported_notice_rows.extend(rows)
                     unique_rows, duplicate_count = _deduplicate_rows(
                         rows, spec.conflict_columns
                     )
@@ -395,6 +399,12 @@ class PostgresIngestionRepository:
                     inserted += sum(1 for flag in insert_flags if bool(flag))
                     updated_count += sum(1 for flag in insert_flags if not bool(flag))
                     unchanged += len(unique_rows) - len(insert_flags)
+
+                if reported_notice_rows:
+                    await materialize_reported_notice_rows(
+                        session,
+                        reported_notice_rows,
+                    )
 
                 await session.execute(
                     update(IngestionRun)
