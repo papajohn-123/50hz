@@ -317,6 +317,7 @@ class CoverageWrite:
     is_sufficient: bool
     missing_starts: tuple[str, ...]
     content_sha256: str
+    attributes: dict[str, Any]
 
 
 @dataclass(frozen=True, slots=True)
@@ -561,6 +562,11 @@ def build_materialized_chunk(
                     value.astimezone(UTC).isoformat() for value in coverage.missing_starts
                 ),
                 content_sha256=coverage_sha,
+                attributes={
+                    "identityVersion": IDENTITY_VERSION,
+                    "sourceEvidenceSha256": _checksum(interval_evidence),
+                    "missingIntervalCount": len(coverage.missing_starts),
+                },
             )
         )
         day_start = expected[0].start.astimezone(UTC)
@@ -1298,6 +1304,21 @@ def render_report(report: MaterializationReport) -> str:
         else "MATERIALIZE"
     )
     counts = report.counts()
+    failure_types = Counter(
+        outcome.error_type or "UnknownError"
+        for outcome in report.outcomes
+        if outcome.status is MaterializationStatus.FAILED
+    )
+    chunk_summary = ", ".join(
+        f"{status.value}={counts[status]}"
+        for status in MaterializationStatus
+        if counts[status]
+    )
+    if failure_types:
+        chunk_summary += "; failure_types=" + ",".join(
+            f"{error_type[:80]}:{count}"
+            for error_type, count in sorted(failure_types.items())
+        )
     lines = [
         (
             f"{mode}: {report.request.date_range.start.isoformat()} to "
@@ -1305,12 +1326,7 @@ def render_report(report: MaterializationReport) -> str:
             f"{report.request.date_range.day_count} settlement days, "
             f"{len(report.request.targets)} explicit series"
         ),
-        "chunks: "
-        + ", ".join(
-            f"{status.value}={counts[status]}"
-            for status in MaterializationStatus
-            if counts[status]
-        ),
+        "chunks: " + chunk_summary,
         (
             "rule: daily aggregates and rolling baselines are available only at "
             "95% or greater compatible coverage"

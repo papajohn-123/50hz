@@ -112,6 +112,9 @@ def test_materialized_chunk_is_london_dst_safe_and_complete(
     assert result.coverage[0].observed_interval_count == expected_intervals
     assert result.coverage[0].coverage_fraction == 1
     assert result.coverage[0].is_sufficient
+    assert result.coverage[0].attributes["identityVersion"]
+    assert result.coverage[0].attributes["missingIntervalCount"] == 0
+    assert len(result.coverage[0].attributes["sourceEvidenceSha256"]) == 64
     assert result.aggregates[0].status == ResultStatus.AVAILABLE.value
     assert result.aggregates[0].value is not None
     assert len(result.baselines) == expected_intervals
