@@ -9,7 +9,11 @@ from sqlalchemy.dialects import postgresql
 
 from app.db.models import GenerationObservation, IngestionRun
 from app.domain.enums import IngestionRunStatus
-from app.persistence.ingestion import PostgresIngestionRepository, _source_metadata_upsert
+from app.persistence.ingestion import (
+    PostgresIngestionRepository,
+    _normalized_write_batches,
+    _source_metadata_upsert,
+)
 from app.persistence.records import map_generation_record
 from app.sources.types import AdapterResult, GenerationRecord, ObservationWindow
 
@@ -39,6 +43,15 @@ def test_source_metadata_upsert_preserves_the_presented_active_boundary() -> Non
     compiled = str(statement.compile(dialect=postgresql.dialect())).lower()
 
     assert "active = excluded.active" in compiled
+
+
+def test_dense_history_writes_are_split_below_driver_parameter_limits() -> None:
+    rows = [{"row": index} for index in range(801)]
+
+    batches = _normalized_write_batches(rows)
+
+    assert [len(batch) for batch in batches] == [400, 400, 1]
+    assert [item["row"] for batch in batches for item in batch] == list(range(801))
 
 
 class FakeScalars:

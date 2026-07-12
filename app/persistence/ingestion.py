@@ -81,6 +81,7 @@ class _UpsertSpec:
 
 
 _REVISION_LOOKUP_BATCH_SIZE = 250
+_NORMALIZED_WRITE_BATCH_SIZE = 400
 
 
 class ImmutableRevisionConflictError(RuntimeError):
@@ -424,13 +425,16 @@ class PostgresIngestionRepository:
                         inserted += new_count
                         updated_count += correction_count
                         continue
-                    write_result = await session.execute(
-                        _observation_upsert(spec, unique_rows)
-                    )
-                    insert_flags = list(write_result.scalars().all())
-                    inserted += sum(1 for flag in insert_flags if bool(flag))
-                    updated_count += sum(1 for flag in insert_flags if not bool(flag))
-                    unchanged += len(unique_rows) - len(insert_flags)
+                    for write_rows in _normalized_write_batches(unique_rows):
+                        write_result = await session.execute(
+                            _observation_upsert(spec, write_rows)
+                        )
+                        insert_flags = list(write_result.scalars().all())
+                        inserted += sum(1 for flag in insert_flags if bool(flag))
+                        updated_count += sum(
+                            1 for flag in insert_flags if not bool(flag)
+                        )
+                        unchanged += len(write_rows) - len(insert_flags)
 
                 if reported_notice_rows:
                     await materialize_reported_notice_rows(
@@ -627,24 +631,37 @@ async def _insert_immutable_revisions(
     spec: _UpsertSpec,
     rows: Sequence[dict[str, Any]],
 ) -> None:
-    statement = (
-        pg_insert(spec.model)
-        .values(list(rows))
-        .on_conflict_do_nothing(
-            index_elements=[
-                getattr(spec.model, name) for name in spec.conflict_columns
-            ]
+    for write_rows in _normalized_write_batches(rows):
+        statement = (
+            pg_insert(spec.model)
+            .values(list(write_rows))
+            .on_conflict_do_nothing(
+                index_elements=[
+                    getattr(spec.model, name) for name in spec.conflict_columns
+                ]
+            )
+            .returning(spec.model.id)
         )
-        .returning(spec.model.id)
+        result = await session.execute(statement)
+        written = len(result.scalars().all())
+        if written != len(write_rows):
+            # Never turn a revision-allocation race into an in-place overwrite.
+            # The surrounding transaction rolls back every batch and a later
+            # locked run can retry.
+            raise ImmutableRevisionConflictError(
+                "immutable observation revision conflicted; source lock was not exclusive"
+            )
+
+
+def _normalized_write_batches(
+    rows: Sequence[dict[str, Any]],
+) -> tuple[Sequence[dict[str, Any]], ...]:
+    """Keep PostgreSQL/asyncpg bind counts bounded for dense history chunks."""
+
+    return tuple(
+        rows[offset : offset + _NORMALIZED_WRITE_BATCH_SIZE]
+        for offset in range(0, len(rows), _NORMALIZED_WRITE_BATCH_SIZE)
     )
-    result = await session.execute(statement)
-    written = len(result.scalars().all())
-    if written != len(rows):
-        # Never turn a revision-allocation race into an in-place overwrite. The
-        # surrounding transaction rolls back and a later locked run can retry.
-        raise ImmutableRevisionConflictError(
-            "immutable observation revision conflicted; source lock was not exclusive"
-        )
 
 
 def _identity_key(spec: _UpsertSpec, row: Any) -> tuple[Any, ...]:
