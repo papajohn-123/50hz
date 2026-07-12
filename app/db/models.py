@@ -791,6 +791,141 @@ class ComparisonBaseline(Base):
     )
 
 
+class EventLifecycleRevision(Base):
+    """Immutable unified event state retained once per source revision."""
+
+    __tablename__ = "event_lifecycle_revisions"
+
+    id: Mapped[uuid.UUID] = mapped_column(Uuid, primary_key=True, default=uuid.uuid4)
+    event_id: Mapped[str] = mapped_column(String(200), nullable=False)
+    event_kind: Mapped[str] = mapped_column(String(32), nullable=False)
+    revision_number: Mapped[int] = mapped_column(Integer, nullable=False)
+    status: Mapped[EventStatus] = mapped_column(
+        _enum_type(EventStatus, "event_lifecycle_status"), nullable=False
+    )
+    authority: Mapped[str] = mapped_column(String(40), nullable=False)
+    evidence_class: Mapped[str] = mapped_column(String(32), nullable=False)
+    published_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), nullable=False)
+    effective_start: Mapped[datetime | None] = mapped_column(DateTime(timezone=True))
+    effective_end: Mapped[datetime | None] = mapped_column(DateTime(timezone=True))
+    asset_id: Mapped[str | None] = mapped_column(String(200))
+    asset_name: Mapped[str | None] = mapped_column(String(240))
+    asset_identity_reliable: Mapped[bool] = mapped_column(
+        Boolean, nullable=False, default=False, server_default=text("false")
+    )
+    unavailable_mw: Mapped[float | None] = mapped_column(Float)
+    normal_capacity_mw: Mapped[float | None] = mapped_column(Float)
+    planned: Mapped[bool | None] = mapped_column(Boolean)
+    reported_cause: Mapped[str | None] = mapped_column(Text)
+    evidence_checksum: Mapped[str] = mapped_column(String(64), nullable=False)
+    material_reason: Mapped[str | None] = mapped_column(Text)
+    superseded_by_event_id: Mapped[str | None] = mapped_column(String(200))
+    source_ids: Mapped[list[str]] = mapped_column(JSON_DOCUMENT, nullable=False)
+    source_record_ids: Mapped[list[str]] = mapped_column(JSON_DOCUMENT, nullable=False)
+    model_version: Mapped[str] = mapped_column(String(80), nullable=False)
+    payload: Mapped[dict[str, Any]] = mapped_column(JSON_DOCUMENT, nullable=False)
+    created_at: Mapped[datetime] = mapped_column(
+        DateTime(timezone=True), nullable=False, server_default=func.now()
+    )
+
+    __table_args__ = (
+        CheckConstraint(
+            "event_kind IN ('reported', 'detected')",
+            name="valid_event_lifecycle_kind",
+        ),
+        CheckConstraint(
+            "authority IN ('system_warning', 'authoritative_notice', 'other_reported')",
+            name="valid_event_lifecycle_authority",
+        ),
+        CheckConstraint(
+            "evidence_class IN ('reported', 'observed', 'derived')",
+            name="valid_event_lifecycle_evidence_class",
+        ),
+        CheckConstraint(
+            "revision_number > 0",
+            name="positive_event_lifecycle_revision",
+        ),
+        CheckConstraint(
+            "effective_end IS NULL OR effective_start IS NULL "
+            "OR effective_end >= effective_start",
+            name="valid_event_lifecycle_window",
+        ),
+        CheckConstraint(
+            "unavailable_mw IS NULL OR unavailable_mw >= 0",
+            name="nonnegative_event_lifecycle_unavailable_mw",
+        ),
+        CheckConstraint(
+            "normal_capacity_mw IS NULL OR normal_capacity_mw > 0",
+            name="positive_event_lifecycle_normal_capacity",
+        ),
+        CheckConstraint(
+            "NOT asset_identity_reliable OR asset_id IS NOT NULL",
+            name="reliable_event_lifecycle_asset_has_id",
+        ),
+        CheckConstraint(
+            "(status = 'superseded' AND superseded_by_event_id IS NOT NULL) OR "
+            "(status <> 'superseded' AND superseded_by_event_id IS NULL)",
+            name="event_lifecycle_supersession_matches_status",
+        ),
+        UniqueConstraint(
+            "event_id",
+            "revision_number",
+            name="uq_event_lifecycle_revision",
+        ),
+        Index(
+            "ix_event_lifecycle_status_window",
+            "status",
+            "effective_start",
+            "effective_end",
+        ),
+        Index(
+            "ix_event_lifecycle_event_published",
+            "event_id",
+            "published_at",
+        ),
+    )
+
+
+class EventLifecycleDelta(Base):
+    """Audited field changes between two sequential lifecycle revisions."""
+
+    __tablename__ = "event_lifecycle_deltas"
+
+    id: Mapped[uuid.UUID] = mapped_column(Uuid, primary_key=True, default=uuid.uuid4)
+    event_revision_id: Mapped[uuid.UUID] = mapped_column(
+        ForeignKey("event_lifecycle_revisions.id", ondelete="CASCADE"),
+        nullable=False,
+    )
+    event_id: Mapped[str] = mapped_column(String(200), nullable=False)
+    from_revision: Mapped[int] = mapped_column(Integer, nullable=False)
+    to_revision: Mapped[int] = mapped_column(Integer, nullable=False)
+    model_version: Mapped[str] = mapped_column(String(80), nullable=False)
+    changes: Mapped[list[dict[str, Any]]] = mapped_column(
+        JSON_DOCUMENT, nullable=False
+    )
+    created_at: Mapped[datetime] = mapped_column(
+        DateTime(timezone=True), nullable=False, server_default=func.now()
+    )
+
+    __table_args__ = (
+        CheckConstraint(
+            "from_revision > 0 AND to_revision = from_revision + 1",
+            name="sequential_event_lifecycle_delta",
+        ),
+        UniqueConstraint(
+            "event_id",
+            "from_revision",
+            "to_revision",
+            name="uq_event_lifecycle_delta",
+        ),
+        Index(
+            "ix_event_lifecycle_deltas_event",
+            "event_id",
+            "to_revision",
+        ),
+    )
+
+
 class DetectedEvent(TimestampMixin, Base):
     __tablename__ = "detected_events"
 
