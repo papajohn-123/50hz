@@ -372,6 +372,10 @@
 				DEVELOPMENT_ASSET_PATHS = "";
 				DEVELOPMENT_TEAM = VKMJPS7WP4;
 				ENABLE_PREVIEWS = YES;
+				EXCLUDED_SOURCE_FILE_NAMES = (
+					grid_snapshot.json,
+					grid_timeline.json,
+				);
 				GENERATE_INFOPLIST_FILE = YES;
 				INFOPLIST_KEY_CFBundleDisplayName = 50Hz;
 				INFOPLIST_KEY_LSApplicationCategoryType = "public.app-category.utilities";
