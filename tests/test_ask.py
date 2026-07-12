@@ -165,6 +165,42 @@ def energy_position_envelope(
     )
 
 
+def generation_mix_envelope() -> EvidenceEnvelope:
+    return EvidenceEnvelope(
+        as_of=NOW,
+        freshness="fresh",
+        evidence_class="observed",
+        facts=[
+            EvidenceFact(
+                fact_id="generation.wind",
+                metric="wind_mw",
+                label="wind generation",
+                value=7_188,
+                unit="MW",
+                observed_at=NOW,
+                source_record_ids=["fuelinst:wind:1"],
+            ),
+            EvidenceFact(
+                fact_id="generation.gas",
+                metric="gas_mw",
+                label="gas generation",
+                value=5_250,
+                unit="MW",
+                observed_at=NOW,
+                source_record_ids=["fuelinst:gas:1"],
+            ),
+        ],
+        source_refs={
+            "elexon": SourceCitation(
+                source_id="elexon",
+                publisher="Elexon",
+                title="Generation mix",
+                canonical_url="https://bmrs.elexon.co.uk/",
+            )
+        },
+    )
+
+
 @pytest.mark.parametrize(
     ("question", "flow_mw", "prefix", "direction_claim"),
     (
@@ -311,6 +347,67 @@ async def test_live_contradictory_energy_position_prose_is_replaced() -> None:
     assert result.citations[0].publisher == "Elexon"
     assert result.limitations == ["Interconnector readings can be revised."]
     assert result.suggested_questions == ["Which interconnectors are active?"]
+
+
+@pytest.mark.asyncio
+async def test_generation_leader_answer_is_server_owned() -> None:
+    client = OpenRouterAskClient(
+        api_key="temporary",
+        model="test",
+        base_url="https://openrouter.test",
+        public_base_url="https://50hz.test",
+        timeout_seconds=1,
+        budget=DailyCallBudget(1),
+        provider=Provider(),
+    )
+    model_content = json.dumps(
+        {
+            "answer": "Wind is highest at an unsupported 99,999 MW.",
+            "suggested_questions": ["How has the mix changed?"],
+        }
+    )
+
+    result = client._validate_final(
+        model_content,
+        [generation_mix_envelope()],
+        AskRequest(
+            question=(
+                "What is generating the most electricity right now, and what "
+                "evidence supports that?"
+            )
+        ),
+    )
+    await client.close()
+
+    assert result.answer == (
+        "Wind generation is the largest fuel category in the current snapshot "
+        "at 7,188 MW."
+    )
+    assert result.evidence_refs == ["elexon"]
+    assert result.suggested_questions == ["How has the mix changed?"]
+
+
+@pytest.mark.asyncio
+async def test_generation_leader_explanation_remains_model_owned() -> None:
+    client = OpenRouterAskClient(
+        api_key="temporary",
+        model="test",
+        base_url="https://openrouter.test",
+        public_base_url="https://50hz.test",
+        timeout_seconds=1,
+        budget=DailyCallBudget(1),
+        provider=Provider(),
+    )
+    model_answer = "Wind is generating the most, with no numerical claim."
+
+    result = client._validate_final(
+        json.dumps({"answer": model_answer, "suggested_questions": []}),
+        [generation_mix_envelope()],
+        AskRequest(question="Why is wind generating the most electricity?"),
+    )
+    await client.close()
+
+    assert result.answer == model_answer
 
 
 @pytest.mark.asyncio

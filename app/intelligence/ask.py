@@ -147,6 +147,16 @@ _POSITION_INTENT_BLOCKER_RE = re.compile(
     r"trend|compare|compared|history|historical|forecast|predict|prediction|"
     r"expected|will|would|could|might|tomorrow|yesterday|later|when|where|which)\b"
 )
+_GENERATION_LEADER_RE = re.compile(
+    r"\b(?:generat(?:e|es|ed|ing|ion)|fuel|source)\b.{0,80}"
+    r"\b(?:most|top|largest|biggest|highest)\b|"
+    r"\b(?:most|top|largest|biggest|highest)\b.{0,80}"
+    r"\b(?:generat(?:e|es|ed|ing|ion)|fuel|source)\b"
+)
+_GENERATION_LEADER_BLOCKER_RE = re.compile(
+    r"\b(?:why|how|cause|caused|causing|forecast|predict|prediction|"
+    r"tomorrow|yesterday|history|historical|trend|change|changed|changing)\b"
+)
 _KNOWN_UNITS = {
     "%",
     "w",
@@ -374,6 +384,19 @@ class OpenRouterAskClient:
                     suggested_questions=authored.suggested_questions,
                 )
 
+        if _is_generation_leader_question(request.question):
+            generation_answer = _generation_leader_answer(envelopes)
+            if generation_answer is not None:
+                return AskAnswer(
+                    answer=generation_answer,
+                    as_of=as_of,
+                    freshness=freshness,
+                    evidence_refs=evidence_refs,
+                    citations=[citations[ref] for ref in evidence_refs],
+                    limitations=limitations,
+                    suggested_questions=authored.suggested_questions,
+                )
+
         exact_numbers: set[tuple[Decimal, str | None]] = set()
         allowed_gigawatts: set[Decimal] = set()
         for envelope in envelopes:
@@ -444,6 +467,43 @@ def _is_energy_position_question(question: str) -> bool:
     return bool(
         _GB_POSITION_CONTEXT_RE.search(normalized)
         or re.match(r"^(?:net\s+)?(?:import|export)", normalized)
+    )
+
+
+def _is_generation_leader_question(question: str) -> bool:
+    normalized = " ".join(question.casefold().replace("’", "'").split())
+    return bool(
+        _GENERATION_LEADER_RE.search(normalized)
+        and not _GENERATION_LEADER_BLOCKER_RE.search(normalized)
+    )
+
+
+def _generation_leader_answer(envelopes: list[EvidenceEnvelope]) -> str | None:
+    snapshots: list[tuple[datetime, list[tuple[Decimal, EvidenceFact]]]] = []
+    for envelope in envelopes:
+        candidates: list[tuple[Decimal, EvidenceFact]] = []
+        for fact in envelope.facts:
+            if (
+                not fact.fact_id.startswith("generation.")
+                or _normalise_unit(fact.unit) != "mw"
+                or isinstance(fact.value, bool)
+            ):
+                continue
+            value = _normalise_number(fact.value)
+            if value is not None:
+                candidates.append((value, fact))
+        if candidates:
+            snapshots.append(
+                (max(fact.observed_at for _, fact in candidates), candidates)
+            )
+    if not snapshots:
+        return None
+
+    _, latest = max(snapshots, key=lambda snapshot: snapshot[0])
+    value, fact = max(latest, key=lambda candidate: candidate[0])
+    return (
+        f"{fact.label.capitalize()} is the largest fuel category in the current "
+        f"snapshot at {format(value, ',f')} MW."
     )
 
 
