@@ -2,6 +2,17 @@
 
 This document translates the Claude UI concept archive `50Hz_ Britain's Grid Alive.zip` into an implementation brief for the native SwiftUI app. The archive is the visual north star; its HTML and canvas code are reference material, not production code.
 
+Implementation status, 12 July 2026: the four-tab structure, finite Today,
+activity-based Local planner/reminders, evidence-resolved Notebook, contextual
+Ask disclosure/cancellation, Data Details/source status/event history/export,
+Notebook lock/result-check reminders, notification deep links, and dark native
+launch screen are implemented in the current tree. Data Details also contains a
+national forecast review; Local shows a typical recent MAE only on an exact,
+eligible contract match. The tree is ahead of production and still needs
+physical-device accessibility/performance and TestFlight verification. The
+remaining rules below are both design guardrails and manual release acceptance
+criteria.
+
 ## Design thesis
 
 50Hz should feel like a calm scientific instrument observing a living national system. It is not a dashboard made from interchangeable cards and it is not a neon environmental infographic.
@@ -13,18 +24,23 @@ The Live screen is the product icon. Every other screen inherits its typography,
 Adopt the four-tab structure from the concept:
 
 1. **Live** — national map, grid state, measurements, fuel filters and timeline.
-2. **Today** — chronological observed and forecast moments.
-3. **Mine** — regional carbon, postcode context and charging guidance.
-4. **Log** — prediction, missions, streak and moments observed.
+2. **Today** — a finite national briefing: now, best window, changes, outlook,
+   and reported events.
+3. **Local** — postcode context and activity-duration planning.
+4. **Notebook** — one evidence-resolved prediction, missions, and learned
+   concepts.
 
-**Ask the Grid** is a contextual inspector, not a fifth tab and not a generic chatbot. It opens from the current map, event or time context and can link its evidence back to the relevant asset and timestamp.
+**Ask the Grid** is a contextual inspector, not a fifth tab and not a generic
+chatbot. It opens from the current map, event, or time context and can link its
+evidence back to the relevant asset and timestamp.
 
 ## Live screen anatomy
 
 Preserve this hierarchy:
 
 1. 50Hz identity and freshness state.
-2. Three-part condition headline, such as `Clean · Comfortable · Exporting`.
+2. A truthful three-part condition headline, such as
+   `Lower carbon · Demand steady · Net exporting`.
 3. One plain-language interpretation.
 4. Frequency, demand and carbon measurements.
 5. The Britain visualization as the continuous canvas behind the information.
@@ -87,33 +103,60 @@ Smooth interpolation must not imply extra measurement precision. The UI exposes 
 
 ### Today
 
-- A chronological field log rather than a collection of charts.
-- Observed moments and forecast moments are visually distinct.
-- The most relevant moment receives hierarchy; the rest form a restrained timeline.
-- Each entry can move the Live map to its time and subject.
+- A bounded daily briefing rather than a client-side dump of timeline points or
+  every active notice.
+- Now and the best supported GB window receive hierarchy.
+- At most three observed changes, three upcoming moments, and three reported
+  events remain visibly classified and time-scoped.
+- Empty, partial, offline, observed-only, and event-heavy states remain finite
+  and useful.
+- Each time-bound entry can move the Live map to its time and subject.
 
 ### Ask the Grid
 
 - Presented as an analysis inspector.
-- Shows the question, bounded answer, confidence/limitations, sources and follow-up prompts.
+- States the selected scope/time and, on first use, that question text reaches
+  the 50Hz API and OpenRouter.
+- Shows the question, bounded answer, evidence, qualification, human-readable
+  sources and follow-up prompts; no model self-confidence score is presented as
+  measured certainty.
 - Evidence rows are interactive and return to map context.
 - The input remains available at the bottom without dominating the analysis.
+- In-flight work has a visible cancel action and cancellation/failure does not
+  erase deterministic grid content.
 
-### Mine
+### Local
 
 - Defaults to Central London without requesting device location.
-- Regional carbon is the primary measurement.
-- Compares the region with Great Britain.
-- Shows the cleanest upcoming period and a best charging window.
+- Accepts a full or outward postcode locally, then sends and displays only its
+  validated outward code.
+- Keeps `Regional now` separate from the national forecast used for planning.
+- Plans a continuous lower-carbon window for an activity and required duration,
+  with coverage, gaps, forecast capture time, and a compatible start-now
+  comparison only when defensible.
+- Shows a national `Typical recent error` MAE only when the entire recommended
+  window fits one reviewed horizon and source, methodology, issue/effective
+  vintage basis, outturn class, sample, coverage, and evidence gates all match.
+  It stays silent rather than implying regional accuracy or confidence.
+- Requests notification permission only after an explicit reminder action.
 - Preferences stay on device for the account-free MVP.
 
-### Log
+### Notebook
 
 - `Field notebook` framing.
-- One active daily prediction.
-- Deterministic missions.
-- Moments genuinely observed by the user.
-- Operator streak rewards participation and learning, not only correct guesses.
+- One active daily prediction with exact lock and evidence times.
+- A recent result resolves as correct, incorrect, or void from published
+  evidence; publisher corrections remain visible.
+- An explicit on-device reminder can precede lock by 15 minutes. After a local
+  choice, a separate result-check reminder can follow the evidence window by
+  five minutes; its copy must say evidence may still be pending.
+- Three deterministic missions navigate to real app context before an explicit
+  local/unverified completion action appears.
+- Learned concepts replace content duplicated from Today.
+- Participation language rewards exploration without punitive streak mechanics,
+  prizes, ranks, or server-scoring claims.
+- Reminder permission is never requested on refresh. Tapping a reminder returns
+  to Notebook; Local reminders return to Local.
 
 ## Loading and failure states
 
@@ -196,8 +239,9 @@ Energy colour appears primarily as emitted light: particles, glows, strokes and 
 | `MixBar` | Geometry-driven stacked bar using absolute MW-derived proportions |
 | `GridTimeline` | Drag gesture, fixed NOW boundary and sensory feedback |
 | `EventSheet` | Native sheet with medium and large detents |
-| `AskInspector` | Streamed analysis sheet with evidence navigation |
+| `AskInspector` | Bounded asynchronous analysis sheet with evidence navigation and cancellation |
 | `StatusLabel` | Live/estimated/forecast/stale metadata component |
+| Data/pro inspector | Native sheets for methodology, exact tables, source delivery/fact status, event revisions, national forecast review and protected export sharing |
 | Navigation | Native four-tab container; Ask remains contextual |
 
 ## Map translation rules
@@ -237,7 +281,11 @@ The concept contains illustrative values and language. They are not requirements
 - Fuel selection, timeline scrubbing and event selection each produce a clear visual state.
 - Loading, stale, offline and critical states work before TestFlight.
 - Ask the Grid always exposes evidence and qualification.
+- Forecast-review numbers appear only for unique eligible national rows; failed,
+  ambiguous, incompatible, or below-threshold rows say `NOT SHOWN` and reveal no
+  MAE/bias/WAPE values.
 - Red appears only for validated material events.
+- The launch transition remains dark and visually continuous with Live; no
+  white/default flash appears.
 - All screenshots pass Dynamic Type, Reduce Motion, increased contrast and VoiceOver review.
 - Physical-device profiling confirms acceptable battery, thermal, memory and frame-time behavior.
-

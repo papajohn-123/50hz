@@ -1,9 +1,25 @@
 # 50Hz product roadmap
 
-- **Status:** execution plan after the first production-backed iOS simulator pass
+- **Status:** product strategy plus implementation snapshot after the full native/backend build
 - **Product:** 50Hz — Britain's electricity system, alive
 - **Audience:** curious public first, professional trust underneath
 - **Commercial position:** free during validation
+
+Implementation snapshot, 12 July 2026:
+
+- M1–M5 are substantially implemented in the current repository: truthful
+  metric/freshness contracts, finite Today briefing, Local planner/reminders,
+  evidence-resolved Notebook, source/event inspection, exact tables/export,
+  history materialization, and forecast-verification foundations.
+- The current tree is ahead of the public Railway deployment. “Implemented” in
+  this roadmap does not mean “deployed” or “TestFlight verified.”
+- The critical path is now release reconciliation: final shared-tree tests,
+  repair of the incomplete local Docker/Xcode device-platform installs,
+  disposable live-PostgreSQL migration validation, GitHub/Railway
+  re-authentication, push/deploy/data jobs, production smoke, Apple signing, and
+  physical-device/TestFlight QA.
+- Widget/App Group, saved regions, remote event alerts, accounts, and scale-out
+  infrastructure remain deferred.
 
 ## 1. Executive decision
 
@@ -248,25 +264,30 @@ The following are not part of the first useful public product:
 
 ## 6. Current-state audit
 
-The current build is a credible release candidate and production-backed
-prototype. It already has a distinctive visual identity, real public data,
-revision-aware reported notices, grounded intelligence, offline cache behavior,
-regional context, and a local daily plan.
+The current tree is a credible release candidate, but production still serves an
+older baseline. The table distinguishes implemented value from the remaining
+release/usefulness gap.
 
-| Surface | Current strength | Main usefulness gap | Product decision |
-| --- | --- | --- | --- |
-| Live | Distinctive map, real metrics, timeline, event and Ask entry points | `LIVE · Xm` hides different cadences; terminology can misstate supply/balance | Make truth and timing the next P0 layer |
-| Timeline | Observed/forecast boundary, replay, gaps, Resume Live | Fixed dock competes with scroll content; accessibility value and cross-day semantics need a full audit | Keep as signature interaction; rebuild its container/AX behavior |
-| Today | Forecast lead and chronology are visually strong | Still risks becoming a list of similar notices; partial timeline failure is weak | Replace client curation with deterministic daily briefing |
-| Mine | Useful regional/national comparison and clean window | “Mine” is ambiguous; region editing is below the fold; national forecast caveat is too quiet | Rename to Local and make planning its job |
-| Log | Attractive field-notebook direction | Manual toggles masquerade as navigation; no prediction resolution; duplicates Today | Rename to Notebook and complete the loop |
-| Ask | Grounded answer, citations, qualification, deterministic import/export | Scope/privacy is quiet; citations need clearer human labels | Keep contextual; improve answer/evidence hierarchy |
-| Events | Authoritative reported language and cached explanations | Too many active notices can bury relevance; revisions are not visible | Build deterministic relevance and lifecycle history |
-| Data layer | Strong adapters, audit timestamps, revisions, tests | Definitions, coverage, backfill, source health, forecast verification are incomplete | Invest in metric registry and history before more sources |
+| Surface | Implemented current-tree strength | Remaining gap before wider use |
+| --- | --- | --- |
+| Live | Distinctive map, supply boundary, per-family fact/delivery state, timeline/fuel replay, exact tables, event/Ask entry points | Final small-screen/AX/VoiceOver/thermal pass and production contract smoke |
+| Today | Server-defined finite briefing with maximum-three changes, next moments, and events plus partial/offline states | Validate ranking/copy with real event-heavy production days and testers |
+| Local | Explicit region, activity/duration planner, coverage/vintage, start/deadline bounds, outward-only privacy, local reminder lifecycle, and strictly matched national-carbon MAE qualification | Production deploy, physical notification QA and measured usefulness; regional forecast error remains unavailable and must not be inferred |
+| Notebook | Exact-lock local choice, real mission destinations, local/unverified completion, learned concepts, immutable evidence resolution/void/correction, and explicit local lock/result-check reminders | Date-rollover/reinstall/physical-device cohort validation; no remote push or result assertion |
+| Ask | Context scope, first-use data disclosure, cancellation, grounded citations/qualification, bounded failure | Production latency/cost/helpfulness validation and owner confirmation of provider retention |
+| Events | Authoritative reported list/detail/explanation plus immutable revision history; failure-isolated worker persistence for coherent observed-event rules | Deploy/validate relevance precision and decide whether/when resolved derived events become public |
+| Pro inspection | Public-safe source status, exact supply/connectors, event deltas, maximum-31-day JSON/CSV export, and national forecast MAE/bias/WAPE review by horizon | Test with professionals and validate exported/verification production values after history jobs |
+| Data layer | Immutable corrections, versioned registry, 95%-coverage history materialization, prediction ledger, forecast verification | Live PostgreSQL migration/data-job run, ongoing crons/alerts, enough real samples for eligible verification statistics |
+
+No current-tree feature should be described as production verified until the
+release commit is pushed, deployed to both roles, migrated/materialized, and
+smoked. The 11 July run proves only the older baseline.
 
 ## 7. P0 semantic corrections
 
-These are correctness work, not copy polish.
+These are correctness rules, not copy polish. The current tree implements the
+contract and primary native copy; production reconciliation and tester
+comprehension remain the acceptance gate.
 
 ### 7.1 “Generation mix” versus imports
 
@@ -275,7 +296,7 @@ electricity entering Britain, not domestic generation. FUELINST is also not a
 complete description of all GB generation, including embedded generation and
 boundary differences.
 
-Required change:
+Implemented/current rule:
 
 - Rename the public total to **GB supply mix** when imports are included.
 - Separately expose domestic transmission-visible generation, gross imports,
@@ -319,8 +340,8 @@ for a local power cut.
 
 ### 7.5 Regional “now” and national forecast
 
-The current Local experience can pair a regional current estimate with a
-national forecast window. The geography must be prominent above the value:
+The Local experience can pair a regional current estimate with a national
+forecast window. The current UI keeps the geography prominent above the value:
 
 - `Regional now — London estimate`
 - `Best GB charging window — national forecast`
@@ -332,7 +353,7 @@ regional forecast and calculates its average/delta.
 
 Keep four tabs and contextual Ask. Do not add a Settings tab.
 
-| Current | Recommended | Job |
+| Former concept name | Current tree name | Job |
 | --- | --- | --- |
 | Live | Live | Present state, map, replay, event, source inspector |
 | Today | Today | Curated national briefing and outlook |
@@ -352,20 +373,21 @@ Acceptance criteria:
 
 ## 9. Delivery map
 
-| Milestone | Outcome | Release position | Relative size | Hard dependency |
-| --- | --- | --- | --- | --- |
-| M0 | Signed baseline in real hands | Internal TestFlight | M | Apple access and rotated key |
-| M1 | Truthful and understandable | Wider internal beta | L | Metric/freshness registry |
-| M2 | Useful daily briefing | External beta candidate | XL | History, coverage, event relevance |
-| M3 | Personally actionable Local planner | Public 1.0 candidate | L | Compatible regional/national forecast contract |
-| M4 | Completed learning and prediction loop | Required for public Notebook | L | Persisted outcomes and evidence window |
-| M5 | Professional inspection and export | 1.1 | XL | Definitions, history, event lifecycle |
-| M6 | Widget and contextual reminders | 1.1/1.2 | L | Stable app contract and signing groups |
-| M7 | Scale only where measured | Traffic-triggered | M–XL | Observed load/SLO breach |
+| Milestone | Outcome | Current status | Remaining hard dependency |
+| --- | --- | --- | --- |
+| M0 | Signed baseline in real hands | Blocked outside code | Xcode iOS 26.4 device platform, Apple access/App Store record, rotated key, pushed/deployed release commit |
+| M1 | Truthful and understandable | Implemented in current tree | Production/physical accessibility verification |
+| M2 | Useful daily briefing/history | Implemented in current tree | Live PostgreSQL data jobs, production ranking/coverage validation |
+| M3 | Personally actionable Local planner | Implemented in current tree | Production route deploy and physical reminder/usefulness QA |
+| M4 | Completed learning/prediction loop | Implemented in current tree | Production evidence resolution and date/reinstall device QA |
+| M5 | Professional inspection/export | Implemented in current tree | Production history/source/event data validation with professionals |
+| M6 | Widget and broader notifications | Local clean-window reminder only | Apple App Group/signing for widget; result/remote alert product work |
+| M7 | Scale only where measured | Deferred | Observed traffic/SLO trigger |
 
-M0 should happen before a large redesign. Internal TestFlight is a learning tool,
-not the reward after every planned feature is finished. Public 1.0 should not
-ship an unresolved prediction; either complete M4 or hide prediction UI.
+The unusual ordering reflects parallel implementation: M1–M5 code is now ahead
+of M0 release access. Internal TestFlight is still the next product milestone;
+do not add more broad features while push/deploy/signing/physical QA remains the
+critical path.
 
 ### 9.1 Platform and service decision
 
@@ -374,7 +396,7 @@ Keep the current stack for the complete 1.0 roadmap:
 | Concern | Decision | Reason |
 | --- | --- | --- |
 | iOS | Native SwiftUI/iOS 18+ | Existing app, best system accessibility/widgets/notifications |
-| API | FastAPI on Railway | Already implemented and deployed; strong typed/data workflow |
+| API | FastAPI on Railway | Implemented; older baseline deployed, current tree pending reconciliation |
 | Ingestion | Separate Railway worker from the same image | Independent polling lifecycle without a second codebase |
 | Database | Railway PostgreSQL | Existing normalized history and migrations; no account/realtime need |
 | LLM | OpenRouter from API only | One bounded server-side gateway with spend control |
@@ -431,26 +453,17 @@ of the following before the next dependent increment:
 
 ### 9.4 Indicative execution sequence
 
-The ranges below are working estimates for focused development, not release
-promises. Apple processing, source investigation, and TestFlight discoveries can
-change them.
+Blocks 1–6 and the professional inspector/export part of Block 8 have now been
+implemented in parallel in the current tree. The active sequence is:
 
-| Build block | Focus | Working range | Parallelisation |
-| --- | --- | ---: | --- |
-| Block 0 | Apple/signing baseline and physical-device audit | 1–2 days after access | Release + native QA |
-| Block 1 | Metric registry, supply semantics, freshness contract | 4–6 days | Backend + native definitions |
-| Block 2 | Status/details, partial states, onboarding, accessibility | 5–7 days | Native + verification |
-| Block 3 | History, coverage, comparisons, event lifecycle/relevance | 7–10 days | Data + briefing UI fixtures |
-| Block 4 | Today briefing UI and production reconciliation | 4–6 days | Backend ranking + native composition |
-| Block 5 | Local activity planner and reminder | 5–8 days | Algorithm + native flow |
-| Block 6 | Notebook mission semantics and prediction resolution | 5–7 days | Outcome contract + native/game QA |
-| Block 7 | Public 1.0 hardening and TestFlight cohort fixes | 4–7 days plus feedback | Verification + targeted fixes |
-| Block 8 | Pro inspector/export and widget | Post-1.0, 8–14 days | Separate pro + widget slices |
-
-The first engineering slice after this plan is accepted should be Block 1 while
-Block 0 proceeds wherever Apple access permits. This avoids leaving product
-work idle on signing, while still getting the current baseline into testers
-before a broad visual change.
+1. Finish and independently verify the remaining forecast/event-runtime and
+   Local-bounds slices; reconcile docs and final test totals.
+2. Validate the complete migration chain against disposable live PostgreSQL.
+3. Re-authenticate GitHub/Railway, push, deploy API then worker, run bounded data
+   jobs/crons, and smoke the current contract.
+4. Complete Block 0 Apple signing, physical-device, and internal TestFlight.
+5. Run Block 7 cohort/accessibility/performance hardening from real feedback.
+6. Reassess widget/App Group and saved-region work only after the first cohort.
 
 ## 10. M0 — signed internal TestFlight baseline
 
@@ -489,6 +502,10 @@ group while preserving a clean baseline for comparison.
 
 ## 11. M1 — truthful and understandable
 
+**Current status:** implemented in the current tree, including metric registry,
+partial supply semantics, per-family status, Data Details, onboarding, and dark
+launch screen. Production and full physical accessibility verification remain.
+
 ### 11.1 Backend truth contract
 
 Create a versioned metric registry containing:
@@ -511,10 +528,10 @@ Each status must distinguish:
 - `deliveryState`: whether the worker is successfully receiving the source.
 - `factState`: whether the fact validly covers the requested time.
 
-Suggested additive endpoints/fields:
+Implemented additive endpoint/fields:
 
 - `GET /v1/metadata/metrics`
-- Protected `GET /internal/sources/status`
+- Public-safe `GET /v1/sources/status`
 - `sourceStatuses[]`, `coverage`, `publishedAt`, `validTo`,
   `methodologyVersion`, and `revisionID`/watermark in relevant public responses.
 
@@ -589,6 +606,11 @@ behavior. They belong in versioned server configuration, not Swift.
 
 ## 12. M2 — deterministic daily briefing
 
+**Current status:** the deterministic briefing, native Today surface, immutable
+event lifecycle ledger, history foundations/backfill/materialization, coverage
+rules, and bounded post-success observed-event worker action are implemented.
+The production database jobs, deploy, and relevance smoke remain.
+
 ### Outcome
 
 Today becomes a bounded editorial product generated from facts, not a client-side
@@ -654,7 +676,7 @@ context.
 
 ### 12.3 Briefing contract
 
-Add a deterministic `GET /v1/briefing/today` contract with:
+The implemented deterministic `GET /v1/briefing/today` contract contains:
 
 - `now`: concise current position and evidence.
 - `changes`: maximum three meaningful observed changes.
@@ -699,6 +721,13 @@ Requirements:
 
 ## 13. M3 — Local flexible-use planner
 
+**Current status:** implemented in the current tree, including activity presets,
+custom duration, optional earliest/deadline bounds, coverage/vintage detail,
+outward-only transmission, schedule/update/cancel for an exact local
+notification, and eligible exact-match national-carbon MAE qualification.
+Production and physical-device notification QA remain; Local never infers
+regional error from the national review.
+
 ### Outcome
 
 Local becomes the everyday utility: choose an activity and get a defensible
@@ -707,7 +736,7 @@ meaningful benefit.
 
 ### 13.1 Local IA
 
-- Rename Mine to Local.
+- Keep the implemented Local name and explicit region editing.
 - Put the region selector directly below the title; do not bury editing below
   the results.
 - Explain once that London is the default, not a detected location.
@@ -739,7 +768,7 @@ meaningful benefit.
 Prefer a compatible regional forecast. If only national forecast is available,
 say `Best GB window`; do not describe it as a London forecast.
 
-Suggested backend addition:
+Implemented backend contract:
 
 `GET /v1/regions/{postcode}/windows?durationMinutes=&earliest=&latest=&continuous=`
 
@@ -767,6 +796,13 @@ The algorithm must be deterministic, bounded, gap-aware, and versioned.
 
 ## 14. M4 — complete Notebook and prediction loop
 
+**Current status:** implemented in the current tree. The backend persists an
+immutable evidence result/void/correction independently of the user's choice;
+the choice, completion, and learned state remain local. Production resolution
+and physical date/reinstall QA remain. Device-local reminders are available 15
+minutes before lock and five minutes after the evidence window; the second only
+asks the user to check for a published result.
+
 ### Outcome
 
 Notebook teaches grid intuition and gives a reason to return. It does not pretend
@@ -774,7 +810,7 @@ local checkmarks are a competitive game.
 
 ### 14.1 Notebook IA
 
-- Rename Log to Notebook.
+- Keep the implemented Notebook name and remove any residual Log terminology.
 - Prediction at top.
 - Three bounded missions.
 - Recent prediction result and explanation.
@@ -809,7 +845,7 @@ Each completed mission can reveal one short deterministic learning card.
 
 ### 14.3 Prediction resolution
 
-Add an immutable daily outcome contract containing:
+The immutable daily outcome contract contains:
 
 - Prediction ID/date.
 - Choices.
@@ -821,7 +857,7 @@ Add an immutable daily outcome contract containing:
 - Coverage.
 - Resolution state: correct, incorrect, or void.
 
-Suggested endpoint:
+Implemented endpoint:
 
 `GET /v1/game/{date}/resolution`
 
@@ -897,6 +933,11 @@ Ask remains a contextual inspector, not the centre of navigation.
 
 ## 16. M5 — professional inspection and export
 
+**Current status:** implemented in the current tree: public-safe source status,
+exact supply/connector tables, reported revision UI, and bounded protected
+JSON/CSV export. Production history/source data validation with professionals
+remains.
+
 Professional detail should be an inspector layer or local preference, not a
 different app and not a paywall during validation.
 
@@ -944,10 +985,11 @@ Event detail should show:
 
 ### 16.4 Exact tables and export
 
-Add sortable/filterable tables for supply, interconnectors, events, source health,
-and timeline values.
+The current native inspector includes sortable exact supply and interconnector
+tables plus source health and event revision views. Broader filtering remains a
+post-cohort refinement.
 
-Start export with bounded synchronous CSV/JSON:
+The implemented export is bounded synchronous CSV/JSON:
 
 - Maximum 31 days.
 - Metric allow-list.
@@ -957,7 +999,7 @@ Start export with bounded synchronous CSV/JSON:
 - Classification, timestamps, coverage, source IDs, and methodology version.
 - Separate rate limit.
 
-Suggested endpoints:
+Implemented endpoints:
 
 - `GET /v1/export?metric=&from=&to=&resolution=&format=`
 - `GET /v1/metadata/export-schema`
@@ -971,6 +1013,13 @@ Suggested endpoints:
 - No private infrastructure identifier or secret appears in an export.
 
 ## 17. Forecast verification
+
+**Current status:** migration `20260712_0009`, a bounded/resumable CLI, immutable
+pair/result storage, public endpoint, cache/rate policy, and tests are present in
+the current tree. Native Data Details provides a protected-cache national review
+and Local can qualify a compatible national-carbon plan without blocking it.
+No Railway migration/job/route smoke or eligible production statistics have
+been verified yet.
 
 Do not display invented confidence percentages. Build measured quality by
 matching compatible forecast vintages to outturns.
@@ -1000,6 +1049,11 @@ vintages.
 
 ## 18. M6 — widget and notifications
 
+**Current status:** Local clean-window reminders plus Notebook lock and
+result-check reminders are implemented on-device after an explicit permission
+action. Notification taps route to their real tab. Widget/App Group and all
+remote notifications remain deferred.
+
 ### 18.1 Widget before remote push
 
 Small widget:
@@ -1027,10 +1081,17 @@ Requirements:
 
 ### 18.2 Contextual notifications
 
-Ship local reminders first:
+Implemented local reminders:
 
 - User-selected clean window.
 - Prediction lock/result reminder.
+
+The lock reminder fires 15 minutes before the backend lock. After a local
+choice, the optional result-check reminder fires five minutes after the evidence
+window closes; it says evidence may still be pending and does not claim a
+result. Refresh never requests notification permission. Both reminder types can
+be cancelled, expose a denied-permission path to Settings, and deep-link to
+Local or Notebook.
 
 Remote event alerts are deferred until event persistence, relevance precision,
 APNs token lifecycle, subscriptions, dedupe, quiet hours, retention, and privacy
@@ -1049,10 +1110,15 @@ No notification should turn routine planned unavailability into alarmist copy.
   migration/admin roles.
 - Confirm Railway/PostgreSQL backups and exercise restoration to a disposable
   database.
-- Lock dependencies and automate reviewed vulnerability updates.
-- Add CI secret scanning and keep the Swift production-contract tests.
-- Protect internal source-health endpoints.
-- Redact request bodies, postcodes, database URLs, keys, and unsafe upstream text.
+- Keep the committed Python lock files current and add reviewed vulnerability
+  update automation.
+- Keep the existing CI gitleaks scan, backend/migration/image gates, simulator
+  XCTest, unsigned archive compile, and Swift production-contract tests.
+- Keep `/v1/sources/status` public-safe: no raw error, internal identifier,
+  credential, or infrastructure detail.
+- Preserve application access logging that omits bodies, raw/query paths,
+  headers, client addresses, and exceptions; separately verify/redact Railway
+  platform logs and unsafe upstream text.
 - Define retention for HTTP logs, normalized facts, event revisions,
   explanations, and operational diagnostics.
 
@@ -1184,52 +1250,60 @@ Every milestone must cover:
 ### Production preflight
 
 - Exact clean commit.
-- Backend tests and migration SQL.
+- Backend tests, compile check, migration SQL, and disposable live PostgreSQL
+  upgrade/downgrade.
 - Hosted simulator XCTest.
 - Unsigned archive compile.
 - Signed physical-device archive/install.
 - Public API/worker readiness.
-- Live route, ETag, gzip, regional, Ask, and event explanation smoke.
+- Current OpenAPI inventory; Live/Today/Local/Notebook/pro routes; bounded data
+  jobs; ETag, gzip, rate limit, request ID, regional, Ask, and event smoke.
 - Secret scan and final OpenRouter key rotation.
 
 ## 22. Prioritised backlog
 
 ### P0 — do next
 
-1. Signed internal TestFlight baseline and tester cohort.
-2. Rotate OpenRouter key and confirm privacy/retention answers.
-3. Metric registry and supply/import/storage semantics.
-4. Per-family delivery/fact freshness.
-5. Status/Data Details UI and partial failure states.
-6. Four-tab rename and Info sheet.
-7. Lightweight onboarding and contextual definitions.
-8. Live dock/touch/accessibility/contrast/Dynamic Type/Reduce Motion pass.
-9. Notebook mission semantics and removal of duplicate moments.
-10. Local geography clarification and visible region selector.
+1. Freeze the shared tree; run final backend/native/compile/privacy/diff/secret
+   gates and record exact totals.
+2. Validate upgrade/downgrade through migration `20260712_0009` on disposable
+   live PostgreSQL after repairing Docker or providing another safe instance.
+3. Re-authenticate GitHub/Railway, push the reviewed commit, deploy API then
+   worker, and verify the database revision.
+4. Run/inspect the bounded 95-day history backfill/materialization and separate
+   28-day (maximum 31-day) forecast verification, then configure approved crons.
+5. Smoke all current routes and the native app against the exact deployment;
+   verify source freshness, ETag/gzip/429/request IDs and AI fallback/cost.
+6. Rotate the temporary OpenRouter key and approve privacy/retention/support
+   answers.
+7. Install the missing Xcode iOS 26.4 device platform, complete Apple
+   signing/App Store record, signed physical-device QA, upload, processed
+   internal TestFlight install, and the first mixed tester cohort.
 
 ### P1 — make it useful enough for public 1.0
 
-1. Ninety-day compatible backfill and coverage.
-2. Deterministic daily briefing contract.
-3. Event relevance, lifecycle, revisions, and grouping.
-4. Comparison baselines.
-5. Local activity-duration planner.
-6. Regional-compatible window/delta where supported.
-7. Local clean-window reminder.
-8. Prediction resolution and void/correction behavior.
-9. Automatically inferred mission completion where possible.
-10. Physical-device performance and final accessibility release pass.
+1. Close all first-cohort comprehension and high-risk terminology findings.
+2. Complete smallest/large-device AX5, VoiceOver, Reduce Motion, contrast,
+   offline, thermal, battery, and launch/performance release gates.
+3. Validate Today ranking and event relevance on real heavy/empty/partial days;
+   finish observed-event worker/public lifecycle policy.
+4. Validate Local recommendation/reminder usefulness and geography understanding;
+   show typical error only after verified thresholds pass.
+5. Validate Notebook lock/date/reinstall/correction/void and local reminder
+   behavior on production evidence; measure whether the reminders add value.
+6. Add backup/restore drill, external source/job alerts, database role separation,
+   and final retention policy.
 
 ### P2 — professional trust and repeat access
 
-1. Forecast verification and typical-error labels.
-2. Data/source inspector.
-3. Exact tables.
-4. Event revision UI.
-5. Bounded CSV/JSON export.
-6. Small/medium widget.
-7. Saved regions.
-8. Deep links.
+1. Test source status, event revisions, exact tables, and export with
+   professionals; improve only from observed task failures.
+2. Surface eligible national forecast-error context where it improves decisions,
+   never as generic confidence.
+3. Small/medium widget after App Group/signing/cache behavior is available.
+4. Saved regions and deeper links if the cohort demonstrates repeat-access need.
+5. Additional exact filters/comparisons only when the existing inspector cannot
+   answer a validated job.
 
 ### P3 — only after evidence of demand
 
@@ -1242,21 +1316,25 @@ Every milestone must cover:
 
 ## 23. Dependency order
 
-1. Apple access and rotated production key unlock real TestFlight.
-2. Metric definitions unlock truthful terminology and freshness.
-3. Per-source observability unlocks reliable partial states.
-4. Backfill and coverage unlock comparisons.
-5. Compatible definitions and vintages unlock forecast verification.
-6. Persisted event lifecycle and asset mapping unlock grouping/revisions.
-7. Relevance validation unlocks remote event notifications.
-8. Regional forecast compatibility unlocks regional savings claims.
-9. Observation outcome contract unlocks a completed prediction loop.
-10. Stable contracts and App Group unlock a widget.
-11. Measured traffic, not anticipation, unlocks shared scaling infrastructure.
+1. A reconciled, clean, tested commit unlocks push/deploy.
+2. GitHub and Railway authentication unlocks production reconciliation.
+3. Migration `0009` plus backfill/materialization unlocks production export,
+   comparisons, resolution history, and forecast verification.
+4. Enough exact compatible samples unlocks forecast-error display; code presence
+   alone does not.
+5. Apple access, bundle registration, App Store record, rotated production key,
+   and owner privacy metadata unlock a signed TestFlight build.
+6. Physical-device/accessibility/performance validation unlocks a credible
+   internal cohort.
+7. Cohort comprehension/usefulness evidence unlocks public 1.0 and prioritises
+   remaining UI work.
+8. Proven event relevance unlocks remote event notifications.
+9. Stable production contracts plus an Apple App Group unlock a widget.
+10. Measured traffic, not anticipation, unlocks shared scaling infrastructure.
 
 Do not reverse these dependencies. In particular, do not ship confidence before
-verification, notifications before relevance, comparisons before coverage, or
-leaderboards before secure scoring/accounts.
+eligible verification, notifications before relevance, comparisons before
+coverage, or leaderboards before secure scoring/accounts.
 
 ## 24. Owner decisions and inputs
 
@@ -1265,14 +1343,14 @@ ultimately confirm:
 
 - Apple team, bundle registration, App Store Connect access, testers, and review
   contact.
+- Re-authentication of the normal GitHub credential helper and Railway
+  CLI/dashboard so engineering can push and deploy the reviewed tree.
 - Replacement OpenRouter key and final spend cap.
 - Privacy/provider-retention disclosures and support contact.
-- Whether the recommended tab names `Live / Today / Local / Notebook` are
-  accepted.
-- Whether public 1.0 should include completed prediction resolution or hide the
-  prediction until 1.1. Recommendation: complete it.
-- Whether carbon-first flexible-use planning is the primary practical utility.
-  Recommendation: yes; defer prices and device control.
+- Confirmation that the implemented tab names `Live / Today / Local / Notebook`
+  and evidence-resolved prediction should remain in public 1.0.
+- Confirmation that carbon-first flexible-use planning remains the primary
+  practical utility. Recommendation: yes; defer prices and device control.
 - Whether professional detail remains free during validation. Recommendation:
   yes.
 

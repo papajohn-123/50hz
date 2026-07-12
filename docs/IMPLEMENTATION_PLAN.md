@@ -1,64 +1,53 @@
-# 50Hz implementation plan
+# 50Hz implementation baseline
 
-Last reconciled with the repository and release-candidate production smoke test
-on 11 July 2026.
-
-This document records the implemented technical baseline. The prioritised
-product, UX, backend, TestFlight, and public-release sequence now lives in
+Last reconciled with the shared repository on 12 July 2026. This document
+records what is implemented in the current tree and what must still be deployed
+or release-verified. Product priorities and future choices live in
 [PRODUCT_ROADMAP.md](PRODUCT_ROADMAP.md).
 
-## Product objective
+## Product objective and governing rule
 
-50Hz makes Britain's electricity system feel alive without making the data less
-truthful. A curious user should understand the grid at a glance; a professional
-should be able to inspect source, time, classification, and limitations.
-
-The governing rule is:
+50Hz makes Britain's electricity system feel alive without making the evidence
+less truthful. A curious person should understand the national position in
+seconds; a professional should be able to inspect scope, classification,
+timestamps, coverage, methods, sources, and revisions.
 
 > Deterministic code establishes the facts. The LLM may explain validated
 > evidence, but it does not decide what happened.
 
-## Confirmed decisions
+Confirmed decisions:
 
-- Product name: **50Hz**
-- Audience: curious public first, professional detail underneath
-- Initial price: free
-- Distribution: internal TestFlight, then the iOS App Store
-- Platform: iOS 18+
-- Native stack: SwiftUI, Observation, structured concurrency, Swift Charts
-- Visual direction: authored zoomed-out Britain visualization, not a street map
-- Default region: Central London, while the primary map remains national
-- Backend: FastAPI, Railway PostgreSQL, API and worker roles
-- LLM gateway: OpenRouter, called server-side only
-- Default configured model: `openai/gpt-5.4-mini`
-- Accounts: none in the first release
-- Preferences and future game progress: local device storage
-- Location: manually entered postcode; no location permission
-- Core browsing must continue when OpenRouter is unavailable
+- Native SwiftUI app for iPhone on iOS 18+.
+- Four tabs: Live, Today, Local, Notebook; Ask remains contextual.
+- Abstract national Britain visualization, not a street/network map.
+- Central London is the default Local region; no location permission.
+- FastAPI plus one Railway PostgreSQL database, with separate API/worker roles.
+- OpenRouter is server-side and optional for core browsing.
+- Elexon Insights and NESO Carbon Intensity feeds in use are public and require
+  no application API key.
+- No account, advertising, analytics, leaderboard, prize, cloud sync, or remote
+  notification service in the first release.
+- Railway/PostgreSQL remains the backend. Adding Supabase would currently split
+  ownership without solving a proven product need.
 
-The supplied Claude UI archive has been translated into the native direction in
-[UI_DIRECTION.md](UI_DIRECTION.md): Live, Today, Mine, and Log tabs; an abstract
-Britain canvas; cyan observed data; violet forecast/replay data; and Ask the Grid
-as a contextual inspector rather than a generic chat tab.
+## Delivery-state vocabulary
 
-## Delivery-state definitions
+- **Implemented:** code exists in the current tree and has repository-level
+  tests/build evidence.
+- **Deployed:** a pushed commit is the source of the named Railway API/worker
+  deployments and its migrations/jobs have run.
+- **Production verified:** the deployed commit passed the bounded smoke in
+  [OPERATIONS.md](OPERATIONS.md).
+- **Release verified:** the same contract passed on a signed physical-device and
+  processed TestFlight install.
 
-- **Implemented:** present in the current shared tree and exercised by repository
-  tests or build checks.
-- **Production verified:** observed on the public Railway deployment after the
-  relevant commit was deployed.
-- **Release verified:** exercised through a signed build on a physical iPhone and
-  a processed TestFlight install.
+The last production smoke on 11 July 2026 established the older ingestion,
+current/timeline/region/game/event/Ask baseline. The present tree is ahead of
+that deployment. GitHub credential access and Railway CLI authentication need
+owner re-authentication before the new routes and schema can be called deployed.
+Apple signing and TestFlight remain unverified.
 
-The current tree is implemented and production verified, but not release
-verified. The 11 July production smoke covered API and worker readiness, hosted
-privacy/support pages, current and forecast data, Central London regional data,
-the daily game plan, reported events, a grounded Ask answer, a validated live
-event explanation and its revision cache, ETag/304 reuse, and gzip. Release
-verification still requires owner-controlled Apple signing, a physical-device
-pass, and a processed TestFlight install.
-
-## Implemented architecture
+## Implemented service architecture
 
 ```text
 Elexon Insights                 NESO Carbon Intensity
@@ -66,207 +55,294 @@ Elexon Insights                 NESO Carbon Intensity
         \                            /
          v                          v
                Railway worker role
-       schedules + adapters + normalization
-      overlap windows + PostgreSQL advisory locks
+ polling schedules -> adapters -> immutable normalized revisions
+ retention + deterministic post-ingest event maintenance
+ overlap windows + PostgreSQL advisory locks
                          |
                          v
                 Railway PostgreSQL
-     raw payloads, source runs, observations,
-  forecasts, notices, event/explanation caches
+ source runs/raw payloads, observations/forecasts/notices,
+ event and prediction ledgers, history materialization,
+ explanation caches, forecast-verification evidence/results
                          |
                          v
                   Railway API role
-    mobile contracts + evidence tools + OpenRouter
+ mobile presentation + bounded exports/tools + OpenRouter
                          |
                          v
                     SwiftUI app
-  protected cache + timeline + abstract Britain canvas
+ protected cache + abstract map + local preferences/reminders
 ```
 
-One Docker image serves both roles:
+One image serves both always-on roles:
 
-- `SERVICE_ROLE=api` starts the public API without ingestion.
-- `SERVICE_ROLE=worker` supervises the polling loop from FastAPI lifespan.
-- PostgreSQL is required by both roles.
-- Overlapping source windows plus source-derived uniqueness make writes
+- `SERVICE_ROLE=api` exposes the public API and does not poll upstreams.
+- `SERVICE_ROLE=worker` supervises continuous ingestion plus raw-payload
+  retention inside the application lifespan.
+- `DATABASE_URL` is required for both roles.
+- Overlap windows plus source-derived conflict keys make normalized writes
   idempotent.
-- PostgreSQL advisory locks prevent duplicate concurrent source jobs.
+- PostgreSQL advisory locks prevent concurrent work on the same ingestion,
+  history, verification, or event-maintenance scope.
 
-Redis, accounts, authentication, push notifications, weather integration, and
-third-party analytics/crash SDKs are not implemented.
+Bounded historical work runs as explicit commands or Railway cron services, not
+inside API requests:
 
-## Implemented data platform
+- `50hz-history-backfill`
+- `50hz-history-materialize`
+- `50hz-forecast-verify`
 
-### Time, persistence, and provenance
+## Data and evidence platform
 
-- Async SQLAlchemy sessions and Alembic migrations.
-- Separate observed, published, retrieved, valid, and issued timestamps.
-- UTC persistence and explicit `Europe/London` settlement conversion.
-- Tests for 46-, 48-, and 50-period daylight-saving days.
-- Positive interconnector flow means import into Britain; negative means export.
-- Raw upstream payloads are checksummed for replay/audit and pruned after 72
-  hours by default; normalized facts and provenance survive cleanup.
-- Normalized observations and forecast/notice revisions are written
-  idempotently.
+### Time, identity, and corrections
 
-The schema includes source metadata/runs/raw payloads, assets, national
-generation/demand/frequency/interconnector/carbon observations, forecast
-observations, grid snapshots, reported notices, detected events, detected-event
-explanations, and reported-notice explanation revisions. The public current
-endpoint currently composes from normalized
-latest reads; a separate production snapshot materializer is not wired. A
-bounded worker maintenance task deletes at most 200 expired raw-payload rows per
-hourly run by default and retries later if more remain.
+- UTC storage with explicit `Europe/London` settlement conversion.
+- Separate observed, valid, issued, published, and retrieved timestamps where
+  the source supplies them.
+- Tests cover 46-, 48-, and 50-period settlement days.
+- Positive interconnector values import into Britain; negative values export.
+- Stable source-record identities and content checksums preserve provenance.
+- Normalized corrections append immutable revisions instead of overwriting prior
+  observations/forecast vintages.
+- Raw upstream payloads are retained for 72 hours by default and pruned in
+  bounded batches; normalized evidence and provenance survive.
 
-### Source schedules
+The migration chain currently runs from `20260711_0001` through
+`20260712_0009`. It includes normalized grid/source tables, reported notice and
+explanation revisions, history/coverage foundations, event lifecycle,
+prediction resolution, immutable forecast revisions, history materialization,
+and forecast verification. This chain has offline Alembic generation coverage;
+the newest full chain still needs a disposable live PostgreSQL upgrade/downgrade
+because the installed Docker.app is incomplete and its executable is missing.
 
-| Job | Content | Poll cadence | Overlap/reconciliation |
+### Continuous source schedules
+
+| Job | Content | Normal poll | Reconciliation |
 | --- | --- | ---: | --- |
-| `elexon.fuelinst` | Generation by fuel | 2 min | 10 min; prior 48 h hourly |
-| `elexon.indo` | National demand | 5 min | 1 h; prior 48 h hourly |
-| `elexon.freq` | System frequency | 1 min | 10 min; prior 48 h hourly |
-| `elexon.interconnectors` | Interconnector flows | 2 min | 10 min; prior 48 h hourly |
-| `neso.carbon.national.current` | Current GB carbon | 5 min | 5 min |
-| `neso.carbon.regional.london` | London carbon | 5 min | 5 min |
-| `neso.carbon.national.forecast` | 48-hour GB carbon forecast | 30 min | 5 min |
-| `elexon.ndf` | National demand forecast | 15 min | 2 h; prior 48 h every 6 h |
-| `elexon.windfor` | Wind forecast | 30 min | 12 h; prior 48 h every 12 h |
-| `elexon.remit.unavailability` | Reported unavailability revisions | 2 min | 30 min; prior 48 h hourly |
-| `elexon.syswarn` | System warnings | 5 min | 1 h; prior 48 h every 6 h |
+| `elexon.fuelinst` | Transmission-visible generation by fuel | 2 min | 10 min; previous 48 h hourly |
+| `elexon.indo` | National demand | 5 min | 1 h; previous 48 h hourly |
+| `elexon.freq` | System frequency | 1 min | 10 min; previous 48 h hourly |
+| `elexon.interconnectors` | Signed connector flows | 2 min | 10 min; previous 48 h hourly |
+| `elexon.ndf` | National demand forecast vintages | 15 min | 2 h; previous 48 h every 6 h |
+| `elexon.windfor` | Wind forecast vintages | 30 min | 12 h; previous 48 h every 12 h |
+| `elexon.remit.unavailability` | Reported availability revisions | 2 min | 30 min; previous 48 h hourly |
+| `elexon.syswarn` | System warning revisions | 5 min | 1 h; previous 48 h every 6 h |
+| `neso.carbon.national.current` | Current GB carbon period | 5 min | 5 min |
+| `neso.carbon.regional.london` | Stored London carbon period | 5 min | 5 min |
+| `neso.carbon.national.forecast` | Captured 48-hour national carbon forecast | 30 min | 5 min |
 
-The scheduler tick defaults to 60 seconds; individual job cadence is independent
-of that tick. Postcodes are not continuously ingested. The region route first
-uses stored regional/London data where possible, then performs a bounded public
-NESO lookup. That on-demand response is not persisted by the route.
+The worker scheduler ticks every 60 seconds by default, independently of each
+job's cadence. Postcodes are not continuously ingested. Regional requests use a
+validated outward code and a bounded NESO fallback; that on-demand response is
+not persisted by the route.
 
-## Implemented API and runtime behavior
+### History backfill and materialization
 
-| Method | Path | Current tree behavior |
-| --- | --- | --- |
-| GET | `/health` | Always responds for a running process and reports `ok`/`degraded`, role, and database reachability |
-| GET | `/ready` | 503 on DB failure; worker also checks task state and required data freshness after five minutes |
-| GET | `/privacy` | Public pre-release policy describing optional postcode/Ask flows and providers; hidden from OpenAPI |
-| GET | `/support` | Public support and safety-caveat page with the GitHub issue tracker; hidden from OpenAPI |
-| GET | `/v1/meta` | Environment, role, and DB/OpenRouter configuration presence |
-| GET | `/v1/grid/current` | Required generation/demand/carbon, optional frequency/flows, source-aware freshness, one-hour change, and active reported event |
-| GET | `/v1/grid/timeline` | Up to 96 hours at 60–7200-second resolution, with observed and supported forecast metrics |
-| GET | `/v1/sources` | Attribution, licence/documentation links, and expected cadence |
-| GET | `/v1/events` | Active latest REMIT and fresh SYSWARN notices |
-| GET | `/v1/events/{id}` | Active public-event detail |
-| GET | `/v1/regions/{postcode}` | Validated outward code, regional carbon, GB comparison, and charging window |
-| GET | `/v1/game/today` | Deterministic definitions with real source/forecast/event availability flags |
-| POST | `/v1/ask` | Bounded read-only tool loop and server-owned citations |
-| GET | `/v1/events/{id}/explanation` | Grounded explanation/fallback for persisted detected events and reported notice IDs |
+`50hz-history-backfill` is a maximum-95-day, resumable, source-allow-listed
+operator job. It uses publisher ranges, London settlement-day boundaries,
+advisory locks, safe checkpoints, and the same idempotent ingestion repository
+as the worker. Historical carbon range data is estimate-only because that
+source does not expose historical issue timestamps; frequency detail is
+deliberately excluded from a 90-day backfill.
 
-HTTP hardening in the current tree:
+`50hz-history-materialize` reads normalized evidence in maximum-30-day chunks
+with a 28-day comparison lookback and appends immutable derived revisions. Its
+explicit registry contains national carbon, national demand, 11 supported fuel
+selectors, and 10 supported connector selectors: 23 series total. It calculates
+half-hour/daily coverage and previous-period, yesterday, seven-day, and rolling
+28-day comparisons. Daily and rolling outputs require at least 95% compatible
+coverage. Missing data never becomes zero. Frequency and invented historical
+forecast vintages are excluded.
 
-- Content ETags and `Cache-Control` for successful stable JSON GETs.
-- HTTP 304 when `If-None-Match` equals the current representation.
-- Gzip for responses of at least 1,000 bytes when supported by the client.
-- One-minute process-local burst limits on Ask, explanation, regions, and
-  timeline; HTTP 429 includes `Retry-After`.
-- Railway deploy health uses `/ready`, not `/health`.
+`--refresh-latest` re-evaluates only the last completed London day with force and
+the required read-only lookback. The recommended Railway materialization cron is
+`17 4,10 * * *` UTC, after the ingestion/backfill contract has been validated in
+the target database.
 
-ETags are transfer validators, not a server data/query cache: the route still
-builds the response before its hash is compared. The limiter is intentionally
-single-process and the API is unauthenticated. It must be replaced with a shared
-durable mechanism before scaling beyond one API process.
+### Forecast verification
 
-## Events and evidence
+The current tree includes an immutable forecast-verification migration, job,
+and public contract for exactly reviewed national pairs:
 
-Pure event rules exist for generation-leader changes, renewable-share
-milestones, sustained import/export reversals, frequency excursions, and
-reported unavailability. Event lifecycle/storage tests exist, but the production
-worker does not yet invoke and persist the deterministic event processor after
-every relevant ingestion write.
+- Elexon NDF to Elexon INDO demand.
+- Elexon WINDFOR to Elexon FUELINST wind.
+- NESO national carbon forecast to NESO national carbon estimate.
 
-The currently user-visible event list is still useful and authoritative: it
-maps active latest-revision REMIT and fresh SYSWARN notices directly to stable
-public IDs. Those public notice IDs resolve through the detail and explanation
-flows, and successfully validated explanations are cached by public ID and
-notice revision. Remaining event work is historical/resolved listing and
-production persistence of derived-event lifecycle.
+The reviewed carbon forecast method is
+`50hz.neso-carbon-intensity.national-forecast.v1`. NESO does not publish a
+source issue timestamp for this feed, so each public carbon result states
+`issueTimeBasis=source_does_not_publish_issue_time` and
+`effectiveVintageTimeBasis=retrieved_at`; 50Hz uses capture/retrieval time and
+does not relabel it as a publisher issue time.
 
-Code-level evidence rules include:
+For horizons 0–3, 3–12, 12–24, and 24–48 hours, the job selects an exact stored
+forecast vintage and exact compatible outturn timestamp. It stores MAE, signed
+bias, safe-denominator WAPE, sample count, coverage, verification window,
+issue-time basis, evidence checksum, source watermark, and methodology versions.
+No vintage, timestamp, interpolation, or regional accuracy is synthesized.
+Statistics remain `insufficient_data` until there are at least 100 verified
+samples and 90% compatible coverage. A normal run defaults to 28 completed
+London days and cannot exceed 31. `--refresh-latest` rechecks the latest seven
+completed London days for a bounded daily cron.
 
-- A generation/output change is not called an outage.
-- Outage/unavailability language requires reported evidence.
-- REMIT and SYSWARN revisions are retained.
-- Forecast frequency is forbidden by the mobile contract.
-- Public citations come from server-owned source metadata.
-- Unsupported event model output falls back to deterministic evidence copy.
+This feature is implemented in the current tree but has not yet been migrated,
+materialized, or production-smoked on Railway.
 
-## Grounded intelligence
+The native Data Details inspector also implements a protected, ETag-aware
+Forecast review. It presents national-only MAE, signed bias, WAPE, horizon,
+pairs, coverage, verification window, source mapping, issue/effective-vintage
+basis, and method/revision. Numbers remain hidden when the server status/reason,
+100-sample/90%-coverage gates, native coverage math, evidence/method contract, or
+uniqueness check fails. Local can show only national-carbon MAE for a complete
+plan that remains inside one reviewed horizon and exactly matches source,
+method, basis, and outturn class. Otherwise the review is silent and never
+blocks planning; it never infers regional error or calls the metric confidence.
 
-Ask the Grid exposes five bounded read-only tools: current grid state, metric
-history, active events, event evidence, and the cleanest forecast window. The
-client allows at most four tool rounds and six total calls. History is capped at
-48 hours; clean-window duration at 0.5–12 hours; event identifiers and metrics
-are allow-listed. There is no arbitrary SQL, URL, filesystem, or environment
-access.
+## Current API contracts
 
-Validation enforces evidence-backed numbers and rejects unsupported causal
-language. The server, not the model, selects citations from gathered evidence.
-Invalid Ask output returns a bounded 503 rather than an ungrounded answer. Event
-explanation failures return deterministic copy. Successful detected-event
-explanations are cached by evidence checksum, provider, configured model, prompt
-version, and locale. Reported-notice explanations have a parallel cache keyed by
-stable public ID and source revision. Deterministic fallback copy is never cached.
+The complete route table and limits are in [README.md](../README.md). Important
+additive contracts beyond the production-smoked baseline are:
 
-OpenRouter calls request provider zero-data-retention handling. The in-process
-daily call counter defaults to 100 upstream requests and resets on restart; it is
-not a billing-grade or multi-replica budget. The OpenRouter account/project cap
-remains the hard spend control.
+- `/v1/metadata/metrics` for versioned definitions and supply/sign boundaries.
+- `/v1/briefing/today` for finite deterministic Today content.
+- `/v1/regions/{postcode}/windows` for gap-aware continuous Local planning,
+  duration, and optional start/deadline bounds.
+- `/v1/game/{date}/resolution` for auditable pending/correct/incorrect/void
+  prediction outcomes and evidence corrections.
+- `/v1/sources/status` for public-safe source delivery versus fact validity.
+- `/v1/events/{event_id}/history` for immutable reported lifecycle revisions.
+- `/v1/metadata/export-schema` and `/v1/export` for bounded half-hour JSON/CSV.
+- `/v1/forecasts/verification` for evidence-qualified national forecast error.
+
+HTTP behavior in the current tree includes:
+
+- representation-derived ETags/304 and explicit `Cache-Control` on stable JSON;
+- gzip above 1,000 response bytes;
+- process-local route burst limits with `Retry-After`;
+- privacy-bounded structured access records and `X-Request-ID` on responses;
+- no query string, request body, header, IP/client address, exception message,
+  or unmatched raw path in the application access record.
+
+The API is unauthenticated and intended to run as one process during validation.
+ETags are transfer validators, not a database query cache. A durable shared
+limiter/budget is required before horizontal scaling.
+
+## Events and grounded intelligence
+
+### Reported events
+
+Active public events map authoritative latest REMIT and recent SYSWARN revisions
+to stable opaque IDs. Detail and explanation remain active-only. History is
+independently resolvable for terminal reported events and returns at most 100
+newest-first immutable lifecycle revisions, field changes, evidence checksums,
+and source-record provenance.
+
+Reported-event explanations are cached by stable event ID and notice revision.
+Detected-event explanations are cached by evidence checksum, configured
+provider/model, prompt version, and locale. Validated output may cache;
+deterministic fallback copy never does.
+
+The worker also runs one failure-isolated `ObservedEventMaintenanceAction` after
+a successful generation, connector, or frequency job, including reconciliation
+runs. It takes the advisory lock `50hz:maintenance:observed-events:v1`, performs
+exactly three bounded normalized reads (45-minute lookback, at most 512 rows per
+family), and independently constructs coherent evidence windows:
+
+- generation: latest two complete snapshots with at least four series, no more
+  than ten minutes apart and twenty minutes old;
+- connectors: latest three complete snapshots under the versioned connector
+  registry, no more than ten minutes apart and twenty minutes old; a signed
+  reversal requires two sustained samples at least 100 MW from zero;
+- frequency: latest GB sample no more than five minutes old.
+
+All evidence timestamps/revisions are at or before one cutoff, but the families
+are never combined at a synthetic cross-family instant. Rules produce derived/
+observed copy only; they never infer an outage or cause. Deterministic keys and
+checksums make replay idempotent, corrections increment the evidence revision,
+and an exact-time correction can resolve a removed moment event. Rule-owned
+expiry is ten minutes for frequency, twenty for renewable state, and thirty for
+leader/reversal. Persisted rule IDs are versioned under
+`observed.window-v1.<rule>.v1`. Resolution/expiry is restricted to
+`observed.%`, bounded to 256 rows per scope/pass with one ID read plus one set
+update, so reported-notice lifecycle is untouched and there is no per-row N+1.
+
+An in-process fingerprint avoids unchanged evaluation; database idempotence
+still handles restarts/replicas, and expiry runs after relevant successes. If all
+three relevant collectors fail simultaneously, expiry waits for a future
+relevant success. The derived-event row retains the current evidence payload
+with incrementing version/checksum, not a full immutable history of every prior
+derived payload; reported-event history is a separate immutable contract. There
+is no operator cron, key, or new configuration. This is implemented in the
+current tree but not deployed, and current public event list/detail remains the
+authoritative reported-notice flow rather than a claim that every derived event
+is public.
+
+### Ask the Grid
+
+Ask exposes five bounded read-only tools: current state, metric history, active
+events, event evidence, and cleanest forecast window. Tool rounds/calls,
+history, duration, metrics, and event IDs are bounded or allow-listed. There is
+no arbitrary SQL, URL, filesystem, environment, or write access.
+
+Validation checks evidence-backed numbers/units, import/export signs,
+classification, and unsupported causality. The server chooses citations.
+Invalid Ask output returns a bounded error instead of an ungrounded answer;
+event explanation has deterministic fallback copy. OpenRouter calls request
+zero-data-retention routing. The process-local daily counter is a guardrail, not
+a billing or distributed quota; the OpenRouter project/account cap is the hard
+spend boundary.
 
 ## Native iOS implementation
 
-The current tree contains:
+The app now contains:
 
-- Live, Today, Mine, and Log tabs.
-- Custom abstract Britain `Canvas` with deterministic batched particles.
-- Cache-first repository with protected on-disk response cache, ETags, and 304
-  reuse.
-- Current/timeline polling, cancellation, shared in-flight requests, scrubbing,
-  material-gap handling, and Resume Live.
-- Generation mix/fuel focus, demand, frequency, carbon, and interconnector views.
-- Active-event list/detail and explanation presentation.
-- Today forecast/event presentation.
-- Backend-defined daily missions and prediction in Log, with ETag-backed
-  same-day offline reuse and prior-day cache rejection.
-- Mine postcode entry, regional comparison, and charging guidance.
-- Contextual Ask the Grid inspector.
-- In-app links to the production privacy and support pages.
-- Structured share-card rendering.
-- Bundled contract fixtures, XCTest sources, app icons, and a privacy manifest.
+- **Live:** cache-first national snapshot/timeline, illustrative Britain canvas,
+  fuel focus, demand/frequency/carbon/connector detail, replay/Resume Live,
+  reported-event list/detail/history/explanation, share card, and contextual
+  Ask.
+- **Today:** server-defined bounded briefing with Now, best window, maximum-three
+  changes/upcoming moments/reported events, London-day cache identity, and
+  explicit partial/offline states.
+- **Local:** Central London default, explicit region edit, full/outward postcode
+  normalization, multiple flexible activities/custom duration, deterministic
+  continuous window presentation, coverage/gaps/vintage, optional start/deadline
+  bounds, eligible exact-match national-carbon MAE qualification, and
+  device-local reminder schedule/update/cancel. The full postcode entry is
+  transient; only the outward code is persisted/displayed/sent. Notification
+  permission is requested only from an explicit reminder tap.
+- **Notebook:** backend daily definition, exact lock enforced at display and tap
+  time, local choice persistence, evidence resolution, correction/void handling,
+  mission navigation before local/unverified completion, and learned concepts.
+  Explicit reminders can fire 15 minutes before lock and, after a local choice,
+  five minutes after the evidence window closes. The second is a check prompt,
+  not a claim that a result has been published.
+- **Data Details/pro tools:** metric/source methodology, per-family state,
+  public source delivery/fact health, exact sortable supply/connector tables,
+  reported event revision deltas, and maximum-31-day JSON/CSV sharing through a
+  protected local artifact. Forecast review shows eligible national MAE, bias,
+  and WAPE by horizon while withholding absent, ambiguous, incompatible, or
+  below-threshold rows.
+- **System behavior:** protected ETag cache, in-flight deduplication, cancellation
+  and race protection, dark launch screen, first-run disclosure/onboarding,
+  notification deep links to Local/Notebook, privacy/support links, privacy
+  manifest, and no third-party iOS packages.
 
-The app stores a user's entered postcode in `AppStorage` but strips a valid
-three-character inward suffix before putting the outward code in the regional
-URL. It requests no location permission. Ask question text, selected time, and
-optional region leave the device through the backend/OpenRouter.
-
-Known native/release gaps:
-
-- Mission completion, prediction choice, and streak are local participation
-  notes. There is intentionally no account, server submission, result
-  verification, leaderboard, prize, or prediction-resolution/scoring flow yet.
-- Xcode now records Apple team `VKMJPS7WP4`; paid-program membership,
-  distribution certificates, and upload permission remain unverified.
-- Bundle ID `com.papajohn.50hz` is present but not confirmed as registered.
-- No signed archive, physical-device install, TestFlight processing, or App Store
-  Connect record has been verified.
-- Physical-device battery/thermal/performance, VoiceOver, Dynamic Type, Reduce
-  Motion, offline, and failure-state QA remain.
-- CI executes XCTest on an available simulator and creates an unsigned Release
-  archive. A signed upload archive remains an owner-controlled release step.
-- No production crash/freshness telemetry or alerting is installed.
+Prediction choices, mission completion, outward-code preference, reminder
+metadata, and learned state remain local. There is no server choice submission
+or scoring.
+The evidence result is computed by the backend independently of a user's choice;
+the native app derives correct/incorrect locally only when the method/source
+contract is supported. Notification authorization is read/requested only after
+an explicit scheduling action; ordinary refresh does not prompt.
 
 ## Verification record
 
-Workspace verification commands:
+Repository gates for the exact release commit are:
 
 ```bash
 source .venv/bin/activate
 pytest -q
+python -m compileall -q app tests
 DATABASE_URL=postgresql://postgres:postgres@localhost/50hz \
   alembic upgrade head --sql > /tmp/50hz-migrations.sql
 plutil -lint ios/50Hz/Resources/PrivacyInfo.xcprivacy
@@ -274,100 +350,85 @@ xcodebuild \
   -project ios/50Hz.xcodeproj \
   -scheme 50Hz \
   -configuration Debug \
-  -sdk iphonesimulator \
-  -destination 'generic/platform=iOS Simulator' \
-  -derivedDataPath /tmp/50hz-derived \
-  CODE_SIGNING_ALLOWED=NO \
-  build-for-testing
+  -destination 'platform=iOS Simulator,name=iPhone 16 Pro' \
+  test
+git diff --check
 ```
 
-The final clean backend run completed with **172 passed and one dependency
-deprecation warning**. Offline migration SQL generation through
-`20260711_0003` and privacy-manifest lint also passed. GitHub Actions ran the
-XCTest target on a booted iOS simulator and produced an unsigned Release archive,
-including the asset catalogue, from the code-identical `a56ed41` checkpoint. CI
-does not verify Apple signing, a physical-device install, or TestFlight
-processing.
+The 12 July shared-tree checkpoint reported 598 passing backend tests with one
+dependency deprecation warning and 145 passing native tests with no failures or
+skips. The simulator build/run, focused 23-test notification suites, and focused
+13-test forecast-review suites also pass. Compileall, diff checking, a single
+Alembic head, offline full-upgrade SQL, and offline `0009` downgrade SQL passed. Rerun
+all gates and record their totals from the exact release commit. The privacy
+manifest also passes `plutil` lint. The direct unsigned device-archive attempt
+is currently blocked during LaunchScreen compilation because this Xcode install
+reports `iOS 26.4 Platform Not Installed`; simulator build/run remains green.
+The newest migrations still require a live disposable PostgreSQL
+upgrade/downgrade; offline SQL cannot prove runtime DDL behavior.
 
-A later iPhone 16 Pro / iOS 18.6 simulator run exercised the production Live,
-Today, Mine, Log, event explanation, and Ask flows. The run exposed iOS 18's
-stricter rejection of fractional-second timestamps under JSONDecoder's built-in
-`.iso8601` strategy; the client now explicitly accepts both fractional and
-whole-second ISO 8601 values, with 23 simulator tests passing.
+## Deployment and release sequence
 
-## Next milestones
+### 1. Freeze and verify
 
-### 1. Freeze, verify, and deploy this release candidate
+1. Wait for all parallel slices, reconcile the shared tree, and review every
+   uncommitted file.
+2. Run the complete backend, migration, native, privacy, compile, diff, and
+   secret-scan gates.
+3. Repair/install Docker or use another disposable live PostgreSQL instance,
+   then validate the full migration chain.
+4. Commit the documentation with the final route/migration/test inventory.
 
-1. Reconcile all shared-tree edits and run backend, migration, privacy-manifest,
-   iOS compile, and `git diff --check` gates.
-2. Commit and push one reviewed release-candidate revision.
-3. Re-authenticate Railway CLI or use the confirmed production dashboard.
-4. Confirm API and worker service IDs/roles and production variable references.
-5. Deploy API first, wait for `/ready`, then deploy worker and wait for `/ready`.
-6. Smoke every route, including one authorized OpenRouter Ask and one event
-   explanation.
-7. Verify ETag/304, gzip, 429 headers in staging or bounded checks, source
-   freshness, and iOS behavior against that exact deployment.
+### 2. Push and deploy
 
-Exit condition: the production API matches native contracts at the release
-commit and both roles show current required data, not merely running processes.
+1. Owner unlocks/re-authenticates GitHub credential access; push the clean
+   reviewed commit.
+2. Owner re-authenticates Railway CLI/dashboard access and confirms API/worker/
+   PostgreSQL/cron service identity and variables.
+3. Deploy API first and wait for `/ready`, then worker and wait for `/ready`.
+4. Run backfill/materialization/verification jobs in dry-run and approved real
+   modes; configure bounded crons only after results are inspected.
+5. Smoke every route from current OpenAPI, including one authorized Ask and an
+   event explanation; verify ETag, gzip, 429 headers, request IDs, source
+   freshness, and the iOS app against that exact deployment.
 
-### 2. Complete Apple/TestFlight setup
+### 3. TestFlight
 
-Inputs required from the owner:
+Owner-controlled prerequisites:
 
-- Confirmation that Apple team `VKMJPS7WP4` is correct and permission to
-  sign/upload through it.
-- Confirmation or registration of `com.papajohn.50hz`.
-- App Store Connect app record and internal tester group.
-- Approval of the hosted `/privacy` and `/support` pages/contact route, or
-  replacement public HTTPS URLs and support contact details.
-- Final App Privacy answers, approval of the default 72-hour raw-payload policy,
-  and retention/logging decisions for the remaining user/operational data.
-- App name/subtitle/description/keywords, screenshots, age rating, copyright,
-  review contact, and export-compliance answer.
-- A rotated production OpenRouter key with the desired spend cap.
+- Confirm Apple team `VKMJPS7WP4`, signing/upload roles, and paid membership.
+- Confirm/register bundle ID `com.papajohn.50hz`.
+- Create the App Store Connect record and internal tester group.
+- Approve privacy/support contact, provider retention, App Privacy answers,
+  screenshots, metadata, rights, rating, and export-compliance answers.
+- Rotate the temporary OpenRouter key and confirm its production spend cap.
 
-Engineering steps:
+Then create/validate a signed archive, install on a physical iPhone, complete
+offline/accessibility/performance/battery QA, upload, wait for processing,
+install from TestFlight, and rerun the complete production flow. See
+[APP_STORE_RELEASE.md](APP_STORE_RELEASE.md).
 
-1. Set the Development Team and automatic/manual signing intentionally.
-2. Verify privacy manifest inclusion and complete App Store privacy metadata.
-3. Create a signed Release archive and validate it in Organizer.
-4. Install on a physical iPhone and complete smoke, offline/stale, accessibility,
-   and battery/thermal QA.
-5. Upload, wait for processing, install from TestFlight, and retest the production
-   build.
-
-### 3. Hardening after the first internal build
-
-- Add per-source last-success/failure/lag/record-count observability and alerts.
-- Confirm the 72-hour raw-payload policy and set request-log, event, question,
-  and explanation retention.
-- Add a backup/restore drill.
-- Add a signed archive/export workflow when credentials are ready; CI already
-  executes XCTest and compiles an unsigned Release archive.
-- Wire the deterministic event processor into worker persistence and expose
-  resolved/historical events.
-- Connect `/v1/game/today` to a native game loop with deterministic resolution
-  and void-on-missing-data rules.
-- Add a shared durable limiter/budget before additional API replicas.
+The current host first needs the missing iOS 26.4 device platform installed in
+Xcode; the unsigned archive compile stops at LaunchScreen compilation without
+it. This is separate from Apple signing authority.
 
 ## Internal TestFlight definition of done
 
 50Hz is ready for internal TestFlight only when:
 
-- API and worker are deployed from the recorded release commit and `/ready` is
-  healthy for both roles.
-- Required data timestamps are within their documented source cadences.
-- Every native route succeeds against production, with graceful OpenRouter and
-  upstream failure behavior.
-- ETag/304 reuse, gzip, retry-after handling, cache-first launch, and stale/offline
-  labeling are verified.
-- Regional requests send only the outward postcode code.
-- Event/outage claims and explanations remain traceable to authoritative evidence.
-- A signed Release archive installs on a physical iPhone.
-- Privacy, attribution, support, accessibility, screenshots, and App Store
-  metadata are complete.
+- API and worker are deployed from the recorded pushed commit and both roles are
+  ready with current required evidence.
+- New migrations and bounded data jobs completed or produced an explicitly
+  accepted insufficient-data state.
+- Every native route succeeds against that deployment, including graceful AI,
+  upstream, stale, partial, and offline behavior.
+- Outward-only postcode transmission, protected caches/artifacts, local choices,
+  and explicit notification permission are verified.
+- Event/outage and forecast-quality language remains traceable to compatible
+  evidence and display thresholds.
+- A signed Release archive installs on a physical iPhone and passes the manual
+  accessibility/performance matrix.
+- Privacy, support, attribution, metadata, screenshots, and owner approvals are
+  complete.
 - The uploaded build processes and installs through the intended internal
   TestFlight group.

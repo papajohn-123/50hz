@@ -1,15 +1,24 @@
 # 50Hz App Store and TestFlight handoff
 
-This is the release worksheet for the iOS 18+ app. The copy is ready to paste
-once the owner-only inputs below are complete. The release-candidate API and
-worker were deployed and production-smoked on 11 July 2026, including readiness,
-the hosted legal pages, regional data, Ask, and event explanations. Re-run the
-preflight after any backend change before uploading a build.
+This is the release worksheet for the iOS 18+ app. The copy is ready for owner
+review once the inputs and current-tree deployment below are complete. The older
+API/worker baseline was production-smoked on 11 July 2026. The current repository
+adds Today, Local, Notebook, professional inspection/export, history, event
+revision, and forecast-verification contracts that are not yet pushed or
+deployed. Re-authenticate GitHub/Railway, deploy the exact release commit, run
+its migrations/data jobs, and repeat the full preflight before using this copy
+in App Store Connect. The simulator suite/build/run is green, but the current
+host's direct unsigned device archive stops during LaunchScreen compilation with
+`iOS 26.4 Platform Not Installed`; repair/install that Xcode platform before the
+archive gate.
 
 ## Owner-only inputs
 
 Engineering cannot supply or legally decide these values:
 
+- [ ] **Release-system access:** re-authenticate the normal GitHub credential
+  helper and Railway CLI/dashboard session so the reviewed commit can be pushed
+  and deployed without pasting tokens into commands or logs.
 - [ ] **Apple Developer Team:** confirm the locally selected `VKMJPS7WP4` is the
   intended paid Developer Program team and the current user has signing/upload
   permission.
@@ -71,10 +80,10 @@ Britain's grid, alive
 
 ### Promotional text
 
-151 characters; Apple's current limit is 170.
+153 characters; Apple's current limit is 170.
 
 ```text
-Watch Britain’s electricity system move in near real time, scrub the day, inspect reported events, compare regional carbon, and ask grounded questions.
+Watch Britain’s grid move, find a lower-carbon time for flexible power, inspect reported evidence, learn through predictions, and ask grounded questions.
 ```
 
 ### Description
@@ -86,16 +95,19 @@ LIVE
 See generation, demand, grid frequency, carbon intensity and interconnector flows on an abstract map of Britain. Scrub the timeline to revisit the day, inspect the observed/forecast boundary and return to live data at any time.
 
 TODAY
-Explore the current outlook and lightweight daily missions. Mission completion and prediction choices stay on your device; there is no account, leaderboard or server-side score.
+Read a finite daily briefing: the current position, the best supported forecast window, meaningful changes, what comes next and the most relevant reported events. Missing or delayed evidence is shown rather than guessed.
 
-MINE
-Compare regional carbon with the national picture and find a forecast charging window. 50Hz does not request device location. If you enter a postcode, only its outward code is sent for the regional lookup.
+LOCAL
+Choose an activity and duration to find a supported lower-carbon continuous window before your deadline. Compare regional now with the clearly labelled national forecast, inspect coverage and set an optional reminder that stays on your device. 50Hz does not request device location. If you enter a postcode, only its outward code is sent.
+
+NOTEBOOK
+Build grid intuition with one daily prediction, real in-app missions and learned concepts. Published evidence resolves a result as correct, incorrect or void. Optional on-device reminders can alert you before lock and ask you to check after the evidence window. Your choice and mission completion stay on your device; there is no account, leaderboard, prize or server-side choice submission.
 
 EVENTS AND EXPLANATIONS
 When authoritative reports identify an outage or system warning, 50Hz surfaces the notice and its evidence. Ask the Grid can explain validated observations and reported events with source-backed citations. Unsupported AI output is rejected or replaced with deterministic evidence copy.
 
 BUILT FOR TRUST
-Every data family has its own source time and cadence. Observed, estimated, derived, reported and forecast values stay distinct. The map is an illustrative national visualization, not a literal transmission-network diagram.
+Every data family has its own source time and cadence. Observed, estimated, derived, reported and forecast values stay distinct. Inspect source delivery, exact supply and connector values, event revisions, methodology, national forecast error by horizon and bounded JSON/CSV data. Error statistics are withheld until evidence thresholds pass. The map is an illustrative national visualization, not a literal transmission-network diagram.
 
 50Hz uses public Elexon and NESO data that can be delayed, corrected or temporarily unavailable. AI features use OpenRouter and may be rate-limited or unavailable without blocking the core grid view. 50Hz is informational and must not be used for operational, trading, safety or emergency decisions.
 
@@ -141,7 +153,7 @@ Apple adds the copyright symbol automatically.
 ### Beta app description
 
 ```text
-50Hz is a source-aware view of Britain’s electricity system for curious people and energy professionals. Explore near-live generation, demand, frequency, carbon and interconnector data on an abstract national map; scrub the timeline; inspect reported REMIT/SYSWARN events; compare regional carbon; try local daily missions; and ask bounded, evidence-grounded questions. No account or location permission is required. Requires iOS 18 or later.
+50Hz is a source-aware view of Britain’s electricity system for curious people and energy professionals. Explore near-live generation, demand, frequency, carbon and interconnector data on an abstract national map; read a finite daily briefing; plan a lower-carbon window for flexible use; resolve a local prediction from published evidence; inspect reported events, sources, revisions, measured national forecast error and exact exports; and ask bounded, evidence-grounded questions. No account or location permission is required. Requires iOS 18 or later.
 ```
 
 ### What to Test
@@ -152,8 +164,10 @@ Please test the complete production flow:
 • Launch on a clean install, then relaunch in Airplane Mode and confirm cached data is clearly labelled stale/offline.
 • Scrub the Live timeline, cross the observed/forecast boundary, select a fuel and Resume Live.
 • Open a reported event, inspect its source evidence and request an explanation. An evidence-based fallback is acceptable; invented numbers or causes are not.
-• In Today, check that forecasts are withheld when stale and that mission/prediction state stays local. A cached daily plan must not survive into a new date.
-• In Mine, enter a UK postcode and confirm only the outward code is shown/sent. Try delayed and failed regional refresh states.
+• In Today, check the finite briefing in complete, partial and forecast-unavailable states. A cached briefing must not survive into a new London date.
+• In Local, enter a UK postcode and confirm only the outward code is shown/sent. Select several activity durations/deadlines, inspect forecast coverage, schedule/update/cancel a reminder, confirm its tap returns to Local, and try delayed and failed regional refresh states.
+• In Notebook, make a prediction before its exact lock time, follow each mission to its real destination, and later verify a correct, incorrect or void evidence result. Explicitly schedule/cancel the lock and result-check reminders; confirm notification taps return to Notebook and never claim a result already exists. Choices and completion remain local.
+• In Data Details, open Forecast review. Confirm it says national-only, distinguishes MAE/bias/WAPE, and shows numbers only for unique reviewed horizons with at least 100 pairs and 90% coverage. In Local, any typical-error line must match the complete GB carbon window; no regional accuracy or confidence may be implied.
 • Ask a suggested grid question and check citations, freshness and limitations. Core grid browsing must still work if Ask is rate-limited or unavailable.
 • Check VoiceOver, Dynamic Type, Reduce Motion, contrast, thermal/battery behaviour and all retry controls.
 
@@ -173,13 +187,15 @@ Public data arrives at different cadences and active events may legitimately be 
 
 The app reads the production API at https://50hz-api-production.up.railway.app. Public data comes from Elexon Insights and NESO Carbon Intensity. Each value is labelled by freshness/classification; source delays or an empty active-event list are valid states, not login failures.
 
-Mine accepts a manually entered UK postcode. The full value is stored only in on-device preferences; a valid inward suffix is removed before the outward code is sent to the regional endpoint. The app does not request Location Services permission.
+Local accepts a manually entered UK postcode. The full value exists only in the transient entry field; submission normalizes it and only the outward code is saved, displayed and sent to regional endpoints. The app does not request Location Services permission. A reminder uses a local notification and asks for permission only after the reviewer taps the reminder action.
 
 Ask the Grid and event explanations are optional server-side OpenRouter features. The backend supplies bounded read-only evidence tools and server-owned citations, rejects unsupported numbers/causal claims and can return deterministic explanation copy. AI failure, validation failure, budget exhaustion or rate limiting does not block deterministic grid browsing.
 
-Today’s daily plan is supplied by the backend, but mission completion and prediction choices remain local to the device. There is no user account, leaderboard, prize or server-side scoring.
+Today’s briefing and Notebook plan are supplied by the backend, but mission completion and prediction choices remain local to the device. Published evidence resolves the result; the choice is not submitted. Optional local notifications fire 15 minutes before lock and five minutes after the evidence window closes. The latter only asks the reviewer to check and says evidence may still be pending. Permission is requested only after an explicit reminder tap, and notification taps route to Notebook. There is no user account, leaderboard, prize or server-side scoring.
 
 The abstract Britain map is illustrative rather than a literal transmission diagram. 50Hz is informational and is not intended for operational, trading, safety or emergency decisions.
+
+Forecast review is historical national error, not a confidence score or a guarantee for one future interval. Local shows it only when the recommended GB carbon window exactly matches the reviewed source, method, issue/effective-vintage basis, outturn class and horizon. It is omitted for regional or incompatible plans.
 
 Privacy policy: https://50hz-api-production.up.railway.app/privacy
 Support: https://50hz-api-production.up.railway.app/support
@@ -201,10 +217,17 @@ Current facts:
 - Railway processes ordinary operational request metadata. The conservative
   privacy-manifest posture is **Other Diagnostic Data**, not linked to identity,
   not used for tracking, purpose **App Functionality**.
-- The app stores its postcode preference and cached API responses on-device.
-- A valid full postcode is reduced to its outward code before transmission.
+- The app stores only the normalized outward postcode preference plus protected
+  cached API responses on-device; the full entry is transient.
+- Notebook choice/completion/learned state and all Local/Notebook reminder
+  metadata remain on-device. Reminders use iOS local notifications; no APNs
+  token or remote-notification backend exists.
+- A valid full postcode is reduced to its outward code before persistence,
+  display after submission, or transmission.
 - The 50Hz application database does not persist postcode requests or Ask
-  question histories.
+  question histories. Application access records also omit raw paths, query
+  strings, bodies, headers, and client addresses; Railway platform logging is a
+  separate owner/provider check.
 - Ask text and selected time are transmitted to the 50Hz API and OpenRouter only
   to service the request; provider zero-data-retention processing is requested.
 - Raw electricity-source JSON is not user data and is pruned after 72 hours by
@@ -261,9 +284,8 @@ Recommended six-frame sequence:
 2. **Replay the day** — timeline scrub with observed/forecast boundary visible.
 3. **Reported, then explained** — active authoritative event plus citations; use
    a real production notice or omit this frame when none is active.
-4. **A cleaner time to charge** — Mine regional comparison and window using only
-   outward code `SW1A`.
-5. **Today’s grid challenge** — missions/prediction with local-progress copy.
+4. **A lower-carbon time** — Local activity plan using only outward code `SW1A`.
+5. **Learn the grid** — Notebook prediction/result and local-progress copy.
 6. **Ask with evidence** — a non-personal suggested question with citations and
    limitations visible.
 
@@ -295,19 +317,35 @@ Owner-only screenshot gate:
 
 ### B. Release preflight
 
-1. Deploy the exact release commit to Railway API and worker.
-2. Require HTTP 200 from `/ready`, `/privacy`, `/support`, and all user-visible
-   routes; run the full smoke test in [OPERATIONS.md](OPERATIONS.md).
-3. Rotate the temporary OpenRouter key and verify one authorized Ask plus one
-   event explanation.
-4. Run backend tests, migration SQL validation, iOS tests, privacy-manifest lint,
-   and a Release archive compile from the clean release commit.
-5. Install a signed development/Ad Hoc build on a physical iPhone and complete
-   functional, accessibility, offline, battery, and failure-state QA.
-6. Confirm the final app icon, privacy manifest, source attribution, privacy and
-   support pages are included/available.
+1. Re-authenticate GitHub/Railway, push a clean reviewed release commit, and
+   record its identifier.
+2. Run backend/compile/native/privacy/diff/secret checks plus offline migration
+   SQL; validate the complete migration upgrade/downgrade on disposable live
+   PostgreSQL. The current Docker.app install is incomplete/missing its
+   executable, so this live gate needs a repaired Docker install or another safe
+   database.
+3. Deploy that exact commit to Railway API first, then worker; verify Alembic
+   through `20260712_0009` and both readiness states.
+4. Run/inspect the bounded history backfill, materialization, and forecast
+   verification jobs; configure approved crons and record their watermarks.
+5. Require HTTP 200 or a contract-valid evidence state from every current
+   user-visible route; run the full smoke in [OPERATIONS.md](OPERATIONS.md),
+   including ETag/gzip/rate/request-ID checks and the iOS app.
+6. Rotate the temporary OpenRouter key and verify one authorized Ask plus one
+   event explanation without unsupported claims.
+7. Install/repair the missing Xcode iOS 26.4 device platform, build a Release
+   archive from the clean release commit, then install a signed development/Ad
+   Hoc build on a physical iPhone and complete functional, accessibility,
+   offline, notification, battery, and failure-state QA.
+8. Confirm the final app icon/launch screen, privacy manifest, source
+   attribution, privacy page, and support contact are included/available.
 
 ### C. Create the signed archive
+
+Host prerequisite: Xcode must show the matching iOS device platform as
+installed. The latest local unsigned attempt reported `iOS 26.4 Platform Not
+Installed` while compiling `LaunchScreen.storyboard`; do not misdiagnose that as
+a signing or storyboard-design failure.
 
 In Xcode:
 
@@ -353,8 +391,9 @@ archive is a compile gate, not the distributable artifact.
 3. Add/invite the owner-approved App Store Connect users. Apple currently allows
    up to 100 internal testers; builds are available for up to 90 days.
 4. Install from TestFlight on a physical iPhone, not from Xcode.
-5. Re-run launch/cache, Live, timeline, event/explanation, Today/game, Mine,
-   Ask, accessibility, privacy/support-link, and failure-state checks.
+5. Re-run launch/cache, Live, timeline, event/explanation, Today, Local, Notebook,
+   local notification scheduling/deep links, Ask, accessibility,
+   privacy/support-link, and failure-state checks.
 6. Record the tested commit, version/build, API deployment, device/iOS version,
    pass/fail result, and any release blocker.
 
@@ -381,9 +420,15 @@ App Review should wait until internal feedback is closed.
 - [ ] Release commit clean, pushed, and recorded: `<COMMIT>`.
 - [ ] API deployment from that commit: `<DEPLOYMENT>`.
 - [ ] Worker deployment from that commit: `<DEPLOYMENT>`.
+- [ ] Production Alembic revision and disposable live-PostgreSQL migration test
+  recorded.
+- [ ] Backfill/materialization/verification runs and approved cron services
+  recorded.
 - [ ] Production smoke and source freshness pass.
 - [ ] `/privacy` and `/support` return approved HTTPS pages.
 - [ ] Temporary secrets rotated.
+- [ ] Xcode iOS 26.4 device platform installed; unsigned device archive compile
+  gate passes.
 - [ ] Signed archive validation passes.
 - [ ] Physical-device release QA passes.
 - [ ] App Privacy/export/age/content-rights answers approved by owner.
