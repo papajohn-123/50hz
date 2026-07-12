@@ -17,6 +17,7 @@ from app.source_health.service import build_source_health
 
 
 router = APIRouter(prefix="/v1")
+SOURCE_STATUS_CACHE_BUCKET_SECONDS = 30
 
 
 @lru_cache(maxsize=1)
@@ -51,7 +52,7 @@ async def source_status(
     health_repository: HealthRepository,
     grid_repository: GridRepository,
 ) -> SourceHealthResponse:
-    now = datetime.now(UTC)
+    now = _source_status_cache_time(datetime.now(UTC))
     sources, runs = await health_repository.load()
     fact_statuses = []
     try:
@@ -68,3 +69,12 @@ async def source_status(
         evaluated_at=now,
         current_fact_statuses=fact_statuses,
     )
+
+
+def _source_status_cache_time(value: datetime) -> datetime:
+    if value.tzinfo is None or value.utcoffset() is None:
+        raise ValueError("source status time must be timezone-aware")
+    instant = value.astimezone(UTC)
+    epoch = int(instant.timestamp())
+    bucket = epoch - (epoch % SOURCE_STATUS_CACHE_BUCKET_SECONDS)
+    return datetime.fromtimestamp(bucket, tz=UTC)

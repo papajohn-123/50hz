@@ -7,9 +7,10 @@ from uuid import UUID
 
 from sqlalchemy.dialects import postgresql
 
-from app.db.models import IngestionRun
+from app.db.models import GenerationObservation, IngestionRun
 from app.domain.enums import IngestionRunStatus
 from app.persistence.ingestion import PostgresIngestionRepository
+from app.persistence.records import map_generation_record
 from app.sources.types import AdapterResult, GenerationRecord, ObservationWindow
 
 
@@ -106,14 +107,36 @@ def adapter_result() -> AdapterResult[GenerationRecord]:
     )
 
 
+def stored_generation(
+    record: GenerationRecord,
+    *,
+    revision: int = 0,
+) -> GenerationObservation:
+    values = map_generation_record(
+        record,
+        source_id="elexon.fuelinst",
+        raw_payload_id=RAW_ID,
+    )
+    values["revision"] = revision
+    return GenerationObservation(**values)
+
+
 def test_persist_success_deduplicates_raw_data_and_classifies_upserts() -> None:
+    existing_wind = stored_generation(generation("WIND", 12_000))
+    existing_nuclear = stored_generation(generation("NUCLEAR", 4_250))
     session = FakeSession(
         [
             FakeResult(),  # source metadata upsert
             FakeResult([RUN_ID]),  # ingestion run upsert
             FakeResult(),  # raw payload conflict: no inserted id
             FakeResult([RAW_ID]),  # fetch checksum-deduplicated raw id
-            FakeResult([True, False]),  # insert, update; third row unchanged
+            FakeResult([existing_wind, existing_nuclear]),  # latest revisions in bulk
+            FakeResult(
+                [
+                    UUID("90c62fa3-79fc-43a2-b85d-b8f037523dc6"),
+                    UUID("f9d83ed8-9327-4744-a705-4eb5f32230da"),
+                ]
+            ),  # one correction plus one new identity
             FakeResult(),  # complete run
         ]
     )
@@ -144,8 +167,18 @@ def test_persist_success_deduplicates_raw_data_and_classifies_upserts() -> None:
         generation_upsert.compile(dialect=postgresql.dialect())
     ).upper()
     assert "ON CONFLICT" in generation_sql
-    assert "IS DISTINCT FROM" in generation_sql
-    assert "XMAX = 0" in generation_sql
+    assert "DO NOTHING" in generation_sql
+    assert "DO UPDATE" not in generation_sql
+    assert "IS DISTINCT FROM" not in generation_sql
+    assert "XMAX = 0" not in generation_sql
+    revision_parameters = [
+        value
+        for key, value in generation_upsert.compile(
+            dialect=postgresql.dialect()
+        ).params.items()
+        if "revision" in key
+    ]
+    assert sorted(revision_parameters) == [0, 1]
 
     raw_insert = next(
         statement
@@ -225,4 +258,3 @@ def test_record_failure_is_idempotent_and_bounds_error_payload() -> None:
         if key.startswith("error") and isinstance(value, dict)
     )
     assert len(error_parameter["message"]) == 2000
-

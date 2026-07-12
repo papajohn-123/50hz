@@ -7,6 +7,7 @@ from hashlib import sha256
 from math import isfinite
 from zoneinfo import ZoneInfo
 
+from app.game.connectors import ConnectorRegistry, connector_registry_for_date
 from app.game.models import (
     PredictionEvidenceCoverage,
     PredictionOutcome,
@@ -20,9 +21,10 @@ from app.persistence.reads import InterconnectorRead
 LONDON = ZoneInfo("Europe/London")
 NEAR_BALANCED_THRESHOLD_MW = 50.0
 RESOLUTION_RULE = (
-    "Choose the complete same-timestamp FUELINST connector snapshot nearest "
-    "18:00 Europe/London within 17:55–18:05. Positive signed net flow is "
-    "importing; negative is exporting. Absolute net flow at or below 50 MW is void."
+    "Rule v{rule_version}; connector registry {registry_version}. Choose the "
+    "complete same-timestamp FUELINST connector snapshot nearest 18:00 "
+    "Europe/London within 17:55–18:05. Positive signed net flow is importing; "
+    "negative is exporting. Absolute net flow at or below 50 MW is void."
 )
 
 
@@ -31,9 +33,12 @@ def build_prediction_resolution(
     *,
     as_of: datetime,
     interconnectors: tuple[InterconnectorRead, ...] = (),
+    connector_registry: ConnectorRegistry | None = None,
 ) -> PredictionResolution:
     instant = _aware_utc(as_of)
     definition = prediction_definition_for_date(day)
+    registry = connector_registry or connector_registry_for_date(day)
+    expected_connectors = set(registry.expected_connector_ids)
     target = datetime.combine(day, time(18, 0), tzinfo=LONDON).astimezone(UTC)
 
     if instant < definition.resolves_to:
@@ -43,7 +48,8 @@ def build_prediction_resolution(
             target=target,
             state=PredictionResolutionState.PENDING,
             as_of=instant,
-            coverage=_coverage(0, 0),
+            coverage=_coverage(len(expected_connectors), 0),
+            connector_registry=registry,
             reason=(
                 "The evidence window has not closed; 50Hz will not resolve the "
                 "prediction early."
@@ -56,18 +62,22 @@ def build_prediction_resolution(
         if definition.resolves_from
         <= _aware_utc(reading.provenance.observed_at)
         <= definition.resolves_to
+        and reading.connector_id in expected_connectors
         and isfinite(reading.megawatts)
     )
-    expected_connectors = {reading.connector_id for reading in eligible}
-    if not expected_connectors:
+    if not eligible:
         return _resolution(
             day=day,
             definition=definition,
             target=target,
             state=PredictionResolutionState.VOID,
             as_of=instant,
-            coverage=_coverage(0, 0),
-            reason="No compatible interconnector observations cover the evidence window.",
+            coverage=_coverage(len(expected_connectors), 0),
+            connector_registry=registry,
+            reason=(
+                "No compatible observations for the effective connector registry "
+                "cover the evidence window."
+            ),
         )
 
     grouped: dict[tuple[datetime, str], dict[str, InterconnectorRead]] = defaultdict(dict)
@@ -98,9 +108,10 @@ def build_prediction_resolution(
             state=PredictionResolutionState.VOID,
             as_of=instant,
             coverage=coverage,
+            connector_registry=registry,
             reason=(
-                "No same-timestamp source snapshot contains every connector seen "
-                "in the evidence window."
+                "No same-timestamp source snapshot contains every connector in "
+                f"registry {registry.version}."
             ),
         )
 
@@ -127,6 +138,7 @@ def build_prediction_resolution(
         "target": target,
         "as_of": instant,
         "coverage": coverage,
+        "connector_registry": registry,
         "observed_value_mw": round(net_flow, 3),
         "observed_at": observed_at,
         "source_ids": [source_id],
@@ -172,6 +184,7 @@ def _resolution(
     state: PredictionResolutionState,
     as_of: datetime,
     coverage: PredictionEvidenceCoverage,
+    connector_registry: ConnectorRegistry,
     reason: str,
     outcome: PredictionOutcome | None = None,
     observed_value_mw: float | None = None,
@@ -184,6 +197,7 @@ def _resolution(
     evidence = {
         "predictionID": definition.prediction_id,
         "ruleVersion": definition.rule_version,
+        "connectorRegistryVersion": connector_registry.version,
         "state": state.value,
         "outcome": outcome.value if outcome is not None else None,
         "observedValueMW": observed_value_mw,
@@ -203,7 +217,11 @@ def _resolution(
         choices=definition.choices,
         metric=definition.metric,
         rule_version=definition.rule_version,
-        rule=RESOLUTION_RULE,
+        connector_registry_version=connector_registry.version,
+        rule=RESOLUTION_RULE.format(
+            rule_version=definition.rule_version,
+            registry_version=connector_registry.version,
+        ),
         locks_at=definition.locks_at,
         evidence_from=definition.resolves_from,
         evidence_to=definition.resolves_to,

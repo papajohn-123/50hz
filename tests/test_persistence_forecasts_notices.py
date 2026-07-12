@@ -281,8 +281,10 @@ def test_mixed_carbon_result_persists_actual_and_forecast_atomically() -> None:
             FakeResult(),
             FakeResult([RUN_ID]),
             FakeResult([RAW_ID]),
-            FakeResult([True]),
-            FakeResult([True]),
+            FakeResult(),
+            FakeResult([UUID("87d276f0-b21f-4127-9f50-a0d3400fa81c")]),
+            FakeResult(),
+            FakeResult([UUID("00eb5ceb-b6d5-4270-8347-467cbf4fa90e")]),
             FakeResult(),
         ]
     )
@@ -313,7 +315,10 @@ def test_mixed_carbon_result_persists_actual_and_forecast_atomically() -> None:
     )
 
     assert outcome.inserted == 2
-    assert {getattr(statement.table, "name", None) for statement in session.executed} >= {
+    assert {
+        getattr(getattr(statement, "table", None), "name", None)
+        for statement in session.executed
+    } >= {
         "carbon_observations",
         "forecast_observations",
     }

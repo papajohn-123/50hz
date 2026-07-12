@@ -13,6 +13,7 @@ from sqlalchemy.exc import SQLAlchemyError
 from app.api.dependencies import get_grid_read_repository
 from app.config import get_settings
 from app.db import DatabaseNotConfiguredError, get_session_factory
+from app.game.connectors import connector_registry_for_date
 from app.game.models import PredictionResolution, PredictionResolutionState
 from app.game.resolution import build_prediction_resolution
 from app.game.service import prediction_definition_for_date
@@ -101,6 +102,7 @@ async def present_prediction_resolution(
         day,
         as_of=instant,
         interconnectors=observations,
+        connector_registry=connector_registry_for_date(day),
     )
     if candidate.state is PredictionResolutionState.PENDING:
         return candidate

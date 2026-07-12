@@ -230,6 +230,11 @@ def test_timeline_downsamples_each_series_without_inventing_bucket_timestamps() 
         next_bucket.observed_at,
     ]
     assert timeline.resolution_seconds == 60
+    observation_queries = session.executed[:5]
+    assert all(
+        "row_number" in str(statement).casefold()
+        for statement, _ in observation_queries
+    )
 
 
 def test_carbon_forecast_history_preserves_bounded_vintages_for_compatibility() -> None:
@@ -278,7 +283,8 @@ def test_carbon_forecast_history_preserves_bounded_vintages_for_compatibility() 
     assert [row.value for row in rows] == [75, 80]
     statement = str(session.executed[0][0])
     assert "forecast_observations.retrieved_at" in statement
-    assert "row_number" not in statement.casefold()
+    assert "row_number" in statement.casefold()
+    assert "forecast_observations.revision DESC" in statement
 
 
 def test_interconnector_evidence_read_is_source_compatible_inclusive_and_bounded() -> None:

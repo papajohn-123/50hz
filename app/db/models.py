@@ -379,6 +379,9 @@ class ForecastObservation(Base):
     issued_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), nullable=False)
     published_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True))
     retrieved_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), nullable=False)
+    revision: Mapped[int] = mapped_column(
+        Integer, nullable=False, default=0, server_default="0"
+    )
     model_name: Mapped[str | None] = mapped_column(String(120))
     settlement_date: Mapped[date | None] = mapped_column(Date)
     settlement_period: Mapped[int | None] = mapped_column(SmallInteger)
@@ -397,7 +400,8 @@ class ForecastObservation(Base):
             "variant",
             "valid_from",
             "issued_at",
-            name="uq_forecast_source_metric_series_variant_valid_issue",
+            "revision",
+            name="uq_forecast_series_valid_issue_revision",
         ),
         CheckConstraint(
             "valid_to IS NULL OR valid_to > valid_from", name="valid_forecast_window"

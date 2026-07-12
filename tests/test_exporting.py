@@ -105,6 +105,24 @@ def test_export_uses_allowlisted_source_and_preserves_provenance() -> None:
     assert payload["rows"][0]["sourceRecordIDs"] == ["carbon:first"]
 
 
+def test_export_materializes_only_the_latest_immutable_source_revision() -> None:
+    original = carbon_series()
+    corrected = RawMetricObservation(
+        timestamp=START,
+        value=72,
+        revision=1,
+        source_record_id="carbon:first:corrected",
+    )
+    series = original.model_copy(
+        update={"observations": (*original.observations, corrected)}
+    )
+
+    result = asyncio.run(build_export(FakeHistoryRepository(series), request()))
+
+    assert result.rows[0].value == 72
+    assert result.rows[0].source_record_ids == ["carbon:first:corrected"]
+
+
 def test_missing_interval_is_an_explicit_gap_not_a_zero_or_omitted_row() -> None:
     result = asyncio.run(
         build_export(FakeHistoryRepository(carbon_series(missing_second=True)), request())

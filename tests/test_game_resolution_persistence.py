@@ -9,6 +9,7 @@ from typing import Any
 import pytest
 from sqlalchemy.dialects import postgresql
 
+from app.game.connectors import ConnectorRegistry
 from app.game.models import PredictionResolution
 from app.game.resolution import build_prediction_resolution
 from app.persistence.game import PostgresPredictionResolutionLedger
@@ -17,17 +18,22 @@ from app.persistence.reads import InterconnectorRead, ReadProvenance
 
 DAY = date(2026, 7, 11)
 TARGET = datetime(2026, 7, 11, 17, tzinfo=UTC)
+TEST_REGISTRY = ConnectorRegistry(
+    version="test-connectors-v1",
+    effective_from=date(2026, 1, 1),
+    expected_connector_ids=("INTFR",),
+)
 
 
 def flow(value: float) -> InterconnectorRead:
     return InterconnectorRead(
-        connector_id="IFA",
+        connector_id="INTFR",
         display_name="IFA",
         counterparty="France",
         megawatts=value,
         provenance=ReadProvenance(
             source_id="elexon.fuelinst",
-            source_record_id=f"IFA:{value}",
+            source_record_id=f"INTFR:{value}",
             observed_at=TARGET,
             published_at=TARGET + timedelta(minutes=1),
             retrieved_at=TARGET + timedelta(minutes=2),
@@ -40,6 +46,7 @@ def terminal(value: float = 500) -> PredictionResolution:
         DAY,
         as_of=TARGET + timedelta(minutes=6),
         interconnectors=(flow(value),),
+        connector_registry=TEST_REGISTRY,
     )
 
 

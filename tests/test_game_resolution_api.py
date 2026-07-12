@@ -9,6 +9,7 @@ from sqlalchemy.exc import OperationalError
 import app.game.api as game_api
 from app.api.dependencies import get_grid_read_repository
 from app.game.api import get_prediction_resolution_ledger
+from app.game.connectors import ConnectorRegistry
 from app.game.models import PredictionResolution, PredictionResolutionState
 from app.main import app
 from app.persistence.reads import InterconnectorRead, ReadProvenance
@@ -17,6 +18,11 @@ from app.persistence.reads import InterconnectorRead, ReadProvenance
 DAY = date(2026, 7, 11)
 TARGET = datetime(2026, 7, 11, 17, tzinfo=UTC)
 AFTER_CLOSE = TARGET + timedelta(minutes=6)
+TEST_REGISTRY = ConnectorRegistry(
+    version="test-connectors-v1",
+    effective_from=date(2026, 1, 1),
+    expected_connector_ids=("INTFR", "INTNEM"),
+)
 
 
 def flow(
@@ -110,13 +116,16 @@ def request_client(
 @pytest.fixture(autouse=True)
 def restore_app_state() -> None:
     original_clock = game_api._resolution_now
+    original_registry = game_api.connector_registry_for_date
+    game_api.connector_registry_for_date = lambda _: TEST_REGISTRY
     yield
     app.dependency_overrides.clear()
     game_api._resolution_now = original_clock
+    game_api.connector_registry_for_date = original_registry
 
 
 def test_route_is_pending_until_close_and_has_a_stable_60_second_etag() -> None:
-    repository = ResolutionRepository((flow("IFA", 800),))
+    repository = ResolutionRepository((flow("INTFR", 800),))
     ledger = MemoryResolutionLedger()
     with request_client(
         now=TARGET + timedelta(minutes=4),
@@ -144,7 +153,7 @@ def test_route_is_pending_until_close_and_has_a_stable_60_second_etag() -> None:
 
 def test_terminal_route_persists_and_exposes_a_publisher_correction() -> None:
     repository = ResolutionRepository(
-        (flow("IFA", 900), flow("NEMO", -100))
+        (flow("INTFR", 900), flow("INTNEM", -100))
     )
     ledger = MemoryResolutionLedger()
     with request_client(
@@ -155,12 +164,12 @@ def test_terminal_route_persists_and_exposes_a_publisher_correction() -> None:
         first = client.get(f"/v1/game/{DAY}/resolution")
         repository.rows = (
             flow(
-                "IFA",
+                "INTFR",
                 -900,
                 retrieved_at=TARGET + timedelta(minutes=4),
                 record_id="IFA:publisher-correction",
             ),
-            flow("NEMO", -100),
+            flow("INTNEM", -100),
         )
         corrected = client.get(f"/v1/game/{DAY}/resolution")
         repeated = client.get(f"/v1/game/{DAY}/resolution")
@@ -197,7 +206,7 @@ def test_closed_window_without_compatible_evidence_is_audited_as_void() -> None:
     assert response.json()["state"] == "void"
     assert response.json()["outcome"] is None
     assert response.json()["coverage"] == {
-        "expectedConnectorCount": 0,
+        "expectedConnectorCount": 2,
         "observedConnectorCount": 0,
         "coverageFraction": 0.0,
         "complete": False,
@@ -207,7 +216,7 @@ def test_closed_window_without_compatible_evidence_is_audited_as_void() -> None:
 
 
 def test_database_failure_is_reported_as_a_retryable_service_error() -> None:
-    repository = ResolutionRepository((flow("IFA", 800),))
+    repository = ResolutionRepository((flow("INTFR", 800), flow("INTNEM", 100)))
     ledger = UnavailableResolutionLedger()
     with request_client(
         now=AFTER_CLOSE,
@@ -292,6 +301,7 @@ def test_openapi_publishes_the_camel_case_resolution_contract() -> None:
         "observedValueMW",
         "sourceIDs",
         "sourceRevisionKeys",
+        "connectorRegistryVersion",
         "resolutionRevision",
         "isCorrection",
     }.issubset(model["properties"])

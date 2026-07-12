@@ -1,3 +1,4 @@
+from app.game.connectors import ConnectorRegistry, connector_registry_for_date
 from app.game.models import (
     DailyGame,
     MissionDefinition,
@@ -11,6 +12,7 @@ from app.game.resolution import build_prediction_resolution
 
 __all__ = [
     "DailyGame",
+    "ConnectorRegistry",
     "MissionDefinition",
     "PredictionDefinition",
     "PredictionEvidenceCoverage",
@@ -18,4 +20,5 @@ __all__ = [
     "PredictionResolution",
     "PredictionResolutionState",
     "build_prediction_resolution",
+    "connector_registry_for_date",
 ]

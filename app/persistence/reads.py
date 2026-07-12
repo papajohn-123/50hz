@@ -117,6 +117,7 @@ class ForecastRead:
     source_record_id: str | None
     model_name: str | None
     attributes: dict[str, Any]
+    revision: int = 0
 
 
 @dataclass(frozen=True, slots=True)
@@ -421,12 +422,11 @@ class GridReadRepository:
         retrieved_before: datetime,
         source_id: str = "elexon.fuelinst",
     ) -> tuple[InterconnectorRead, ...]:
-        """Read a bounded, source-compatible evidence window with revisions.
+        """Read a bounded, source-compatible evidence window at latest revision.
 
         The inclusive end reflects the prediction rule's explicitly published
-        evidence window. All eligible stored revisions are retained here; the
-        deterministic resolver chooses the latest publisher revision for each
-        connector and observation timestamp.
+        evidence window. Older immutable revisions remain stored for audit, while
+        the read exposes the newest revision visible at ``retrieved_before``.
         """
 
         start = as_utc(window_start, field_name="window_start")
@@ -442,19 +442,36 @@ class GridReadRepository:
         if not normalized_source_id:
             raise ValueError("source_id cannot be blank")
 
-        statement = (
-            select(InterconnectorObservation)
+        rank = func.row_number().over(
+            partition_by=(
+                InterconnectorObservation.source_id,
+                InterconnectorObservation.connector_code,
+                InterconnectorObservation.observed_at,
+            ),
+            order_by=(
+                InterconnectorObservation.revision.desc(),
+                InterconnectorObservation.retrieved_at.desc(),
+                InterconnectorObservation.id.desc(),
+            ),
+        ).label("observation_rank")
+        ranked = (
+            select(InterconnectorObservation, rank)
             .where(
                 InterconnectorObservation.source_id == normalized_source_id,
                 InterconnectorObservation.observed_at >= start,
                 InterconnectorObservation.observed_at <= end,
                 InterconnectorObservation.retrieved_at <= captured,
             )
+            .subquery()
+        )
+        latest = aliased(InterconnectorObservation, ranked)
+        statement = (
+            select(latest)
+            .where(ranked.c.observation_rank == 1)
             .order_by(
-                InterconnectorObservation.observed_at,
-                InterconnectorObservation.connector_code,
-                InterconnectorObservation.revision,
-                InterconnectorObservation.retrieved_at,
+                latest.observed_at,
+                latest.connector_code,
+                latest.source_id,
             )
         )
         async with self._session_factory() as session:
@@ -753,8 +770,13 @@ class GridReadRepository:
                     )
                 ).scalars().all()
             )
-            carbon_statement = _between_statement(CarbonObservation, start, end).where(
-                func.lower(CarbonObservation.region_code) == carbon_region.lower()
+            carbon_statement = _between_statement(
+                CarbonObservation,
+                start,
+                end,
+                extra_conditions=(
+                    func.lower(CarbonObservation.region_code) == carbon_region.lower(),
+                ),
             )
             carbon_rows = list(
                 (await session.execute(carbon_statement)).scalars().all()
@@ -900,6 +922,7 @@ def map_forecast_read(row: ForecastObservation) -> ForecastRead:
         source_record_id=row.source_record_id,
         model_name=row.model_name,
         attributes=dict(row.attributes or {}),
+        revision=row.revision,
     )
 
 
@@ -1053,10 +1076,28 @@ def _latest_generation_statement(as_of: datetime) -> Select:
         .where(GenerationObservation.observed_at <= as_of)
         .scalar_subquery()
     )
-    return (
-        select(GenerationObservation)
+    rank = func.row_number().over(
+        partition_by=(
+            GenerationObservation.source_id,
+            GenerationObservation.series_key,
+            GenerationObservation.observed_at,
+        ),
+        order_by=(
+            GenerationObservation.revision.desc(),
+            GenerationObservation.retrieved_at.desc(),
+            GenerationObservation.id.desc(),
+        ),
+    ).label("observation_rank")
+    ranked = (
+        select(GenerationObservation, rank)
         .where(GenerationObservation.observed_at == latest_time)
-        .order_by(GenerationObservation.fuel_type, GenerationObservation.series_key)
+        .subquery()
+    )
+    latest = aliased(GenerationObservation, ranked)
+    return (
+        select(latest)
+        .where(ranked.c.observation_rank == 1)
+        .order_by(latest.fuel_type, latest.series_key, latest.source_id)
     )
 
 
@@ -1068,6 +1109,7 @@ def _latest_demand_statement(as_of: datetime) -> Select:
             DemandObservation.observed_at.desc(),
             DemandObservation.revision.desc(),
             DemandObservation.retrieved_at.desc(),
+            DemandObservation.id.desc(),
         )
         .limit(1)
     )
@@ -1081,6 +1123,7 @@ def _latest_frequency_statement(as_of: datetime) -> Select:
             FrequencyObservation.observed_at.desc(),
             FrequencyObservation.revision.desc(),
             FrequencyObservation.retrieved_at.desc(),
+            FrequencyObservation.id.desc(),
         )
         .limit(1)
     )
@@ -1097,6 +1140,7 @@ def _latest_interconnector_statement(
             InterconnectorObservation.observed_at.desc(),
             InterconnectorObservation.revision.desc(),
             InterconnectorObservation.retrieved_at.desc(),
+            InterconnectorObservation.id.desc(),
         ),
     ).label("observation_rank")
     ranked = (
@@ -1126,6 +1170,7 @@ def _latest_carbon_statement(as_of: datetime, *, carbon_region: str) -> Select:
             CarbonObservation.observed_at.desc(),
             CarbonObservation.revision.desc(),
             CarbonObservation.retrieved_at.desc(),
+            CarbonObservation.id.desc(),
         )
         .limit(1)
     )
@@ -1166,7 +1211,9 @@ def _latest_forecasts_statement(
         ),
         order_by=(
             ForecastObservation.issued_at.desc(),
+            ForecastObservation.revision.desc(),
             ForecastObservation.retrieved_at.desc(),
+            ForecastObservation.id.desc(),
         ),
     ).label("forecast_rank")
     ranked = select(ForecastObservation, rank).where(*conditions).subquery()
@@ -1187,10 +1234,25 @@ def _forecast_history_statement(
     captured_before: datetime,
     issued_before: datetime,
 ) -> Select:
-    """Read a bounded set of raw carbon rows so callers can keep one vintage."""
+    """Read bounded carbon vintages at their newest visible local revision."""
 
-    return (
-        select(ForecastObservation)
+    rank = func.row_number().over(
+        partition_by=(
+            ForecastObservation.source_id,
+            ForecastObservation.metric_type,
+            ForecastObservation.series_key,
+            ForecastObservation.variant,
+            ForecastObservation.valid_from,
+            ForecastObservation.issued_at,
+        ),
+        order_by=(
+            ForecastObservation.revision.desc(),
+            ForecastObservation.retrieved_at.desc(),
+            ForecastObservation.id.desc(),
+        ),
+    ).label("forecast_revision_rank")
+    ranked = (
+        select(ForecastObservation, rank)
         .where(
             ForecastObservation.metric_type == "carbon_intensity",
             ForecastObservation.variant == "point",
@@ -1202,11 +1264,17 @@ def _forecast_history_statement(
             ForecastObservation.retrieved_at <= captured_before,
             ForecastObservation.issued_at <= issued_before,
         )
+        .subquery()
+    )
+    latest = aliased(ForecastObservation, ranked)
+    return (
+        select(latest)
+        .where(ranked.c.forecast_revision_rank == 1)
         .order_by(
-            ForecastObservation.retrieved_at.desc(),
-            ForecastObservation.issued_at.desc(),
-            ForecastObservation.source_id,
-            ForecastObservation.valid_from,
+            latest.retrieved_at.desc(),
+            latest.issued_at.desc(),
+            latest.source_id,
+            latest.valid_from,
         )
     )
 
@@ -1454,12 +1522,56 @@ def _notice_is_upcoming(
     return status not in _INACTIVE_NOTICE_STATUSES
 
 
-def _between_statement(model: type, start: datetime, end: datetime) -> Select:
-    return (
-        select(model)
-        .where(model.observed_at >= start, model.observed_at < end)
-        .order_by(model.observed_at, model.revision, model.source_id)
+def _between_statement(
+    model: type,
+    start: datetime,
+    end: datetime,
+    *,
+    extra_conditions: Sequence[Any] = (),
+) -> Select:
+    identity = _observation_identity_columns(model)
+    rank = func.row_number().over(
+        partition_by=identity,
+        order_by=(
+            model.revision.desc(),
+            model.retrieved_at.desc(),
+            model.id.desc(),
+        ),
+    ).label("observation_rank")
+    ranked = (
+        select(model, rank)
+        .where(
+            model.observed_at >= start,
+            model.observed_at < end,
+            *extra_conditions,
+        )
+        .subquery()
     )
+    latest = aliased(model, ranked)
+    return (
+        select(latest)
+        .where(ranked.c.observation_rank == 1)
+        .order_by(latest.observed_at, latest.source_id, latest.id)
+    )
+
+
+def _observation_identity_columns(model: type) -> tuple[Any, ...]:
+    if model is GenerationObservation:
+        return (model.source_id, model.series_key, model.observed_at)
+    if model is DemandObservation:
+        return (
+            model.source_id,
+            model.series_key,
+            model.demand_type,
+            model.observed_at,
+        )
+    if model is FrequencyObservation:
+        return (model.source_id, model.series_key, model.observed_at)
+    if model is InterconnectorObservation:
+        return (model.source_id, model.connector_code, model.observed_at)
+    if model is CarbonObservation:
+        return (model.source_id, model.region_code, model.observed_at)
+    raise TypeError(f"unsupported observation model: {model!r}")
 
 
 async def _read_source_rows(

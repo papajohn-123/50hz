@@ -14,6 +14,7 @@ import time
 from collections import defaultdict, deque
 from collections.abc import Awaitable, Callable, Iterable
 from dataclasses import dataclass
+from math import ceil
 from typing import Any
 
 
@@ -36,6 +37,9 @@ DEFAULT_POLICIES = (
     RateLimitPolicy("GET", "/v1/regions/", per_client=30, global_limit=120),
     RateLimitPolicy("GET", "/v1/grid/timeline", per_client=60, global_limit=300),
     RateLimitPolicy("GET", "/v1/export", per_client=6, global_limit=30),
+    RateLimitPolicy("GET", "/v1/briefing/today", per_client=30, global_limit=120),
+    RateLimitPolicy("GET", "/v1/sources/status", per_client=30, global_limit=120),
+    RateLimitPolicy("GET", "/v1/game/", per_client=12, global_limit=60),
 )
 
 
@@ -97,6 +101,10 @@ class RateLimitMiddleware:
                     "/explanation"
                 ):
                     continue
+                if policy.path_prefix == "/v1/game/" and not path.endswith(
+                    "/resolution"
+                ):
+                    continue
                 return policy
         return None
 
@@ -117,15 +125,16 @@ class RateLimitMiddleware:
             client_calls = self._clients[(policy, client)]
             _discard_before(global_calls, cutoff)
             _discard_before(client_calls, cutoff)
-            if (
-                len(global_calls) >= policy.global_limit
-                or len(client_calls) >= policy.per_client
-            ):
-                oldest = min(
-                    global_calls[0] if global_calls else now,
-                    client_calls[0] if client_calls else now,
-                )
-                return max(1, int(oldest + policy.window_seconds - now) + 1)
+            blocking_expirations = []
+            if len(global_calls) >= policy.global_limit:
+                blocking_expirations.append(global_calls[0] + policy.window_seconds)
+            if len(client_calls) >= policy.per_client:
+                blocking_expirations.append(client_calls[0] + policy.window_seconds)
+            if blocking_expirations:
+                # The request becomes admissible only after every currently full
+                # bucket has capacity. Ignore a non-blocking bucket entirely.
+                retry_at = max(blocking_expirations)
+                return max(1, ceil(retry_at - now))
             global_calls.append(now)
             client_calls.append(now)
         return None

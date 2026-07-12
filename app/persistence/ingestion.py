@@ -4,13 +4,14 @@ import hashlib
 import re
 import uuid
 from collections import defaultdict
-from collections.abc import Callable, Sequence
+from collections.abc import Callable, Mapping, Sequence
 from dataclasses import dataclass
 from datetime import UTC, datetime
+from enum import Enum
 from typing import Any
 from uuid import UUID
 
-from sqlalchemy import Boolean, func, literal_column, or_, select, update
+from sqlalchemy import Boolean, func, literal_column, or_, select, tuple_, update
 from sqlalchemy.dialects.postgresql import insert as pg_insert
 from sqlalchemy.ext.asyncio import AsyncSession
 
@@ -70,14 +71,27 @@ _RAW_PAYLOAD_NAMESPACE = UUID("40321ac1-3394-58d2-9cf7-33dbb7187b6c")
 class _UpsertSpec:
     model: type
     conflict_columns: tuple[str, ...]
-    update_columns: tuple[str, ...]
+    update_columns: tuple[str, ...] = ()
+    identity_columns: tuple[str, ...] = ()
+    factual_columns: tuple[str, ...] = ()
+
+    @property
+    def immutable_revisioned(self) -> bool:
+        return bool(self.identity_columns)
+
+
+_REVISION_LOOKUP_BATCH_SIZE = 250
+
+
+class ImmutableRevisionConflictError(RuntimeError):
+    """A source lock failed to serialize immutable revision allocation."""
 
 
 _GENERATION_SPEC = _UpsertSpec(
     model=GenerationObservation,
     conflict_columns=("source_id", "series_key", "observed_at", "revision"),
-    update_columns=(
-        "raw_payload_id",
+    identity_columns=("source_id", "series_key", "observed_at"),
+    factual_columns=(
         "source_record_id",
         "fuel_type",
         "asset_id",
@@ -85,7 +99,6 @@ _GENERATION_SPEC = _UpsertSpec(
         "settlement_date",
         "settlement_period",
         "published_at",
-        "retrieved_at",
         "quality",
         "attributes",
     ),
@@ -99,14 +112,13 @@ _DEMAND_SPEC = _UpsertSpec(
         "observed_at",
         "revision",
     ),
-    update_columns=(
-        "raw_payload_id",
+    identity_columns=("source_id", "series_key", "demand_type", "observed_at"),
+    factual_columns=(
         "source_record_id",
         "demand_mw",
         "settlement_date",
         "settlement_period",
         "published_at",
-        "retrieved_at",
         "quality",
         "attributes",
     ),
@@ -114,12 +126,11 @@ _DEMAND_SPEC = _UpsertSpec(
 _FREQUENCY_SPEC = _UpsertSpec(
     model=FrequencyObservation,
     conflict_columns=("source_id", "series_key", "observed_at", "revision"),
-    update_columns=(
-        "raw_payload_id",
+    identity_columns=("source_id", "series_key", "observed_at"),
+    factual_columns=(
         "source_record_id",
         "frequency_hz",
         "published_at",
-        "retrieved_at",
         "quality",
         "attributes",
     ),
@@ -127,14 +138,13 @@ _FREQUENCY_SPEC = _UpsertSpec(
 _INTERCONNECTOR_SPEC = _UpsertSpec(
     model=InterconnectorObservation,
     conflict_columns=("source_id", "connector_code", "observed_at", "revision"),
-    update_columns=(
-        "raw_payload_id",
+    identity_columns=("source_id", "connector_code", "observed_at"),
+    factual_columns=(
         "source_record_id",
         "asset_id",
         "counterparty",
         "flow_mw",
         "published_at",
-        "retrieved_at",
         "quality",
         "attributes",
     ),
@@ -142,14 +152,13 @@ _INTERCONNECTOR_SPEC = _UpsertSpec(
 _CARBON_ACTUAL_SPEC = _UpsertSpec(
     model=CarbonObservation,
     conflict_columns=("source_id", "region_code", "observed_at", "revision"),
-    update_columns=(
-        "raw_payload_id",
+    identity_columns=("source_id", "region_code", "observed_at"),
+    factual_columns=(
         "source_record_id",
         "intensity_gco2_kwh",
         "index_label",
         "generation_mix",
         "published_at",
-        "retrieved_at",
         "quality",
         "attributes",
     ),
@@ -163,9 +172,17 @@ _FORECAST_SPEC = _UpsertSpec(
         "variant",
         "valid_from",
         "issued_at",
+        "revision",
     ),
-    update_columns=(
-        "raw_payload_id",
+    identity_columns=(
+        "source_id",
+        "metric_type",
+        "series_key",
+        "variant",
+        "valid_from",
+        "issued_at",
+    ),
+    factual_columns=(
         "source_record_id",
         "value",
         "unit",
@@ -173,7 +190,6 @@ _FORECAST_SPEC = _UpsertSpec(
         "value_high",
         "valid_to",
         "published_at",
-        "retrieved_at",
         "model_name",
         "settlement_date",
         "settlement_period",
@@ -387,10 +403,26 @@ class PostgresIngestionRepository:
                     if spec is _REPORTED_NOTICE_SPEC:
                         reported_notice_rows.extend(rows)
                     unique_rows, duplicate_count = _deduplicate_rows(
-                        rows, spec.conflict_columns
+                        rows,
+                        spec.identity_columns or spec.conflict_columns,
                     )
                     unchanged += duplicate_count
                     if not unique_rows:
+                        continue
+                    if spec.immutable_revisioned:
+                        latest = await _load_latest_revisions(
+                            session,
+                            spec,
+                            unique_rows,
+                        )
+                        prepared, new_count, correction_count, same_count = (
+                            _prepare_immutable_revisions(spec, unique_rows, latest)
+                        )
+                        unchanged += same_count
+                        if prepared:
+                            await _insert_immutable_revisions(session, spec, prepared)
+                        inserted += new_count
+                        updated_count += correction_count
                         continue
                     write_result = await session.execute(
                         _observation_upsert(spec, unique_rows)
@@ -518,6 +550,132 @@ def _observation_upsert(spec: _UpsertSpec, rows: Sequence[dict[str, Any]]):
         set_=update_values,
         where=changed,
     ).returning(literal_column("xmax = 0", Boolean).label("was_inserted"))
+
+
+async def _load_latest_revisions(
+    session: AsyncSession,
+    spec: _UpsertSpec,
+    rows: Sequence[dict[str, Any]],
+) -> dict[tuple[Any, ...], Any]:
+    """Load one deterministic latest row per identity in bounded bulk queries."""
+
+    identity_keys = [_identity_key(spec, row) for row in rows]
+    latest: dict[tuple[Any, ...], Any] = {}
+    for offset in range(0, len(identity_keys), _REVISION_LOOKUP_BATCH_SIZE):
+        batch = identity_keys[offset : offset + _REVISION_LOOKUP_BATCH_SIZE]
+        result = await session.execute(_latest_revision_statement(spec, batch))
+        for existing in result.scalars().all():
+            latest[_identity_key(spec, existing)] = existing
+    return latest
+
+
+def _latest_revision_statement(
+    spec: _UpsertSpec,
+    identity_keys: Sequence[tuple[Any, ...]],
+):
+    if not spec.immutable_revisioned:
+        raise ValueError("latest-revision lookup requires an immutable spec")
+    columns = tuple(getattr(spec.model, name) for name in spec.identity_columns)
+    return (
+        select(spec.model)
+        .where(tuple_(*columns).in_(list(identity_keys)))
+        # PostgreSQL DISTINCT ON avoids a query per observation while retaining
+        # deterministic tie-breaking for any pre-existing malformed duplicates.
+        .distinct(*columns)
+        .order_by(
+            *columns,
+            spec.model.revision.desc(),
+            spec.model.created_at.desc(),
+            spec.model.id.desc(),
+        )
+    )
+
+
+def _prepare_immutable_revisions(
+    spec: _UpsertSpec,
+    rows: Sequence[dict[str, Any]],
+    latest: Mapping[tuple[Any, ...], Any],
+) -> tuple[list[dict[str, Any]], int, int, int]:
+    """Allocate local revisions without treating delivery metadata as evidence."""
+
+    prepared: list[dict[str, Any]] = []
+    inserted = 0
+    corrected = 0
+    unchanged = 0
+    for candidate in rows:
+        identity = _identity_key(spec, candidate)
+        existing = latest.get(identity)
+        if existing is None:
+            revision = 0
+            inserted += 1
+        elif _factual_signature(spec, candidate) == _factual_signature(
+            spec, existing
+        ):
+            unchanged += 1
+            continue
+        else:
+            revision = int(_row_value(existing, "revision")) + 1
+            corrected += 1
+        revisioned = dict(candidate)
+        revisioned["revision"] = revision
+        prepared.append(revisioned)
+    return prepared, inserted, corrected, unchanged
+
+
+async def _insert_immutable_revisions(
+    session: AsyncSession,
+    spec: _UpsertSpec,
+    rows: Sequence[dict[str, Any]],
+) -> None:
+    statement = (
+        pg_insert(spec.model)
+        .values(list(rows))
+        .on_conflict_do_nothing(
+            index_elements=[
+                getattr(spec.model, name) for name in spec.conflict_columns
+            ]
+        )
+        .returning(spec.model.id)
+    )
+    result = await session.execute(statement)
+    written = len(result.scalars().all())
+    if written != len(rows):
+        # Never turn a revision-allocation race into an in-place overwrite. The
+        # surrounding transaction rolls back and a later locked run can retry.
+        raise ImmutableRevisionConflictError(
+            "immutable observation revision conflicted; source lock was not exclusive"
+        )
+
+
+def _identity_key(spec: _UpsertSpec, row: Any) -> tuple[Any, ...]:
+    return tuple(_row_value(row, name) for name in spec.identity_columns)
+
+
+def _factual_signature(spec: _UpsertSpec, row: Any) -> tuple[Any, ...]:
+    return tuple(_canonical_fact(_row_value(row, name)) for name in spec.factual_columns)
+
+
+def _row_value(row: Any, name: str) -> Any:
+    if isinstance(row, Mapping):
+        return row[name]
+    return getattr(row, name)
+
+
+def _canonical_fact(value: Any) -> Any:
+    if isinstance(value, Enum):
+        return value.value
+    if isinstance(value, datetime):
+        return as_utc(value, field_name="factual datetime").isoformat()
+    if isinstance(value, UUID):
+        return str(value)
+    if isinstance(value, Mapping):
+        return tuple(
+            (str(key), _canonical_fact(item))
+            for key, item in sorted(value.items(), key=lambda pair: str(pair[0]))
+        )
+    if isinstance(value, (list, tuple)):
+        return tuple(_canonical_fact(item) for item in value)
+    return value
 
 
 def _map_record_batches(

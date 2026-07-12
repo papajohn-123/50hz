@@ -94,13 +94,14 @@ class PredictionEvidenceCoverage(ResolutionModel):
 
 
 class PredictionResolution(ResolutionModel):
-    schema_version: str = "1.0"
+    schema_version: str = "1.1"
     prediction_id: str = Field(alias="predictionID")
     date: date
     question: str
     choices: list[PredictionChoice]
     metric: str
     rule_version: int = Field(ge=1)
+    connector_registry_version: str = "legacy-observed-set"
     rule: str
     locks_at: AwareDatetime
     evidence_from: AwareDatetime
