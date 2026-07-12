@@ -5,6 +5,7 @@ from __future__ import annotations
 import json
 import logging
 import re
+import sys
 import time
 import uuid
 from collections.abc import Awaitable, Callable
@@ -28,7 +29,10 @@ logger = logging.getLogger("50hz.request")
 logger.setLevel(logging.INFO)
 logger.propagate = False
 if not logger.handlers:
-    _structured_handler = logging.StreamHandler()
+    # Railway classifies container stderr as error output regardless of the
+    # Python log record level. Successful access records belong on stdout so a
+    # healthy 2xx request is not presented as an operational error.
+    _structured_handler = logging.StreamHandler(sys.stdout)
     _structured_handler.setFormatter(logging.Formatter("%(message)s"))
     logger.addHandler(_structured_handler)
 _REQUEST_ID = re.compile(

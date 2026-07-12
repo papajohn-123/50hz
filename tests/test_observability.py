@@ -4,6 +4,8 @@ import json
 import logging
 from pathlib import Path
 import re
+import subprocess
+import sys
 
 from fastapi import FastAPI, HTTPException
 from fastapi.responses import StreamingResponse
@@ -226,3 +228,20 @@ def test_production_command_disables_uvicorn_raw_access_log() -> None:
 
     assert "uvicorn app.main:app" in dockerfile
     assert "--no-access-log" in dockerfile
+
+
+def test_production_request_logger_writes_success_records_to_stdout() -> None:
+    result = subprocess.run(
+        [
+            sys.executable,
+            "-c",
+            "from app.observability import logger; logger.info('request-probe')",
+        ],
+        cwd=Path(__file__).parents[1],
+        capture_output=True,
+        check=True,
+        text=True,
+    )
+
+    assert result.stdout.strip() == "request-probe"
+    assert result.stderr == ""
