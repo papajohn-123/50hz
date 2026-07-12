@@ -15,6 +15,7 @@ from app.history import (
     aggregate_daily_mean,
     assess_daily_coverage,
     compare_history,
+    compare_history_many,
     expected_settlement_intervals,
 )
 
@@ -87,6 +88,42 @@ def reference_series(value: float = 100) -> MetricSeries:
         identity=IDENTITY,
         observations=[observation(REFERENCE_START, value, record_id="reference")],
     )
+
+
+def test_batched_history_comparisons_match_individual_results() -> None:
+    references = MetricSeries(
+        identity=IDENTITY,
+        observations=[
+            observation(REFERENCE_START, 100, record_id="reference"),
+            observation(
+                REFERENCE_START + timedelta(minutes=30),
+                110,
+                record_id="reference-next",
+            ),
+        ],
+    )
+    history = rolling_history(list(range(1, 29)), include_previous_period=90)
+    starts = (
+        REFERENCE_START,
+        REFERENCE_START + timedelta(minutes=30),
+        REFERENCE_START + timedelta(hours=1),
+    )
+
+    batched = compare_history_many(
+        references,
+        reference_starts=starts,
+        history_series=history,
+    )
+    individual = tuple(
+        compare_history(
+            references,
+            reference_start=start,
+            history_series=history,
+        )
+        for start in starts
+    )
+
+    assert batched == individual
 
 
 def rolling_history(

@@ -91,21 +91,69 @@ def compare_history(
     reference_at = _aware_half_hour(reference_start, "reference_start")
     history = history_series or reference_series
     reference_groups = _groups(reference_series.observations)
-    reference_samples = reference_groups.get(reference_at, [])
+    history_groups = _groups(history.observations)
     mismatches = _compatibility_mismatches(
         reference_series.identity,
         history.identity,
     )
+    return _compare_history_from_groups(
+        identity=reference_series.identity,
+        reference_at=reference_at,
+        reference_groups=reference_groups,
+        history_groups=history_groups,
+        mismatches=mismatches,
+    )
+
+
+def compare_history_many(
+    reference_series: MetricSeries,
+    *,
+    reference_starts: Iterable[datetime],
+    history_series: MetricSeries | None = None,
+) -> tuple[HistoryComparisonSet, ...]:
+    """Compare several references while indexing each immutable series once."""
+
+    references = tuple(
+        _aware_half_hour(value, "reference_start") for value in reference_starts
+    )
+    history = history_series or reference_series
+    reference_groups = _groups(reference_series.observations)
+    history_groups = _groups(history.observations)
+    mismatches = _compatibility_mismatches(
+        reference_series.identity,
+        history.identity,
+    )
+    return tuple(
+        _compare_history_from_groups(
+            identity=reference_series.identity,
+            reference_at=reference_at,
+            reference_groups=reference_groups,
+            history_groups=history_groups,
+            mismatches=mismatches,
+        )
+        for reference_at in references
+    )
+
+
+def _compare_history_from_groups(
+    *,
+    identity: MetricSeriesIdentity,
+    reference_at: datetime,
+    reference_groups: dict[datetime, list[HalfHourObservation]],
+    history_groups: dict[datetime, list[HalfHourObservation]],
+    mismatches: list[str],
+) -> HistoryComparisonSet:
+    reference_samples = reference_groups.get(reference_at, [])
 
     if not reference_samples:
         return _unavailable_comparison_set(
-            identity=reference_series.identity,
+            identity=identity,
             reference_start=reference_at,
             reason=ResultReason.MISSING_REFERENCE,
         )
     if len(reference_samples) > 1:
         return _unavailable_comparison_set(
-            identity=reference_series.identity,
+            identity=identity,
             reference_start=reference_at,
             reason=ResultReason.DUPLICATE_REFERENCE,
         )
@@ -113,12 +161,11 @@ def compare_history(
     reference = reference_samples[0]
     if mismatches:
         return _incompatible_comparison_set(
-            identity=reference_series.identity,
+            identity=identity,
             reference=reference,
             mismatches=mismatches,
         )
 
-    history_groups = _groups(history.observations)
     previous = _point_comparison(
         kind=PointComparisonKind.PREVIOUS_PERIOD,
         reference=reference,
@@ -139,7 +186,7 @@ def compare_history(
     )
     rolling = _rolling_comparison(reference, history_groups)
     return HistoryComparisonSet(
-        identity=reference_series.identity,
+        identity=identity,
         reference_start=reference_at,
         previous_period=previous,
         same_time_yesterday=yesterday,

@@ -272,6 +272,7 @@ def _map_row(
         value=value,
         revision=row.revision,
         source_record_id=_source_record_provenance(row),
+        retrieved_at=_aware_utc(row.retrieved_at, "retrieved_at"),
     )
 
 

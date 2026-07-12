@@ -205,6 +205,7 @@ def test_initial_metadata_contains_all_foundation_tables() -> None:
         "observation_coverage_daily",
         "metric_aggregates",
         "comparison_baselines",
+        "history_materialization_runs",
         "event_lifecycle_revisions",
         "event_lifecycle_deltas",
         "prediction_resolution_revisions",

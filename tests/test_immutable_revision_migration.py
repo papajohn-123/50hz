@@ -17,7 +17,7 @@ def test_forecast_revision_migration_is_linear_and_model_identity_is_revisioned(
 
     assert migration is not None
     assert migration.down_revision == "20260712_0006"
-    assert scripts.get_current_head() == "20260712_0007"
+    assert scripts.get_current_head() == "20260712_0008"
 
     unique = next(
         constraint

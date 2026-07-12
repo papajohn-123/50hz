@@ -29,6 +29,7 @@ class RawMetricObservation(BaseModel):
     value: float = Field(allow_inf_nan=False)
     revision: int = Field(ge=0, strict=True)
     source_record_id: str = Field(min_length=1)
+    retrieved_at: AwareDatetime | None = None
 
 
 class RawMetricSeries(BaseModel):
@@ -232,6 +233,11 @@ def materialize_half_hours(
         else:
             outside.append(raw)
     selected_by_timestamp = _select_highest_revisions(in_window)
+    selected_by_interval: dict[datetime, list[SelectedRawObservation]] = defaultdict(list)
+    for timestamp, selected in selected_by_timestamp.items():
+        index = int((timestamp - window_start) // HALF_HOUR)
+        bucket_start = window_start + index * HALF_HOUR
+        selected_by_interval[bucket_start].append(selected)
 
     interval_results: list[HalfHourMaterialization] = []
     observations: list[HalfHourObservation] = []
@@ -254,10 +260,12 @@ def materialize_half_hours(
             if timestamp not in selected_by_timestamp
         )
         unexpected_samples = tuple(
-            selected_by_timestamp[timestamp]
-            for timestamp in sorted(selected_by_timestamp)
-            if interval_start <= timestamp < interval_end
-            and timestamp not in expected_set
+            sample
+            for sample in sorted(
+                selected_by_interval.get(interval_start, ()),
+                key=lambda candidate: candidate.timestamp,
+            )
+            if sample.timestamp not in expected_set
         )
         unexpected_timestamps = tuple(
             sample.timestamp for sample in unexpected_samples

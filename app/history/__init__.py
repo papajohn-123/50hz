@@ -30,6 +30,7 @@ from app.history.service import (
     aggregate_daily_mean,
     assess_daily_coverage,
     compare_history,
+    compare_history_many,
 )
 
 __all__ = [
@@ -58,6 +59,7 @@ __all__ = [
     "aggregate_daily_mean",
     "assess_daily_coverage",
     "compare_history",
+    "compare_history_many",
     "expected_settlement_intervals",
     "materialize_half_hours",
 ]

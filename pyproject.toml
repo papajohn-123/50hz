@@ -19,6 +19,7 @@ dependencies = [
 
 [project.scripts]
 50hz-history-backfill = "app.history.backfill:main"
+50hz-history-materialize = "app.history.materialization_job:main"
 
 [project.optional-dependencies]
 dev = [

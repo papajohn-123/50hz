@@ -156,6 +156,14 @@ class IngestionRun(Base):
         CheckConstraint("records_received >= 0", name="nonnegative_records_received"),
         CheckConstraint("records_written >= 0", name="nonnegative_records_written"),
         Index("ix_ingestion_runs_source_status_started", "source_id", "status", "started_at"),
+        Index("ix_ingestion_runs_adapter_started", "adapter", "started_at"),
+        Index("ix_ingestion_runs_source_started", "source_id", "started_at"),
+        Index(
+            "ix_ingestion_runs_source_status_completed",
+            "source_id",
+            "status",
+            "completed_at",
+        ),
     )
 
 
@@ -540,6 +548,25 @@ class ReportedNotice(Base):
         Index(
             "ix_reported_notices_active_window", "notice_kind", "event_start", "event_end"
         ),
+        Index(
+            "ix_reported_notices_kind_published",
+            "notice_kind",
+            "published_at",
+        ),
+        Index(
+            "ix_reported_notices_identity_revision",
+            "source_id",
+            "notice_kind",
+            "external_id",
+            "revision_number",
+            "published_at",
+        ),
+        Index(
+            "ix_reported_notices_external_history",
+            "external_id",
+            "published_at",
+            "retrieved_at",
+        ),
         Index("ix_reported_notices_source_retrieved", "source_id", "retrieved_at"),
     )
 
@@ -550,6 +577,7 @@ class MetricDefinition(TimestampMixin, Base):
     __tablename__ = "metric_definitions"
 
     id: Mapped[str] = mapped_column(String(120), primary_key=True)
+    stable_metric_id: Mapped[str] = mapped_column(String(120), nullable=False)
     identity_version: Mapped[str] = mapped_column(String(80), nullable=False)
     display_name: Mapped[str] = mapped_column(String(160), nullable=False)
     unit: Mapped[str] = mapped_column(String(32), nullable=False)
@@ -580,12 +608,12 @@ class MetricDefinition(TimestampMixin, Base):
             name="positive_metric_interval",
         ),
         UniqueConstraint(
-            "id",
+            "stable_metric_id",
             "identity_version",
             "methodology_version",
             name="uq_metric_definition_identity",
         ),
-        Index("ix_metric_definitions_active", "active", "id"),
+        Index("ix_metric_definitions_active", "active", "stable_metric_id"),
     )
 
 
@@ -613,8 +641,12 @@ class ObservationCoverageDaily(Base):
         JSON_DOCUMENT, nullable=False, default=list, server_default=text("'[]'")
     )
     methodology_version: Mapped[str] = mapped_column(String(120), nullable=False)
-    source_watermark_at: Mapped[datetime] = mapped_column(
-        DateTime(timezone=True), nullable=False
+    revision: Mapped[int] = mapped_column(
+        Integer, nullable=False, default=0, server_default="0"
+    )
+    content_sha256: Mapped[str] = mapped_column(String(64), nullable=False)
+    source_watermark_at: Mapped[datetime | None] = mapped_column(
+        DateTime(timezone=True), nullable=True
     )
     computed_at: Mapped[datetime] = mapped_column(
         DateTime(timezone=True), nullable=False, server_default=func.now()
@@ -641,12 +673,18 @@ class ObservationCoverageDaily(Base):
             "coverage_fraction >= 0 AND coverage_fraction <= 1",
             name="bounded_daily_coverage",
         ),
+        CheckConstraint("revision >= 0", name="nonnegative_daily_coverage_revision"),
+        CheckConstraint(
+            "length(content_sha256) = 64",
+            name="valid_daily_coverage_content_sha256",
+        ),
         UniqueConstraint(
             "metric_id",
             "series_key",
             "geography",
             "settlement_date",
             "methodology_version",
+            "revision",
             name="uq_daily_coverage_series_date_method",
         ),
         Index(
@@ -678,8 +716,12 @@ class MetricAggregate(Base):
     coverage_fraction: Mapped[float] = mapped_column(Float, nullable=False)
     status: Mapped[str] = mapped_column(String(32), nullable=False)
     methodology_version: Mapped[str] = mapped_column(String(120), nullable=False)
-    source_watermark_at: Mapped[datetime] = mapped_column(
-        DateTime(timezone=True), nullable=False
+    revision: Mapped[int] = mapped_column(
+        Integer, nullable=False, default=0, server_default="0"
+    )
+    content_sha256: Mapped[str] = mapped_column(String(64), nullable=False)
+    source_watermark_at: Mapped[datetime | None] = mapped_column(
+        DateTime(timezone=True), nullable=True
     )
     attributes: Mapped[dict[str, Any]] = mapped_column(
         JSON_DOCUMENT, nullable=False, default=dict, server_default=text("'{}'")
@@ -704,6 +746,11 @@ class MetricAggregate(Base):
             "(status <> 'available' AND value IS NULL)",
             name="aggregate_value_matches_status",
         ),
+        CheckConstraint("revision >= 0", name="nonnegative_metric_aggregate_revision"),
+        CheckConstraint(
+            "length(content_sha256) = 64",
+            name="valid_metric_aggregate_content_sha256",
+        ),
         UniqueConstraint(
             "metric_id",
             "series_key",
@@ -712,6 +759,7 @@ class MetricAggregate(Base):
             "period_start",
             "period_end",
             "methodology_version",
+            "revision",
             name="uq_metric_aggregate_series_period_method",
         ),
         Index(
@@ -748,8 +796,15 @@ class ComparisonBaseline(Base):
     coverage_fraction: Mapped[float] = mapped_column(Float, nullable=False)
     status: Mapped[str] = mapped_column(String(32), nullable=False)
     methodology_version: Mapped[str] = mapped_column(String(120), nullable=False)
-    source_watermark_at: Mapped[datetime] = mapped_column(
-        DateTime(timezone=True), nullable=False
+    revision: Mapped[int] = mapped_column(
+        Integer, nullable=False, default=0, server_default="0"
+    )
+    content_sha256: Mapped[str] = mapped_column(String(64), nullable=False)
+    source_watermark_at: Mapped[datetime | None] = mapped_column(
+        DateTime(timezone=True), nullable=True
+    )
+    attributes: Mapped[dict[str, Any]] = mapped_column(
+        JSON_DOCUMENT, nullable=False, default=dict, server_default=text("'{}'")
     )
     computed_at: Mapped[datetime] = mapped_column(
         DateTime(timezone=True), nullable=False, server_default=func.now()
@@ -778,6 +833,11 @@ class ComparisonBaseline(Base):
             "OR first_quartile <= median AND median <= third_quartile",
             name="ordered_baseline_quartiles",
         ),
+        CheckConstraint("revision >= 0", name="nonnegative_comparison_baseline_revision"),
+        CheckConstraint(
+            "length(content_sha256) = 64",
+            name="valid_comparison_baseline_content_sha256",
+        ),
         UniqueConstraint(
             "metric_id",
             "series_key",
@@ -785,12 +845,98 @@ class ComparisonBaseline(Base):
             "baseline_kind",
             "reference_start",
             "methodology_version",
+            "revision",
             name="uq_comparison_baseline_reference_method",
         ),
         Index(
             "ix_comparison_baselines_metric_reference",
             "metric_id",
             "reference_start",
+        ),
+    )
+
+
+class HistoryMaterializationRun(Base):
+    """Operational checkpoint for one bounded history-materialization chunk."""
+
+    __tablename__ = "history_materialization_runs"
+
+    id: Mapped[uuid.UUID] = mapped_column(Uuid, primary_key=True, default=uuid.uuid4)
+    job_key: Mapped[str] = mapped_column(String(200), nullable=False)
+    registry_version: Mapped[str] = mapped_column(String(80), nullable=False)
+    metric_definition_id: Mapped[str | None] = mapped_column(
+        ForeignKey("metric_definitions.id", ondelete="RESTRICT")
+    )
+    stable_metric_id: Mapped[str] = mapped_column(String(120), nullable=False)
+    series_key: Mapped[str] = mapped_column(String(160), nullable=False)
+    geography: Mapped[str] = mapped_column(String(80), nullable=False)
+    source_id: Mapped[str] = mapped_column(
+        ForeignKey("source_metadata.id", ondelete="RESTRICT"), nullable=False
+    )
+    output_start_date: Mapped[date] = mapped_column(Date, nullable=False)
+    output_end_date: Mapped[date] = mapped_column(Date, nullable=False)
+    status: Mapped[str] = mapped_column(String(32), nullable=False)
+    attempt_count: Mapped[int] = mapped_column(
+        Integer, nullable=False, default=0, server_default="0"
+    )
+    records_written: Mapped[int] = mapped_column(
+        Integer, nullable=False, default=0, server_default="0"
+    )
+    result_checksum: Mapped[str | None] = mapped_column(String(64))
+    source_watermark_at: Mapped[datetime | None] = mapped_column(
+        DateTime(timezone=True)
+    )
+    started_at: Mapped[datetime] = mapped_column(
+        DateTime(timezone=True), nullable=False, server_default=func.now()
+    )
+    completed_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True))
+    error_type: Mapped[str | None] = mapped_column(String(120))
+
+    __table_args__ = (
+        UniqueConstraint("job_key", name="uq_history_materialization_job_key"),
+        CheckConstraint(
+            "output_end_date > output_start_date",
+            name="valid_history_materialization_range",
+        ),
+        CheckConstraint(
+            "status IN ('running', 'succeeded', 'failed')",
+            name="valid_history_materialization_status",
+        ),
+        CheckConstraint(
+            "(status = 'running' AND completed_at IS NULL "
+            "AND result_checksum IS NULL) OR "
+            "(status = 'succeeded' AND completed_at IS NOT NULL "
+            "AND result_checksum IS NOT NULL AND metric_definition_id IS NOT NULL) OR "
+            "(status = 'failed' AND completed_at IS NOT NULL "
+            "AND result_checksum IS NULL)",
+            name="history_materialization_state_is_complete",
+        ),
+        CheckConstraint(
+            "(status = 'failed' AND error_type IS NOT NULL) OR "
+            "(status <> 'failed' AND error_type IS NULL)",
+            name="history_materialization_error_matches_status",
+        ),
+        CheckConstraint(
+            "attempt_count >= 0", name="nonnegative_history_materialization_attempts"
+        ),
+        CheckConstraint(
+            "records_written >= 0", name="nonnegative_history_materialization_writes"
+        ),
+        CheckConstraint(
+            "result_checksum IS NULL OR length(result_checksum) = 64",
+            name="valid_history_materialization_result_checksum",
+        ),
+        Index(
+            "ix_history_materialization_status_started",
+            "status",
+            "started_at",
+        ),
+        Index(
+            "ix_history_materialization_metric_range",
+            "stable_metric_id",
+            "series_key",
+            "output_start_date",
+            "output_end_date",
         ),
     )
 
