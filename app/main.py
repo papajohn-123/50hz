@@ -14,6 +14,7 @@ from app.game.api import router as game_router
 from app.http_cache import ConditionalJSONMiddleware
 from app.intelligence.api import router as intelligence_router
 from app.legal import router as legal_router
+from app.observability import RequestObservabilityMiddleware
 from app.rate_limit import RateLimitMiddleware
 from app.runtime import lifespan
 from app.persistence import GridReadRepository
@@ -35,6 +36,9 @@ app.include_router(source_health_router)
 app.add_middleware(ConditionalJSONMiddleware)
 app.add_middleware(GZipMiddleware, minimum_size=1_000)
 app.add_middleware(RateLimitMiddleware)
+# Registered last so request IDs and the single structured record also cover
+# early 429 responses, conditional 304s, compression, and handled errors.
+app.add_middleware(RequestObservabilityMiddleware, service_version=app.version)
 
 
 @app.get("/health", tags=["system"])
