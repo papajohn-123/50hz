@@ -315,7 +315,10 @@ final class LocalWindowsContractTests: XCTestCase {
     func testActivityPresetsAndCustomBoundsMatchThePlannerContract() {
         XCTAssertEqual(LocalActivityPreset.laundry.presetDurationMinutes, 120)
         XCTAssertEqual(LocalActivityPreset.dishwasher.presetDurationMinutes, 120)
+        XCTAssertEqual(LocalActivityPreset.tumbleDryer.presetDurationMinutes, 90)
         XCTAssertEqual(LocalActivityPreset.evTopUp.presetDurationMinutes, 240)
+        XCTAssertEqual(LocalActivityPreset.homeBattery.presetDurationMinutes, 180)
+        XCTAssertEqual(LocalActivityPreset.heatPump.presetDurationMinutes, 120)
         XCTAssertNil(LocalActivityPreset.custom.presetDurationMinutes)
         XCTAssertEqual(LocalActivityPreset.custom.durationMinutes(customDurationMinutes: 0), 30)
         XCTAssertEqual(LocalActivityPreset.custom.durationMinutes(customDurationMinutes: 330), 330)

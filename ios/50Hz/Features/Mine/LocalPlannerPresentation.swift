@@ -3,7 +3,10 @@ import Foundation
 enum LocalActivityPreset: String, CaseIterable, Identifiable, Sendable {
     case laundry
     case dishwasher
+    case tumbleDryer
     case evTopUp
+    case homeBattery
+    case heatPump
     case custom
 
     var id: String { rawValue }
@@ -12,7 +15,10 @@ enum LocalActivityPreset: String, CaseIterable, Identifiable, Sendable {
         switch self {
         case .laundry: "Laundry"
         case .dishwasher: "Dishwasher"
+        case .tumbleDryer: "Tumble dryer"
         case .evTopUp: "EV top-up"
+        case .homeBattery: "Home battery"
+        case .heatPump: "Heat pump boost"
         case .custom: "Custom"
         }
     }
@@ -21,7 +27,10 @@ enum LocalActivityPreset: String, CaseIterable, Identifiable, Sendable {
         switch self {
         case .laundry: "washer"
         case .dishwasher: "dishwasher"
+        case .tumbleDryer: "dryer"
         case .evTopUp: "bolt.car"
+        case .homeBattery: "battery.75percent"
+        case .heatPump: "thermometer.medium"
         case .custom: "slider.horizontal.3"
         }
     }
@@ -29,7 +38,10 @@ enum LocalActivityPreset: String, CaseIterable, Identifiable, Sendable {
     var presetDurationMinutes: Int? {
         switch self {
         case .laundry, .dishwasher: 120
+        case .tumbleDryer: 90
         case .evTopUp: 240
+        case .homeBattery: 180
+        case .heatPump: 120
         case .custom: nil
         }
     }
