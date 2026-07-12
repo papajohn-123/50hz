@@ -646,6 +646,17 @@ def render_report(report: BackfillReport) -> str:
             for status in BackfillStatus
             if counts[status]
         )
+        failure_types = Counter(
+            outcome.error_type or "UnknownError"
+            for outcome in report.outcomes
+            if outcome.source is source and outcome.status is BackfillStatus.FAILED
+        )
+        if failure_types:
+            safe_types = ",".join(
+                f"{error_type[:80]}:{count}"
+                for error_type, count in sorted(failure_types.items())
+            )
+            details = f"{details}; failure_types={safe_types}"
         lines.append(f"{source.value}: {details or 'no chunks'}")
     lines.extend(
         (

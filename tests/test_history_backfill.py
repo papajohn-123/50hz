@@ -317,6 +317,7 @@ def test_chunk_failure_is_checkpointed_and_does_not_stop_any_source() -> None:
     assert "https://" not in rendered
     assert "elexon.freq" in rendered
     assert "estimates only" in rendered
+    assert "failure_types=RuntimeError:1" in rendered
     assert "status: incomplete" in rendered
 
 
