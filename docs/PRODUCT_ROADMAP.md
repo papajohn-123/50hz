@@ -10,14 +10,25 @@ Implementation snapshot, 12 July 2026:
 - M1–M5 are substantially implemented in the current repository: truthful
   metric/freshness contracts, finite Today briefing, Local planner/reminders,
   evidence-resolved Notebook, source/event inspection, exact tables/export,
-  history materialization, and forecast-verification foundations.
-- The current tree is ahead of the public Railway deployment. “Implemented” in
-  this roadmap does not mean “deployed” or “TestFlight verified.”
-- The critical path is now release reconciliation: final shared-tree tests,
-  repair of the incomplete local Docker/Xcode device-platform installs,
-  disposable live-PostgreSQL migration validation, GitHub/Railway
-  re-authentication, push/deploy/data jobs, production smoke, Apple signing, and
-  physical-device/TestFlight QA.
+  history materialization, and forecast verification.
+- Production is at migration `20260712_0009`. The 95-day backfill, 92 successful
+  history runs plus clean replay, and 3 successful forecast runs are complete.
+  Forecast verification contains 89,481 exact pairs and 12 results: demand/wind
+  are available; carbon remains evidence-threshold `insufficient_data`; none are
+  `not_computed`.
+- Worker deployment `0003798a-a2f4-4aac-a745-5522dafdc22e`, history cron
+  `332a56ff-f51b-4f90-ab6a-25d63f4e006e` at `17 4,10 * * *` UTC, and forecast
+  cron `f317ebe3-0bc0-4d63-a949-d32542d87caf` at `17 11 * * *` UTC are deployed.
+  API deployment `817ad899-1cc9-4baa-8900-5e1882e2f05d` is `SUCCESS` and passed
+  the complete production smoke. Exactly nine reviewed canonical sources are
+  healthy; no operational alias is public. Paid explanation and the exact
+  evidence-owned Ask answer/citations pass.
+- The critical path is release reconciliation: push the reviewed commits after
+  restoring GitHub credentials, map them to uploaded Railway artifacts, validate
+  the disposable live downgrade, rotate the key, finish
+  owner metadata/privacy decisions, repair the Xcode device platform, obtain
+  distribution signing, and complete physical-device/TestFlight QA. Railway
+  authentication and the production data jobs are no longer blockers.
 - Widget/App Group, saved regions, remote event alerts, accounts, and scale-out
   infrastructure remain deferred.
 
@@ -264,24 +275,24 @@ The following are not part of the first useful public product:
 
 ## 6. Current-state audit
 
-The current tree is a credible release candidate, but production still serves an
-older baseline. The table distinguishes implemented value from the remaining
-release/usefulness gap.
+The current tree is a credible release candidate with current API, worker,
+migration, history, forecast, and route-smoke evidence in production. The table
+distinguishes deployed value from the remaining release/usefulness gap.
 
 | Surface | Implemented current-tree strength | Remaining gap before wider use |
 | --- | --- | --- |
-| Live | Distinctive map, supply boundary, per-family fact/delivery state, timeline/fuel replay, exact tables, event/Ask entry points | Final small-screen/AX/VoiceOver/thermal pass and production contract smoke |
+| Live | Distinctive map, supply boundary, per-family fact/delivery state, timeline/fuel replay, exact tables, event/Ask entry points; final API smoke passed | Small-screen/AX/VoiceOver/thermal physical-device pass |
 | Today | Server-defined finite briefing with maximum-three changes, next moments, and events plus partial/offline states | Validate ranking/copy with real event-heavy production days and testers |
-| Local | Explicit region, activity/duration planner, coverage/vintage, start/deadline bounds, outward-only privacy, local reminder lifecycle, and strictly matched national-carbon MAE qualification | Production deploy, physical notification QA and measured usefulness; regional forecast error remains unavailable and must not be inferred |
+| Local | Explicit region, activity/duration planner, coverage/vintage, start/deadline bounds, outward-only privacy, local reminder lifecycle, and strictly matched national-carbon MAE qualification; API smoke passed | Physical notification QA and measured usefulness; regional forecast error remains unavailable and carbon review remains below its evidence threshold |
 | Notebook | Exact-lock local choice, real mission destinations, local/unverified completion, learned concepts, immutable evidence resolution/void/correction, and explicit local lock/result-check reminders | Date-rollover/reinstall/physical-device cohort validation; no remote push or result assertion |
 | Ask | Context scope, first-use data disclosure, cancellation, grounded citations/qualification, bounded failure | Production latency/cost/helpfulness validation and owner confirmation of provider retention |
-| Events | Authoritative reported list/detail/explanation plus immutable revision history; failure-isolated worker persistence for coherent observed-event rules | Deploy/validate relevance precision and decide whether/when resolved derived events become public |
-| Pro inspection | Public-safe source status, exact supply/connectors, event deltas, maximum-31-day JSON/CSV export, and national forecast MAE/bias/WAPE review by horizon | Test with professionals and validate exported/verification production values after history jobs |
-| Data layer | Immutable corrections, versioned registry, 95%-coverage history materialization, prediction ledger, forecast verification | Live PostgreSQL migration/data-job run, ongoing crons/alerts, enough real samples for eligible verification statistics |
+| Events | Authoritative reported list/detail/explanation plus immutable revision history; failure-isolated deployed worker persistence for coherent observed-event rules | Validate relevance precision and decide whether/when resolved derived events become public |
+| Pro inspection | Nine-source public-safe status, exact supply/connectors, event deltas, maximum-31-day JSON/CSV export, and national forecast MAE/bias/WAPE review by horizon; production smoke passed | Test with professionals and validate how demand/wind values and withheld carbon evidence are understood |
+| Data layer | Migration `0009`, immutable corrections, versioned registry, 95%-coverage history materialization, prediction ledger, completed forecast verification, and two bounded crons | External alerts, backup/restore and role hardening, disposable downgrade, and continued evidence collection for carbon |
 
-No current-tree feature should be described as production verified until the
-release commit is pushed, deployed to both roles, migrated/materialized, and
-smoked. The 11 July run proves only the older baseline.
+The recorded API/worker smoke, migration, jobs, and crons are valid production
+evidence. The release artifact still needs exact GitHub push/reconciliation for
+provenance, and the native build still needs the Apple/device/TestFlight gates.
 
 ## 7. P0 semantic corrections
 
@@ -375,19 +386,19 @@ Acceptance criteria:
 
 | Milestone | Outcome | Current status | Remaining hard dependency |
 | --- | --- | --- | --- |
-| M0 | Signed baseline in real hands | Blocked outside code | Xcode iOS 26.4 device platform, Apple access/App Store record, rotated key, pushed/deployed release commit |
-| M1 | Truthful and understandable | Implemented in current tree | Production/physical accessibility verification |
-| M2 | Useful daily briefing/history | Implemented in current tree | Live PostgreSQL data jobs, production ranking/coverage validation |
-| M3 | Personally actionable Local planner | Implemented in current tree | Production route deploy and physical reminder/usefulness QA |
-| M4 | Completed learning/prediction loop | Implemented in current tree | Production evidence resolution and date/reinstall device QA |
-| M5 | Professional inspection/export | Implemented in current tree | Production history/source/event data validation with professionals |
+| M0 | Signed baseline in real hands | Blocked outside code | GitHub push/artifact reconciliation, disposable downgrade, key/owner metadata, Xcode iOS 26.4 platform, distribution signing, device/TestFlight QA |
+| M1 | Truthful and understandable | Implemented and production-smoked | Physical accessibility verification |
+| M2 | Useful daily briefing/history | Implemented; production backfill/materialization and API smoke complete | Ranking/coverage validation with testers |
+| M3 | Personally actionable Local planner | Implemented and production-smoked | Physical reminder/usefulness QA |
+| M4 | Completed learning/prediction loop | Implemented and production-smoked | Date/reinstall device QA |
+| M5 | Professional inspection/export | Implemented; production history/verification/export smoke exists | Professional validation of export/source/event/forecast review |
 | M6 | Widget and broader notifications | Local clean-window reminder only | Apple App Group/signing for widget; result/remote alert product work |
 | M7 | Scale only where measured | Deferred | Observed traffic/SLO trigger |
 
 The unusual ordering reflects parallel implementation: M1–M5 code is now ahead
 of M0 release access. Internal TestFlight is still the next product milestone;
-do not add more broad features while push/deploy/signing/physical QA remains the
-critical path.
+do not add more broad features while GitHub reconciliation, signing/physical QA,
+and TestFlight remain the critical path.
 
 ### 9.1 Platform and service decision
 
@@ -396,7 +407,7 @@ Keep the current stack for the complete 1.0 roadmap:
 | Concern | Decision | Reason |
 | --- | --- | --- |
 | iOS | Native SwiftUI/iOS 18+ | Existing app, best system accessibility/widgets/notifications |
-| API | FastAPI on Railway | Implemented; older baseline deployed, current tree pending reconciliation |
+| API | FastAPI on Railway | Deployment `817ad899-1cc9-4baa-8900-5e1882e2f05d` passed the full production smoke, including paid grounded Ask |
 | Ingestion | Separate Railway worker from the same image | Independent polling lifecycle without a second codebase |
 | Database | Railway PostgreSQL | Existing normalized history and migrations; no account/realtime need |
 | LLM | OpenRouter from API only | One bounded server-side gateway with spend control |
@@ -454,13 +465,15 @@ of the following before the next dependent increment:
 ### 9.4 Indicative execution sequence
 
 Blocks 1–6 and the professional inspector/export part of Block 8 have now been
-implemented in parallel in the current tree. The active sequence is:
+implemented. Production migration, worker, data jobs, and cron setup are also
+complete. The active sequence is:
 
-1. Finish and independently verify the remaining forecast/event-runtime and
-   Local-bounds slices; reconcile docs and final test totals.
-2. Validate the complete migration chain against disposable live PostgreSQL.
-3. Re-authenticate GitHub/Railway, push, deploy API then worker, run bounded data
-   jobs/crons, and smoke the current contract.
+1. Preserve the recorded 611 backend and 148 native tests and reconcile the final
+   release documentation.
+2. Validate the `0009` downgrade against disposable live PostgreSQL.
+3. Restore GitHub credentials, push the reviewed commits, and reconcile them to
+   API deployment `817ad899-1cc9-4baa-8900-5e1882e2f05d` and worker deployment
+   `0003798a-a2f4-4aac-a745-5522dafdc22e`.
 4. Complete Block 0 Apple signing, physical-device, and internal TestFlight.
 5. Run Block 7 cohort/accessibility/performance hardening from real feedback.
 6. Reassess widget/App Group and saved-region work only after the first cohort.
@@ -504,7 +517,9 @@ group while preserving a clean baseline for comparison.
 
 **Current status:** implemented in the current tree, including metric registry,
 partial supply semantics, per-family status, Data Details, onboarding, and dark
-launch screen. Production and full physical accessibility verification remain.
+launch screen. The privacy manifest includes File Timestamp reason `C617.1`, and
+notification deep links use a one-shot cold-launch handoff after app state is
+ready. Final API smoke passes; full physical accessibility verification remains.
 
 ### 11.1 Backend truth contract
 
@@ -588,7 +603,7 @@ behavior. They belong in versioned server configuration, not Swift.
   Transparency, VoiceOver, and AX5.
 - Reassess the icon at 29/40/60 points; simplify details that look like literal
   network topology or become noise.
-- Add a dark launch screen with no white flash.
+- Preserve and verify the implemented dark launch screen with no white flash.
 
 ### M1 acceptance criteria
 
@@ -609,7 +624,9 @@ behavior. They belong in versioned server configuration, not Swift.
 **Current status:** the deterministic briefing, native Today surface, immutable
 event lifecycle ledger, history foundations/backfill/materialization, coverage
 rules, and bounded post-success observed-event worker action are implemented.
-The production database jobs, deploy, and relevance smoke remain.
+Production has completed the 95-day backfill and 92 successful materialization
+runs plus clean replay; the worker and history cron are deployed. Final API Today
+smoke passes; ranking/coverage and relevance validation with testers remain.
 
 ### Outcome
 
@@ -725,8 +742,8 @@ Requirements:
 custom duration, optional earliest/deadline bounds, coverage/vintage detail,
 outward-only transmission, schedule/update/cancel for an exact local
 notification, and eligible exact-match national-carbon MAE qualification.
-Production and physical-device notification QA remain; Local never infers
-regional error from the national review.
+Production route smoke passes and physical-device notification QA remains;
+Local never infers regional error from the national review.
 
 ### Outcome
 
@@ -1018,8 +1035,12 @@ Implemented endpoints:
 pair/result storage, public endpoint, cache/rate policy, and tests are present in
 the current tree. Native Data Details provides a protected-cache national review
 and Local can qualify a compatible national-carbon plan without blocking it.
-No Railway migration/job/route smoke or eligible production statistics have
-been verified yet.
+Production has three successful verification runs only, 89,481 exact compatible
+pairs, and all 12 metric/horizon results. Demand/wind statistics are available;
+carbon truthfully remains `insufficient_data` at the evidence threshold, and no
+row is `not_computed`. Forecast deployment
+`f317ebe3-0bc0-4d63-a949-d32542d87caf` runs `17 11 * * *` UTC. Final API route
+smoke passes.
 
 Do not display invented confidence percentages. Build measured quality by
 matching compatible forecast vintages to outturns.
@@ -1051,8 +1072,9 @@ vintages.
 
 **Current status:** Local clean-window reminders plus Notebook lock and
 result-check reminders are implemented on-device after an explicit permission
-action. Notification taps route to their real tab. Widget/App Group and all
-remote notifications remain deferred.
+action. Notification taps route to their real tab, including a one-shot pending
+handoff when the tap cold-launches the app before shared state is ready.
+Widget/App Group and all remote notifications remain deferred.
 
 ### 18.1 Widget before remote push
 
@@ -1264,16 +1286,18 @@ Every milestone must cover:
 
 ### P0 — do next
 
-1. Freeze the shared tree; run final backend/native/compile/privacy/diff/secret
-   gates and record exact totals.
-2. Validate upgrade/downgrade through migration `20260712_0009` on disposable
-   live PostgreSQL after repairing Docker or providing another safe instance.
-3. Re-authenticate GitHub/Railway, push the reviewed commit, deploy API then
-   worker, and verify the database revision.
-4. Run/inspect the bounded 95-day history backfill/materialization and separate
-   28-day (maximum 31-day) forecast verification, then configure approved crons.
-5. Smoke all current routes and the native app against the exact deployment;
-   verify source freshness, ETag/gzip/429/request IDs and AI fallback/cost.
+1. Preserve the recorded 611 backend/148 native totals plus
+   compile/privacy/diff/secret gates in the final release record.
+2. Validate downgrade through migration `20260712_0009` on disposable live
+   PostgreSQL after repairing Docker or providing another safe instance;
+   production forward migration is complete.
+3. Restore GitHub credentials, push the reviewed commits, and reconcile them to
+   the uploaded Railway artifacts; Railway authentication already works.
+4. Preserve the passing smoke for API deployment
+   `817ad899-1cc9-4baa-8900-5e1882e2f05d`, worker deployment
+   `0003798a-a2f4-4aac-a745-5522dafdc22e`, nine healthy canonical sources, no
+   public aliases, the data-job results, and both cron records.
+5. Complete the native physical-device flow against the exact deployment.
 6. Rotate the temporary OpenRouter key and approve privacy/retention/support
    answers.
 7. Install the missing Xcode iOS 26.4 device platform, complete Apple
@@ -1316,21 +1340,21 @@ Every milestone must cover:
 
 ## 23. Dependency order
 
-1. A reconciled, clean, tested commit unlocks push/deploy.
-2. GitHub and Railway authentication unlocks production reconciliation.
-3. Migration `0009` plus backfill/materialization unlocks production export,
-   comparisons, resolution history, and forecast verification.
-4. Enough exact compatible samples unlocks forecast-error display; code presence
-   alone does not.
-5. Apple access, bundle registration, App Store record, rotated production key,
+1. Restored GitHub credentials unlock the push and exact commit-to-artifact
+   reconciliation; Railway authentication already works.
+2. The completed API/worker/data smoke supplies backend production evidence;
+   exact GitHub artifact reconciliation still supplies release provenance.
+3. Existing compatible samples unlock demand/wind forecast-error display; carbon
+   remains withheld until its own reviewed evidence threshold passes.
+4. Apple access, bundle registration, App Store record, rotated production key,
    and owner privacy metadata unlock a signed TestFlight build.
-6. Physical-device/accessibility/performance validation unlocks a credible
+5. Physical-device/accessibility/performance validation unlocks a credible
    internal cohort.
-7. Cohort comprehension/usefulness evidence unlocks public 1.0 and prioritises
+6. Cohort comprehension/usefulness evidence unlocks public 1.0 and prioritises
    remaining UI work.
-8. Proven event relevance unlocks remote event notifications.
-9. Stable production contracts plus an Apple App Group unlock a widget.
-10. Measured traffic, not anticipation, unlocks shared scaling infrastructure.
+7. Proven event relevance unlocks remote event notifications.
+8. Stable production contracts plus an Apple App Group unlocks a widget.
+9. Measured traffic, not anticipation, unlocks shared scaling infrastructure.
 
 Do not reverse these dependencies. In particular, do not ship confidence before
 eligible verification, notifications before relevance, comparisons before
@@ -1343,8 +1367,8 @@ ultimately confirm:
 
 - Apple team, bundle registration, App Store Connect access, testers, and review
   contact.
-- Re-authentication of the normal GitHub credential helper and Railway
-  CLI/dashboard so engineering can push and deploy the reviewed tree.
+- Restoration of the normal GitHub credential helper so engineering can push and
+  reconcile the reviewed commits; Railway CLI/dashboard authentication works.
 - Replacement OpenRouter key and final spend cap.
 - Privacy/provider-retention disclosures and support contact.
 - Confirmation that the implemented tab names `Live / Today / Local / Notebook`

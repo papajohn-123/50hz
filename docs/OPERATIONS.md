@@ -1,16 +1,21 @@
 # 50Hz Railway operations runbook
 
-This runbook covers the Railway API service, worker service, and shared
-PostgreSQL database. The public API is
+This runbook covers the Railway API, worker, history cron, forecast cron, and
+shared PostgreSQL services. The public API is
 `https://50hz-api-production.up.railway.app`; the deployed service names are
-`50hz-api` and `50hz-worker`.
+`50hz-api`, `50hz-worker`, `50hz-history-materialize`, and
+`50hz-forecast-verify`.
 
-The hostname currently serves the older 11 July 2026 production-smoked
-baseline. The current repository adds migrations and routes that have not yet
-been pushed or redeployed. A successful local test is not production evidence,
-and a 404 from a newer route is expected until deployment reconciliation is
-complete. Record the pushed commit, API deployment, worker deployment, database
-revision, and history/verification job runs as one release unit.
+Production PostgreSQL is at `20260712_0009`. The 95-day source backfill, 92/92
+history materialization plus clean replay, and 3/3 forecast verification runs
+are complete. Worker deployment `0003798a-a2f4-4aac-a745-5522dafdc22e`, history
+cron deployment `332a56ff-f51b-4f90-ab6a-25d63f4e006e`, and forecast cron
+deployment `f317ebe3-0bc0-4d63-a949-d32542d87caf` are recorded. Final API
+deployment `817ad899-1cc9-4baa-8900-5e1882e2f05d` is `SUCCESS`. The complete
+production smoke passes, including the exact evidence-owned generation-leader
+Ask answer/citations and all nine healthy canonical sources with no operational
+aliases. Record the eventually pushed commit, all four deployment artifacts,
+database revision, job evidence, and route smoke as one release unit.
 
 Never paste secrets into tickets, chat, command arguments, screenshots, or
 shared logs. Railway variable output can contain raw credentials. Regional
@@ -36,11 +41,11 @@ railway login
 railway status
 ```
 
-At the time of this handoff, Railway CLI token refresh and local GitHub Keychain
-access both require owner re-authentication. Do not work around that by pasting a
-token into a command, captured terminal, or repository URL. Re-authenticate the
-normal credential helpers, confirm `git ls-remote origin` and `railway status`,
-then continue from a clean pushed commit.
+Railway CLI authentication works at this handoff. Local GitHub Keychain access
+still blocks the push. Do not work around that by pasting a token into a command,
+captured terminal, or repository URL. Restore the normal GitHub credential
+helper, confirm `git ls-remote origin`, and reconcile the clean pushed commit to
+the uploaded Railway artifacts.
 
 Use `railway open` to cross-check the selected project and production
 environment. Then set local labels from confirmed values:
@@ -48,6 +53,8 @@ environment. Then set local labels from confirmed values:
 ```bash
 export API_SERVICE='50hz-api'
 export WORKER_SERVICE='50hz-worker'
+export HISTORY_SERVICE='50hz-history-materialize'
+export FORECAST_SERVICE='50hz-forecast-verify'
 export RAILWAY_ENVIRONMENT='production'
 export API_BASE='https://50hz-api-production.up.railway.app'
 ```
@@ -143,20 +150,25 @@ xcodebuild \
   test
 ```
 
-Use an installed simulator name/runtime on the host. `test` executes XCTest but
-does not sign a Release archive or prove physical-device/TestFlight behavior.
+Use an installed simulator name/runtime on the host. The current release
+checkpoint records 611 passing backend and 148 passing native tests.
+`test` executes XCTest but does not sign a Release archive or prove
+physical-device/TestFlight behavior.
 Review migration SQL whenever schema changes. Offline SQL confirms ordering and
-compilation only: run the complete upgrade and downgrade against disposable live
-PostgreSQL before release. That live check remains outstanding for the newest
-migrations because the installed Docker.app is incomplete/missing its
+compilation only. Production forward migration is recorded at `0009`; validate
+its downgrade against disposable live PostgreSQL before release. That live check
+remains outstanding because the installed Docker.app is incomplete/missing its
 executable. Confirm a usable Railway database backup/restore point before
 production DDL or long-running data jobs.
 
-The simulator suite/build/run currently succeeds, but the direct unsigned
-device-archive check fails during LaunchScreen compilation with `iOS 26.4
-Platform Not Installed`. Install/repair that Xcode device platform before using
-an archive result as a release compile gate; this host issue is separate from
-Apple signing credentials.
+The Release simulator suite/build/run succeeds and excludes fixture JSON. The
+privacy manifest includes required File Timestamp reason `C617.1`, and native
+regression coverage verifies one-shot notification routing when a tap
+cold-launches the app. The device archive still fails during LaunchScreen
+compilation with `iOS 26.4 Platform Not Installed`. Install/repair that Xcode
+device platform before using an archive result as a release compile gate. Only
+development signing identities are installed, so distribution signing remains a
+separate owner-controlled gate.
 
 Record the exact commit being deployed:
 
@@ -210,11 +222,14 @@ unknown generation/connector snapshots rather than fabricating an event.
 
 ## 4. Deploy API and worker
 
-`railway.toml` runs `alembic upgrade head` as a pre-deploy command for each
-service. Deploy sequentially so the two services do not start migrations at the
-same time.
+`railway.toml` runs `alembic upgrade head` as a pre-deploy command for the API and
+worker. Deploy those roles sequentially so they do not start migrations at the
+same time. `railway.history.json` and `railway.forecast.json` explicitly clear
+the migration command and `/ready` healthcheck for the short-lived cron jobs.
 
-Deploy the API from its configured GitHub source:
+After normal GitHub credentials are restored, deploy the API from its configured
+source. The current candidate was uploaded directly and must later be reconciled
+to the pushed commit:
 
 ```bash
 railway redeploy \
@@ -259,6 +274,12 @@ became ready. Poll service state and inspect the latest deployment logs.
 
 ## 5. Post-deploy route smoke
 
+The final 12 July record for API deployment
+`817ad899-1cc9-4baa-8900-5e1882e2f05d` passed this smoke: all 19 GET templates,
+legal pages, dynamic event/detail/history, JSON and CSV export, ETag 304, gzip,
+request IDs and application-log hygiene, paid event explanation, and paid Ask.
+The final worker deployment is `0003798a-a2f4-4aac-a745-5522dafdc22e`.
+
 First verify the route surface:
 
 ```bash
@@ -272,7 +293,8 @@ print("\n".join(sorted(document["paths"])))
 PY
 ```
 
-For the current tree, expected OpenAPI paths include health/readiness/meta,
+For the current tree, require exactly the reviewed 21 OpenAPI paths, including
+health/readiness/meta,
 current/timeline/briefing, sources/source status/metric metadata, reported event
 list/detail/history/explanation, region/Local windows, daily game/prediction
 resolution, export schema/export, forecast verification, and Ask. `/privacy`
@@ -342,7 +364,8 @@ Do not stop at status codes. Validate that:
 - briefing is finite, carries the London local date, coverage/revision fields,
   and no more than three changes, next moments, or reported events
 - source status separates worker delivery from fact validity and exposes no raw
-  error/infrastructure identifier
+  error/infrastructure identifier; it contains exactly the nine reviewed source
+  IDs and no operational/backfill aliases
 - region returns an outward code, current or explicitly delayed regional period,
   and a clearly scoped national forecast window
 - Local uses one compatible forecast capture, exact continuous half-hours,
@@ -614,6 +637,13 @@ Recommended Railway cron after the initial backfill/materialization is
 The twice-daily UTC schedule intentionally revisits publisher corrections while
 the command itself still touches only the last completed London day.
 
+Recorded production result: the initial 95-day backfill completed; all 92
+materialization checkpoints succeeded with no failed run and a clean replay
+remained complete. It produced 2,185 coverage rows, 2,185 aggregate rows, and
+104,880 comparison-baseline rows.
+History cron deployment `332a56ff-f51b-4f90-ab6a-25d63f4e006e` runs the command
+above at `17 4,10 * * *` UTC, and its next execution is confirmed.
+
 ### Forecast verification
 
 After migration `20260712_0009` and enough immutable forecast/outturn evidence:
@@ -628,11 +658,14 @@ Repeat `--metric` to narrow the reviewed national demand, wind, or carbon pairs.
 The default window is 28 completed London days and the hard maximum is 31; use
 explicit `--start` plus exclusive `--end` only within that bound.
 `--refresh-latest` force-rechecks the latest seven completed London days so late
-outturns/corrections can append new result revisions. Configure it as a separate
-daily Railway cron after the initial result inspection; choose a time after
-normal ingestion and history refresh, record the chosen UTC expression in
-Railway, and verify that only the expected 12 metric/horizon result slots are
-published. Statistics remain hidden until at least 100 samples and 90% coverage.
+outturns/corrections can append new result revisions. Production has completed
+3/3 successful metric runs with no failed run, 89,481 exact compatible pairs,
+and exactly 12 metric/horizon results. Demand and wind
+statistics are available; all carbon rows remain `insufficient_data` at the
+reviewed evidence threshold, and no row is `not_computed`. Forecast cron
+deployment `f317ebe3-0bc0-4d63-a949-d32542d87caf` runs the command above daily at
+`17 11 * * *` UTC. Statistics remain hidden until at least 100 samples and 90%
+coverage.
 Evidence/input capacity is conservative and fail-closed: an oversized reviewed
 set must fail the run rather than silently truncate samples or improve coverage.
 
@@ -682,8 +715,8 @@ deployment. A code rollback does not reverse database migrations.
 
 ## 11. Secret rotation
 
-The key supplied during development is temporary and must be rotated before the
-release candidate.
+The key supplied during development is temporary and must be rotated before
+TestFlight or public release.
 
 OpenRouter procedure:
 
@@ -707,24 +740,26 @@ railway variable set \
   --environment "$RAILWAY_ENVIRONMENT"
 ```
 
-Prefer Railway service references and managed rotation for PostgreSQL. Both API
-and worker consume `DATABASE_URL`, so coordinate and verify them sequentially.
-Never copy the connection string into documentation.
+Prefer Railway service references and managed rotation for PostgreSQL. API,
+worker, history cron, and forecast cron all consume the `DATABASE_URL` reference,
+so coordinate and verify them without copying the connection string into
+documentation.
 
 ## 12. Remaining operational and TestFlight gaps
 
-The older baseline passed the 11 July production smoke. The current repository
-has not. Before expanding traffic or submitting the signed app:
+Before expanding traffic or submitting the signed app:
 
-- restore normal GitHub credential access, push the reviewed clean commit, and
-  restore Railway CLI/dashboard authentication
-- deploy API then worker from that commit and confirm the production Alembic
-  revision through `20260712_0009`
-- run/inspect the bounded history backfill, materialization, and forecast
-  verification jobs, then configure and record approved cron services
-- rerun every current route, iOS production flow, ETag/gzip/429/request-ID check,
-  and source-freshness assertion against those exact deployments
-- validate the full schema against disposable live PostgreSQL; the installed
+- restore normal GitHub credential access and push the reviewed clean commits;
+  Railway authentication already works
+- retain the passing smoke for API deployment
+  `817ad899-1cc9-4baa-8900-5e1882e2f05d`, worker deployment
+  `0003798a-a2f4-4aac-a745-5522dafdc22e`, the two cron deployments, all nine
+  healthy canonical sources, and no public aliases; rerun after any backend change
+- retain the recorded history/forecast deployments, confirmed cron
+  schedules, migration `20260712_0009`, and completed data-job evidence as part
+  of the exact release record
+- complete the iOS physical-device production flow against those exact deployments
+- validate the `0009` downgrade against disposable live PostgreSQL; the installed
   Docker.app is incomplete/missing its executable, leaving this gate open
 - add external alerts for per-source last success/failure/lag/records, history
   backlog, verification watermark, and event-maintenance failures

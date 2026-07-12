@@ -1,24 +1,32 @@
 # 50Hz App Store and TestFlight handoff
 
 This is the release worksheet for the iOS 18+ app. The copy is ready for owner
-review once the inputs and current-tree deployment below are complete. The older
-API/worker baseline was production-smoked on 11 July 2026. The current repository
-adds Today, Local, Notebook, professional inspection/export, history, event
-revision, and forecast-verification contracts that are not yet pushed or
-deployed. Re-authenticate GitHub/Railway, deploy the exact release commit, run
-its migrations/data jobs, and repeat the full preflight before using this copy
-in App Store Connect. The simulator suite/build/run is green, but the current
-host's direct unsigned device archive stops during LaunchScreen compilation with
-`iOS 26.4 Platform Not Installed`; repair/install that Xcode platform before the
-archive gate.
+review once the remaining inputs and release verification below are complete.
+Production PostgreSQL is at `20260712_0009`; the 95-day backfill, 92/92 clean
+history materialization, and 3/3 forecast verification runs are complete. The
+verification produced 89,481 exact pairs and 12 results: demand/wind are
+available, carbon remains evidence-threshold `insufficient_data`, and none are
+`not_computed`. Worker deployment `0003798a-a2f4-4aac-a745-5522dafdc22e` and both
+cron services are successful. Final API deployment
+`817ad899-1cc9-4baa-8900-5e1882e2f05d` is `SUCCESS` and passed the full production
+smoke, including all 19 GET templates, legal pages, dynamic event/history,
+JSON/CSV export, ETag/gzip/request-ID/log hygiene, paid explanation, and grounded
+Ask. Exactly nine canonical sources are public and healthy; no operational alias
+is exposed. Railway
+authentication works, but normal GitHub credential access still blocks the push
+of the reviewed commits. The Release simulator suite/build/run is green and
+excludes fixtures; the device archive stops during LaunchScreen compilation with
+`iOS 26.4 Platform Not Installed`. Only development signing identities are
+installed, so repair/install that Xcode platform and obtain distribution signing
+authority before the archive gate.
 
 ## Owner-only inputs
 
 Engineering cannot supply or legally decide these values:
 
-- [ ] **Release-system access:** re-authenticate the normal GitHub credential
-  helper and Railway CLI/dashboard session so the reviewed commit can be pushed
-  and deployed without pasting tokens into commands or logs.
+- [ ] **Release-system access:** restore the normal GitHub credential helper so
+  the reviewed commits can be pushed without pasting tokens into commands or
+  logs. Railway CLI/dashboard access currently works.
 - [ ] **Apple Developer Team:** confirm the locally selected `VKMJPS7WP4` is the
   intended paid Developer Program team and the current user has signing/upload
   permission.
@@ -125,8 +133,9 @@ electricity,energy,grid,carbon,power,renewables,frequency,demand,wind,solar,Brit
 
 ### URLs
 
-These routes returned HTTP 200 from the release-candidate deployment on 11 July
-2026. Recheck them before entering or submitting the final App Store record.
+These routes returned HTTP 200 in the final smoke for API deployment
+`817ad899-1cc9-4baa-8900-5e1882e2f05d`. Recheck them immediately before entering
+or submitting the App Store record if the deployment or page copy changes.
 
 | Field | Ready value |
 | --- | --- |
@@ -221,7 +230,9 @@ Current facts:
   cached API responses on-device; the full entry is transient.
 - Notebook choice/completion/learned state and all Local/Notebook reminder
   metadata remain on-device. Reminders use iOS local notifications; no APNs
-  token or remote-notification backend exists.
+  token or remote-notification backend exists. A one-shot handoff preserves the
+  intended Local/Notebook route when a notification tap cold-launches the app
+  and applies it only after app state is ready.
 - A valid full postcode is reduced to its outward code before persistence,
   display after submission, or transmission.
 - The 50Hz application database does not persist postcode requests or Ask
@@ -248,8 +259,9 @@ Owner checks before publishing App Privacy answers:
 5. Ensure `/privacy` exactly matches the published answers and update both when
    behavior changes.
 
-`PrivacyInfo.xcprivacy` and the App Store privacy questionnaire are separate
-requirements; one does not complete the other.
+`PrivacyInfo.xcprivacy` includes the required File Timestamp reason `C617.1` and
+passes `plutil` lint. The manifest and App Store privacy questionnaire are
+separate requirements; one does not complete the other.
 
 ## Age rating, rights, and export compliance
 
@@ -317,28 +329,33 @@ Owner-only screenshot gate:
 
 ### B. Release preflight
 
-1. Re-authenticate GitHub/Railway, push a clean reviewed release commit, and
-   record its identifier.
-2. Run backend/compile/native/privacy/diff/secret checks plus offline migration
-   SQL; validate the complete migration upgrade/downgrade on disposable live
-   PostgreSQL. The current Docker.app install is incomplete/missing its
-   executable, so this live gate needs a repaired Docker install or another safe
-   database.
-3. Deploy that exact commit to Railway API first, then worker; verify Alembic
-   through `20260712_0009` and both readiness states.
-4. Run/inspect the bounded history backfill, materialization, and forecast
-   verification jobs; configure approved crons and record their watermarks.
-5. Require HTTP 200 or a contract-valid evidence state from every current
-   user-visible route; run the full smoke in [OPERATIONS.md](OPERATIONS.md),
-   including ETag/gzip/rate/request-ID checks and the iOS app.
+1. Restore GitHub credential access, push the clean reviewed commits, and record
+   how they map to the uploaded Railway artifacts. Railway authentication works.
+2. Preserve the recorded 611 backend and 148 native tests plus
+   compile/privacy/diff/secret checks and offline migration SQL. Validate the
+   downgrade on disposable live PostgreSQL. The current Docker.app install is
+   incomplete/missing its executable, so this gate needs a repaired Docker
+   install or another safe database.
+3. Record successful API deployment `817ad899-1cc9-4baa-8900-5e1882e2f05d`, its
+   passing deterministic generation-leader Ask retest, worker
+   deployment `0003798a-a2f4-4aac-a745-5522dafdc22e`, and Alembic
+   `20260712_0009`; preserve the complete smoke and nine-source health record.
+4. Preserve the completed 95-day backfill, 92/92 clean materialization, and 3/3
+   verification record. History cron `332a56ff-f51b-4f90-ab6a-25d63f4e006e`
+   runs `17 4,10 * * *` UTC; forecast cron
+   `f317ebe3-0bc0-4d63-a949-d32542d87caf` runs `17 11 * * *` UTC.
+5. Preserve the passing full smoke from [OPERATIONS.md](OPERATIONS.md), including
+   legal/dynamic/export/AI, ETag/gzip/request-ID/log-hygiene checks, and rerun it
+   after any backend change; complete the remaining iOS physical-device flow.
 6. Rotate the temporary OpenRouter key and verify one authorized Ask plus one
    event explanation without unsupported claims.
 7. Install/repair the missing Xcode iOS 26.4 device platform, build a Release
    archive from the clean release commit, then install a signed development/Ad
    Hoc build on a physical iPhone and complete functional, accessibility,
    offline, notification, battery, and failure-state QA.
-8. Confirm the final app icon/launch screen, privacy manifest, source
-   attribution, privacy page, and support contact are included/available.
+8. Confirm the final app icon/launch screen, privacy manifest reason `C617.1`,
+   cold-launch notification routing, source attribution, privacy page, and
+   support contact are included/available.
 
 ### C. Create the signed archive
 
@@ -417,15 +434,27 @@ App Review should wait until internal feedback is closed.
 ## Final go/no-go record
 
 - [ ] Owner-only inputs complete.
-- [ ] Release commit clean, pushed, and recorded: `<COMMIT>`.
-- [ ] API deployment from that commit: `<DEPLOYMENT>`.
-- [ ] Worker deployment from that commit: `<DEPLOYMENT>`.
-- [ ] Production Alembic revision and disposable live-PostgreSQL migration test
-  recorded.
-- [ ] Backfill/materialization/verification runs and approved cron services
-  recorded.
-- [ ] Production smoke and source freshness pass.
-- [ ] `/privacy` and `/support` return approved HTTPS pages.
+- [ ] Release commits clean, pushed, and recorded: GitHub push remains blocked.
+- [x] Successful API deployment `817ad899-1cc9-4baa-8900-5e1882e2f05d` passes
+  the final 21-path smoke, including paid explanation and grounded Ask.
+- [ ] API/worker deployment artifacts are reconciled to the pushed commit after
+  GitHub credential access is restored.
+- [x] Worker deployment recorded:
+  `0003798a-a2f4-4aac-a745-5522dafdc22e`.
+- [x] Production Alembic `20260712_0009` recorded.
+- [ ] Disposable live-PostgreSQL downgrade recorded.
+- [x] Backfill/materialization/verification runs recorded: 95 days; 92 successful
+  history runs only plus clean replay, 2,185 coverage rows, 2,185 aggregate rows,
+  and 104,880 baselines; 3 successful forecast runs only, 89,481 pairs, and 12
+  results. Demand/wind are available; carbon is evidence-threshold
+  `insufficient_data`; none are `not_computed`.
+- [x] History cron `332a56ff-f51b-4f90-ab6a-25d63f4e006e` at
+  `17 4,10 * * *` UTC and forecast cron
+  `f317ebe3-0bc0-4d63-a949-d32542d87caf` at `17 11 * * *` UTC recorded.
+- [x] Production smoke passes; exactly nine canonical sources are healthy and no
+  operational alias is public.
+- [x] `/privacy` and `/support` return HTTPS pages.
+- [ ] Owner approves the final support contact and legal-page copy.
 - [ ] Temporary secrets rotated.
 - [ ] Xcode iOS 26.4 device platform installed; unsigned device archive compile
   gate passes.

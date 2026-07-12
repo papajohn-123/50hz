@@ -10,8 +10,9 @@ first layer is for curious people; precise scope, timing, classification,
 coverage, revisions, and provenance remain available underneath.
 
 The product and delivery roadmap is in
-[PRODUCT_ROADMAP.md](docs/PRODUCT_ROADMAP.md). This README describes the
-implemented repository, not a promise that every local contract is deployed.
+[PRODUCT_ROADMAP.md](docs/PRODUCT_ROADMAP.md). This README distinguishes the
+implemented repository, recorded Railway production evidence, and the remaining
+Apple/GitHub release gates.
 
 ## Release state
 
@@ -19,26 +20,30 @@ implemented repository, not a promise that every local contract is deployed.
 
 | State | What is true |
 | --- | --- |
-| Last production-smoked baseline | The public Railway API/worker, ingestion, regional lookup, Ask, reported-event explanation, ETag/304, gzip, and hosted legal pages were exercised on 11 July 2026. |
-| Current repository | The tree is materially ahead of production: it adds versioned metric/freshness contracts, Today briefing, Local planning/reminders, prediction resolution, source status, event history, bounded export, history backfill/materialization, forecast verification, request observability, and the corresponding native flows. |
-| Not yet verified | The current commit has not been pushed or redeployed because local GitHub credential access and Railway CLI authentication need owner re-authentication. The local unsigned device-archive check is blocked because this Xcode install reports `iOS 26.4 Platform Not Installed`; no signed physical-device archive or processed TestFlight build has been verified. |
+| Production database | Alembic is at `20260712_0009`. The bounded source backfill completed 95 days. History has 92 successful runs only and a clean replay, with 2,185 coverage rows, 2,185 aggregate rows, and 104,880 baseline rows. Forecast verification has 3 successful runs only, 89,481 exact pairs, and all 12 metric/horizon results. Demand and wind statistics are available. Carbon truthfully remains `insufficient_data` at its evidence threshold; no result is `not_computed`. |
+| Worker and scheduled jobs | Worker deployment `0003798a-a2f4-4aac-a745-5522dafdc22e` is `SUCCESS`. History cron deployment `332a56ff-f51b-4f90-ab6a-25d63f4e006e` runs `17 4,10 * * *` UTC and its next execution is confirmed. Forecast cron deployment `f317ebe3-0bc0-4d63-a949-d32542d87caf` runs `17 11 * * *` UTC. |
+| API and smoke | Final API deployment `817ad899-1cc9-4baa-8900-5e1882e2f05d` is `SUCCESS`. The 21-path inventory passed the safe production smoke: all 19 GET templates, legal pages, dynamic event/history, JSON/CSV export, ETag 304, gzip, request IDs/log hygiene, paid event explanation, and paid Ask. Ask fix `997ba3c` produces the exact evidence-owned generation-leader answer/citations. |
+| Source boundary | Source fix `7acb788` exposes exactly nine reviewed canonical sources. All nine are healthy; internal and operational aliases are inactive and absent from public source/status output. `/ready` and current grid evidence are valid. |
+| Repository verification | The release checkpoint records 611 passing backend tests and 148 passing native tests. Railway authentication works; the reviewed commits still cannot be pushed because normal GitHub credential access remains blocked. |
+| Apple release | The Release simulator build is green and excludes fixture JSON. The local device archive remains blocked by `iOS 26.4 Platform Not Installed`; only development signing identities are installed, and no signed physical-device archive or processed TestFlight build has been verified. |
 
 Public baseline URL:
 [50hz-api-production.up.railway.app](https://50hz-api-production.up.railway.app)
 
-Do not infer current-tree route availability from that hostname until API and
-worker deployments have been reconciled to a recorded commit and the full smoke
-in [OPERATIONS.md](docs/OPERATIONS.md) has passed. In particular, newer routes
-may correctly return 404 on the older deployment.
+The hostname is the production-smoked target. Treat deployment identifiers,
+migration revision, job evidence, and the route smoke in
+[OPERATIONS.md](docs/OPERATIONS.md) as one release record; an uploaded Railway
+artifact is not a substitute for the still-blocked GitHub push.
 
 The native tree builds, installs, and launches on an iPhone 16 Pro simulator.
-At the 12 July current-tree checkpoint, the backend suite passed 598 tests (one
-dependency deprecation warning) and the integrating native suite passed 145
-tests with no failures or skips. Rerun and record both suites from the exact
-release commit rather than treating the counts as permanent repository claims.
-Compileall, diff checking, a single migration head, offline full-upgrade/`0009`
-downgrade SQL, simulator build/run, and privacy-manifest lint also pass.
-Simulator evidence does not replace signed-device or TestFlight verification.
+The release candidate includes the required File Timestamp reason `C617.1` in
+`PrivacyInfo.xcprivacy` and a one-shot cold-launch notification handoff so a
+notification that launches the app routes only after app state is ready. The
+current release totals are 611 backend and 148 native tests. Compileall, diff
+checking, a single migration head, offline full-upgrade/`0009` downgrade SQL,
+simulator build/run, and privacy-manifest lint also pass. Simulator evidence
+does not replace the outstanding disposable live-downgrade, signed-device, or
+TestFlight verification.
 
 ## Architecture
 
@@ -80,6 +85,12 @@ of API startup:
   outturn timestamps over 28 days by default (31 maximum); it never invents
   historical vintages.
 
+The initial production run is complete: 95 days were backfilled, all 92 history
+materialization checkpoints completed and replayed cleanly, and the three
+forecast-verification runs produced 12/12 result slots. Demand and wind pass the
+display evidence gate; carbon remains explicitly below it rather than exposing
+invented statistics.
+
 Railway/PostgreSQL remains the single backend. Supabase is not required for the
 account-free first release; revisit it only if a proven account, sync, or
 realtime job justifies a second platform.
@@ -112,8 +123,9 @@ realtime job justifies a second platform.
 | POST | `/v1/ask` | Bounded, read-only, tool-grounded OpenRouter answer with server-owned citations |
 
 Interactive documentation is available at `/docs` on a service running the
-current tree. OpenAPI is the authoritative route inventory for a deployed
-revision. The public event list/detail is intentionally authoritative
+current tree. The reviewed inventory contains 21 OpenAPI paths; OpenAPI remains
+the authoritative route inventory for a deployed revision. The public event
+list/detail is intentionally authoritative
 reported-notice data; the worker's observed-event lifecycle maintenance does not
 turn every derived signal into a public outage/event claim.
 
@@ -208,10 +220,10 @@ Representative history operations:
 ```
 
 All commands require an explicit `DATABASE_URL`, including dry runs. Review the
-source/date/metric allow-lists with `--help` before a real run. The recommended
-history materialization schedule is `17 4,10 * * *` UTC; configure forecast
-verification as a separate bounded daily Railway cron after migration and
-backfill validation. See [OPERATIONS.md](docs/OPERATIONS.md).
+source/date/metric allow-lists with `--help` before a real run. Production now
+runs history materialization at `17 4,10 * * *` UTC and forecast verification at
+`17 11 * * *` UTC as separate bounded Railway cron services. See
+[OPERATIONS.md](docs/OPERATIONS.md).
 
 Repository verification:
 
@@ -251,10 +263,12 @@ Provision PostgreSQL plus API and worker services from this repository:
 | `RAW_PAYLOAD_RETENTION_HOURS` | Not required | Optional | Default 72, minimum 49 |
 | `RAW_PAYLOAD_CLEANUP_INTERVAL_SECONDS` | Not required | Optional | Default 3,600 seconds |
 
-`railway.toml` runs `alembic upgrade head` before deployment and gates on
-`/ready`. Deploy API and worker sequentially so their pre-deploy migrations do
-not overlap. Operator history/verification jobs need a PostgreSQL connection but
-must not receive the OpenRouter key.
+`railway.toml` runs `alembic upgrade head` before API/worker deployment and gates
+on `/ready`. Deploy API and worker sequentially so their pre-deploy migrations do
+not overlap. `railway.history.json` and `railway.forecast.json` explicitly clear
+the web healthcheck and migration command, select the bounded CLI entry point,
+and use restart policy `NEVER`. Those services receive a PostgreSQL reference
+but not the OpenRouter key.
 
 ## Trust and privacy boundaries
 
@@ -276,9 +290,9 @@ must not receive the OpenRouter key.
   retention handling is requested, not guaranteed by this repository.
 - Local and Notebook reminder metadata plus Notebook participation/choice state
   remain on the device. Permission is requested only from an explicit reminder
-  action; refresh never prompts. Notification taps route to Local or Notebook.
-  No APNs backend, account, leaderboard, prize, or server-side choice submission
-  exists.
+  action; refresh never prompts. Notification taps route to Local or Notebook,
+  including a one-shot handoff when a tap cold-launches the app. No APNs backend,
+  account, leaderboard, prize, or server-side choice submission exists.
 - App Store privacy answers still require owner review of Railway/provider logs,
   retention, and terms.
 
@@ -286,24 +300,24 @@ must not receive the OpenRouter key.
 
 Engineering still needs owner-controlled access or decisions for:
 
-1. Re-authenticate GitHub credential access, push the reviewed clean commit, and
-   re-authenticate Railway CLI/dashboard access.
-2. Deploy API then worker from that exact commit; migrate, run bounded
-   backfill/materialization/verification jobs, and smoke all current routes.
-3. Rotate the temporary OpenRouter key and confirm the production spend cap and
+1. Restore normal GitHub credential access and push the reviewed clean commits;
+   Railway authentication already works. Record how the pushed commit maps to
+   the uploaded production deployment artifacts.
+2. Rotate the temporary OpenRouter key and confirm the production spend cap and
    retention-eligible routing.
-4. Validate migrations against disposable live PostgreSQL. The installed
+3. Validate migrations against disposable live PostgreSQL. The installed
    Docker.app is incomplete/missing its executable, so only offline migration
-   checks have been possible for the newest schema.
-5. Confirm Apple team `VKMJPS7WP4`, register/confirm
+   checks and production forward migration have been possible for the newest
+   schema; the disposable live downgrade remains open.
+4. Confirm Apple team `VKMJPS7WP4`, register/confirm
    `com.papajohn.50hz`, create the App Store Connect record/group, and grant
    signing/upload authority.
-6. Approve privacy/support contact, App Privacy answers, metadata, screenshots,
+5. Approve privacy/support contact, App Privacy answers, metadata, screenshots,
    age/content-rights/export-compliance answers, and testers.
-7. Install/repair the Xcode iOS 26.4 device platform (the current unsigned
-   archive attempt stops during LaunchScreen compilation), then create a signed
-   archive, install on physical iPhones, complete
-   accessibility/offline/performance/battery QA, upload, wait for processing,
+6. Install/repair the Xcode iOS 26.4 device platform (the current archive attempt
+   stops during LaunchScreen compilation), obtain an appropriate distribution
+   signing identity, then create a signed archive, install on physical iPhones,
+   complete accessibility/offline/performance/battery QA, upload, wait for processing,
    install from TestFlight, and retest against the recorded backend deployment.
 
 See [IMPLEMENTATION_PLAN.md](docs/IMPLEMENTATION_PLAN.md) for the technical

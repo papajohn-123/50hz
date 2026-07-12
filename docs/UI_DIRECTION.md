@@ -8,10 +8,13 @@ Ask disclosure/cancellation, Data Details/source status/event history/export,
 Notebook lock/result-check reminders, notification deep links, and dark native
 launch screen are implemented in the current tree. Data Details also contains a
 national forecast review; Local shows a typical recent MAE only on an exact,
-eligible contract match. The tree is ahead of production and still needs
-physical-device accessibility/performance and TestFlight verification. The
-remaining rules below are both design guardrails and manual release acceptance
-criteria.
+eligible contract match. Production worker/data jobs/crons are deployed, and API
+deployment `817ad899-1cc9-4baa-8900-5e1882e2f05d` passed the complete production
+smoke. Notification deep links now use a one-shot pending
+handoff so a tap that cold-launches the app routes only after shared app state is
+ready. Physical-device accessibility/performance, distribution signing, and
+TestFlight verification remain. The rules below are both design guardrails and
+manual release acceptance criteria.
 
 ## Design thesis
 
@@ -156,7 +159,9 @@ Smooth interpolation must not imply extra measurement precision. The UI exposes 
 - Participation language rewards exploration without punitive streak mechanics,
   prizes, ranks, or server-scoring claims.
 - Reminder permission is never requested on refresh. Tapping a reminder returns
-  to Notebook; Local reminders return to Local.
+  to Notebook; Local reminders return to Local. If the tap cold-launches the app,
+  its allow-listed destination is retained until shared navigation state is ready
+  and consumed exactly once.
 
 ## Loading and failure states
 

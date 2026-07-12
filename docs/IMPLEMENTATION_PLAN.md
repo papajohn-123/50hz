@@ -1,8 +1,9 @@
 # 50Hz implementation baseline
 
-Last reconciled with the shared repository on 12 July 2026. This document
-records what is implemented in the current tree and what must still be deployed
-or release-verified. Product priorities and future choices live in
+Last reconciled with the shared repository and Railway production on 12 July
+2026. This document records what is implemented, what has production evidence,
+and what still needs final route or Apple release verification. Product
+priorities and future choices live in
 [PRODUCT_ROADMAP.md](PRODUCT_ROADMAP.md).
 
 ## Product objective and governing rule
@@ -34,18 +35,24 @@ Confirmed decisions:
 
 - **Implemented:** code exists in the current tree and has repository-level
   tests/build evidence.
-- **Deployed:** a pushed commit is the source of the named Railway API/worker
-  deployments and its migrations/jobs have run.
-- **Production verified:** the deployed commit passed the bounded smoke in
+- **Deployed:** the named Railway deployment is recorded and its migrations/jobs
+  have run. A deployment uploaded from a local clean tree still needs a later
+  GitHub push and commit-to-artifact reconciliation.
+- **Production verified:** the deployed artifact passed the bounded smoke in
   [OPERATIONS.md](OPERATIONS.md).
 - **Release verified:** the same contract passed on a signed physical-device and
   processed TestFlight install.
 
-The last production smoke on 11 July 2026 established the older ingestion,
-current/timeline/region/game/event/Ask baseline. The present tree is ahead of
-that deployment. GitHub credential access and Railway CLI authentication need
-owner re-authentication before the new routes and schema can be called deployed.
-Apple signing and TestFlight remain unverified.
+Railway authentication now works. Production PostgreSQL is at migration
+`20260712_0009`; the 95-day backfill, all 92 history-materialization checkpoints
+plus a clean replay, and all three forecast-verification runs are complete. The
+worker deployment `0003798a-a2f4-4aac-a745-5522dafdc22e` and both bounded cron
+services are deployed successfully. Final API deployment
+`817ad899-1cc9-4baa-8900-5e1882e2f05d` includes Ask grounding fix `997ba3c` and
+source-boundary fix `7acb788`; it is `SUCCESS` and passed the full production
+smoke. Normal GitHub credential access remains blocked, so the reviewed commits
+are not yet pushed. Apple signing, physical-device, and TestFlight gates remain
+unverified.
 
 ## Implemented service architecture
 
@@ -111,9 +118,10 @@ The migration chain currently runs from `20260711_0001` through
 `20260712_0009`. It includes normalized grid/source tables, reported notice and
 explanation revisions, history/coverage foundations, event lifecycle,
 prediction resolution, immutable forecast revisions, history materialization,
-and forecast verification. This chain has offline Alembic generation coverage;
-the newest full chain still needs a disposable live PostgreSQL upgrade/downgrade
-because the installed Docker.app is incomplete and its executable is missing.
+and forecast verification. Production forward migration is recorded at `0009`,
+and the chain has offline Alembic generation coverage. A disposable live
+PostgreSQL downgrade still needs validation because the installed Docker.app is
+incomplete and its executable is missing.
 
 ### Continuous source schedules
 
@@ -135,6 +143,13 @@ The worker scheduler ticks every 60 seconds by default, independently of each
 job's cadence. Postcodes are not continuously ingested. Regional requests use a
 validated outward code and a bounded NESO fallback; that on-demand response is
 not persisted by the route.
+
+The public source/status boundary is an explicit nine-ID allow-list:
+`elexon.freq`, `elexon.fuelinst`, `elexon.indo`, `elexon.ndf`, `elexon.remit`,
+`elexon.syswarn`, `elexon.windfor`, `neso.carbon-intensity-national`, and
+`neso.carbon-intensity-regional`. Final production smoke found all nine healthy.
+Operational job aliases remain inactive metadata and cannot appear merely
+because an ingestion/backfill row exists; this regression is fixed in `7acb788`.
 
 ### History backfill and materialization
 
@@ -158,6 +173,13 @@ forecast vintages are excluded.
 the required read-only lookback. The recommended Railway materialization cron is
 `17 4,10 * * *` UTC, after the ingestion/backfill contract has been validated in
 the target database.
+
+Production evidence is now recorded: the source backfill completed the full 95
+days; materialization has 92 successful runs only and a clean replay, producing
+2,185 coverage rows, 2,185 aggregate rows, and 104,880 baseline rows. Scheduled
+deployment `332a56ff-f51b-4f90-ab6a-25d63f4e006e` runs
+`50hz-history-materialize --refresh-latest` at `17 4,10 * * *` UTC, and its next
+execution has been confirmed.
 
 ### Forecast verification
 
@@ -185,8 +207,14 @@ samples and 90% compatible coverage. A normal run defaults to 28 completed
 London days and cannot exceed 31. `--refresh-latest` rechecks the latest seven
 completed London days for a bounded daily cron.
 
-This feature is implemented in the current tree but has not yet been migrated,
-materialized, or production-smoked on Railway.
+Production migration and the initial verification run are complete. Three
+successful metric runs with no failed run produced 89,481 exact compatible pairs
+and all 12 reviewed metric/horizon rows: demand and wind statistics are
+available; carbon remains truthfully `insufficient_data` at its evidence
+threshold. No row is `not_computed`. Scheduled deployment
+`f317ebe3-0bc0-4d63-a949-d32542d87caf` runs
+`50hz-forecast-verify --refresh-latest` at `17 11 * * *` UTC. The passing public
+route smoke is recorded against the API deployment separately from the job result.
 
 The native Data Details inspector also implements a protected, ETag-aware
 Forecast review. It presents national-only MAE, signed bias, WAPE, horizon,
@@ -200,8 +228,11 @@ blocks planning; it never infers regional error or calls the metric confidence.
 
 ## Current API contracts
 
-The complete route table and limits are in [README.md](../README.md). Important
-additive contracts beyond the production-smoked baseline are:
+The complete 21-path OpenAPI route table and limits are in
+[README.md](../README.md). The final safe smoke covered all 19 GET templates,
+legal pages, dynamic event/history, JSON/CSV export, ETag 304, gzip, request IDs
+and log hygiene, plus paid event explanation and paid grounded Ask. Important
+contracts in the release candidate are:
 
 - `/v1/metadata/metrics` for versioned definitions and supply/sign boundaries.
 - `/v1/briefing/today` for finite deterministic Today content.
@@ -272,8 +303,8 @@ three relevant collectors fail simultaneously, expiry waits for a future
 relevant success. The derived-event row retains the current evidence payload
 with incrementing version/checksum, not a full immutable history of every prior
 derived payload; reported-event history is a separate immutable contract. There
-is no operator cron, key, or new configuration. This is implemented in the
-current tree but not deployed, and current public event list/detail remains the
+is no operator cron, key, or new configuration. This is deployed in the final
+worker artifact, and current public event list/detail remains the
 authoritative reported-notice flow rather than a claim that every derived event
 is public.
 
@@ -291,6 +322,12 @@ event explanation has deterministic fallback copy. OpenRouter calls request
 zero-data-retention routing. The process-local daily counter is a guardrail, not
 a billing or distributed quota; the OpenRouter project/account cap is the hard
 spend boundary.
+
+For a simple current-generation-leader question, the server now owns the answer
+directly: it selects the largest compatible MW generation fact from the latest
+evidence snapshot and supplies its source citation. Explanatory `why` questions
+remain model-authored and pass the normal validation boundary. This grounding
+regression is fixed in commit `997ba3c`.
 
 ## Native iOS implementation
 
@@ -324,8 +361,9 @@ The app now contains:
   below-threshold rows.
 - **System behavior:** protected ETag cache, in-flight deduplication, cancellation
   and race protection, dark launch screen, first-run disclosure/onboarding,
-  notification deep links to Local/Notebook, privacy/support links, privacy
-  manifest, and no third-party iOS packages.
+  notification deep links to Local/Notebook including a one-shot cold-launch
+  handoff after app state is ready, privacy/support links, a privacy manifest
+  with required File Timestamp reason `C617.1`, and no third-party iOS packages.
 
 Prediction choices, mission completion, outward-code preference, reminder
 metadata, and learned state remain local. There is no server choice submission
@@ -355,42 +393,44 @@ xcodebuild \
 git diff --check
 ```
 
-The 12 July shared-tree checkpoint reported 598 passing backend tests with one
-dependency deprecation warning and 145 passing native tests with no failures or
-skips. The simulator build/run, focused 23-test notification suites, and focused
-13-test forecast-review suites also pass. Compileall, diff checking, a single
-Alembic head, offline full-upgrade SQL, and offline `0009` downgrade SQL passed. Rerun
-all gates and record their totals from the exact release commit. The privacy
-manifest also passes `plutil` lint. The direct unsigned device-archive attempt
-is currently blocked during LaunchScreen compilation because this Xcode install
-reports `iOS 26.4 Platform Not Installed`; simulator build/run remains green.
-The newest migrations still require a live disposable PostgreSQL
-upgrade/downgrade; offline SQL cannot prove runtime DDL behavior.
+The current release checkpoint records 611 passing backend tests and 148 passing
+native tests. Compileall, diff checking, a single Alembic head, offline full-upgrade
+SQL, and offline `0009` downgrade SQL pass. The Release simulator build excludes
+fixture JSON. `PrivacyInfo.xcprivacy` passes `plutil` lint and now includes File
+Timestamp reason `C617.1`; regression coverage includes one-shot notification
+routing when a tap cold-launches the app. The device archive remains blocked
+during LaunchScreen compilation because this Xcode install reports `iOS 26.4
+Platform Not Installed`, and only development signing identities are installed.
+The newest migrations still require a disposable live PostgreSQL downgrade;
+production forward migration and offline SQL do not prove downgrade behavior.
 
 ## Deployment and release sequence
 
 ### 1. Freeze and verify
 
-1. Wait for all parallel slices, reconcile the shared tree, and review every
-   uncommitted file.
-2. Run the complete backend, migration, native, privacy, compile, diff, and
-   secret-scan gates.
+1. Reconcile the shared tree and review every uncommitted file.
+2. Preserve the recorded 611 backend and 148 native tests plus migration, privacy,
+   compile, diff, and secret-scan gates.
 3. Repair/install Docker or use another disposable live PostgreSQL instance,
-   then validate the full migration chain.
+   then validate downgrade through `20260712_0009`; production forward migration
+   is already applied.
 4. Commit the documentation with the final route/migration/test inventory.
 
 ### 2. Push and deploy
 
-1. Owner unlocks/re-authenticates GitHub credential access; push the clean
-   reviewed commit.
-2. Owner re-authenticates Railway CLI/dashboard access and confirms API/worker/
-   PostgreSQL/cron service identity and variables.
-3. Deploy API first and wait for `/ready`, then worker and wait for `/ready`.
-4. Run backfill/materialization/verification jobs in dry-run and approved real
-   modes; configure bounded crons only after results are inspected.
-5. Smoke every route from current OpenAPI, including one authorized Ask and an
-   event explanation; verify ETag, gzip, 429 headers, request IDs, source
-   freshness, and the iOS app against that exact deployment.
+1. Owner restores normal GitHub credential access and pushes the clean reviewed
+   commits; Railway authentication already works.
+2. Record worker deployment `0003798a-a2f4-4aac-a745-5522dafdc22e`, history cron
+   `332a56ff-f51b-4f90-ab6a-25d63f4e006e`, forecast cron
+   `f317ebe3-0bc0-4d63-a949-d32542d87caf`, and the final API deployment as one
+   release unit.
+3. Record successful API deployment `817ad899-1cc9-4baa-8900-5e1882e2f05d`, its
+   exact deterministic generation-leader answer/citations, all nine healthy
+   canonical sources with no aliases, and the complete route smoke.
+4. Preserve the completed 95-day backfill, 92/92 clean materialization, and 3/3
+   verification evidence; confirm both cron next-run records.
+5. Preserve the passing 21-path/AI/ETag/gzip/request-ID/log-hygiene evidence and
+   verify the iOS app against that exact deployment.
 
 ### 3. TestFlight
 
