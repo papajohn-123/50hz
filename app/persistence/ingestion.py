@@ -526,7 +526,7 @@ def _source_metadata_upsert(values: dict[str, Any]):
             "licence_url": statement.excluded.licence_url,
             "attribution": statement.excluded.attribution,
             "expected_cadence_seconds": statement.excluded.expected_cadence_seconds,
-            "active": True,
+            "active": statement.excluded.active,
             "updated_at": func.now(),
         },
     )

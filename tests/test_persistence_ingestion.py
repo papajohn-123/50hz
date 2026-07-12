@@ -9,7 +9,7 @@ from sqlalchemy.dialects import postgresql
 
 from app.db.models import GenerationObservation, IngestionRun
 from app.domain.enums import IngestionRunStatus
-from app.persistence.ingestion import PostgresIngestionRepository
+from app.persistence.ingestion import PostgresIngestionRepository, _source_metadata_upsert
 from app.persistence.records import map_generation_record
 from app.sources.types import AdapterResult, GenerationRecord, ObservationWindow
 
@@ -18,6 +18,27 @@ NOW = datetime(2026, 7, 11, 12, 30, tzinfo=UTC)
 WINDOW = ObservationWindow(start=NOW - timedelta(minutes=30), end=NOW)
 RUN_ID = UUID("227a850f-186a-4e16-aef7-2f12f984ad53")
 RAW_ID = UUID("8a5fa578-2579-4aa9-b24c-711683cc6b1f")
+
+
+def test_source_metadata_upsert_preserves_the_presented_active_boundary() -> None:
+    statement = _source_metadata_upsert(
+        {
+            "id": "worker.internal-job",
+            "provider": "worker",
+            "dataset": "INTERNAL_JOB",
+            "display_name": "50Hz worker — INTERNAL_JOB",
+            "base_url": "https://50hz.app",
+            "documentation_url": None,
+            "licence_name": None,
+            "licence_url": None,
+            "attribution": None,
+            "expected_cadence_seconds": 300,
+            "active": False,
+        }
+    )
+    compiled = str(statement.compile(dialect=postgresql.dialect())).lower()
+
+    assert "active = excluded.active" in compiled
 
 
 class FakeScalars:

@@ -29,6 +29,7 @@ from app.events.revisions import (
     EventRevisionDelta,
     RevisionFieldDelta,
 )
+from app.persistence.records import PUBLIC_SOURCE_PROVIDERS
 from app.sources.types import as_utc
 
 
@@ -849,13 +850,20 @@ class GridReadRepository:
     async def list_sources(self) -> tuple[SourceMetadataRead, ...]:
         async with self._session_factory() as session:
             rows = (
-                await session.execute(
-                    select(SourceMetadata)
-                    .where(SourceMetadata.active.is_(True))
-                    .order_by(SourceMetadata.id)
-                )
+                await session.execute(_public_sources_statement())
             ).scalars().all()
         return tuple(map_source_metadata_read(row) for row in rows)
+
+
+def _public_sources_statement() -> Select[tuple[SourceMetadata]]:
+    return (
+        select(SourceMetadata)
+        .where(
+            SourceMetadata.active.is_(True),
+            SourceMetadata.provider.in_(PUBLIC_SOURCE_PROVIDERS),
+        )
+        .order_by(SourceMetadata.id)
+    )
 
 
 def map_generation_read(row: GenerationObservation) -> GenerationRead:

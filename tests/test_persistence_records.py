@@ -5,6 +5,7 @@ import pytest
 
 from app.persistence.records import (
     canonical_source_id,
+    job_source_metadata_values,
     map_frequency_record,
     map_generation_record,
     map_interconnector_record,
@@ -44,6 +45,18 @@ def test_indo_metadata_uses_the_source_half_hour_cadence() -> None:
     )
 
     assert values["expected_cadence_seconds"] == 1_800
+
+
+def test_operational_failure_metadata_is_not_a_public_active_source() -> None:
+    backfill = job_source_metadata_values(
+        "history-backfill-v1:elexon.fuelinst:20260701T2300Z:20260702T2300Z"
+    )
+    live = job_source_metadata_values("elexon.fuelinst")
+
+    assert backfill["provider"].startswith("history-backfill-v1")
+    assert backfill["active"] is False
+    assert live["provider"] == "elexon"
+    assert live["active"] is True
 
 
 def test_long_source_ids_are_stable_and_bounded() -> None:

@@ -9,6 +9,7 @@ from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.db.models import IngestionRun, SourceMetadata
 from app.domain.enums import IngestionRunStatus
+from app.persistence.records import PUBLIC_SOURCE_PROVIDERS
 
 
 SessionFactory = Callable[[], AsyncSession]
@@ -35,9 +36,7 @@ class SourceHealthRepository:
             sources = tuple(
                 (
                     await session.execute(
-                        select(SourceMetadata)
-                        .where(SourceMetadata.active.is_(True))
-                        .order_by(SourceMetadata.provider, SourceMetadata.dataset)
+                        _public_sources_statement()
                     )
                 )
                 .scalars()
@@ -80,6 +79,17 @@ class SourceHealthRepository:
             )
             for source_id in source_ids
         }
+
+
+def _public_sources_statement() -> Select[tuple[SourceMetadata]]:
+    return (
+        select(SourceMetadata)
+        .where(
+            SourceMetadata.active.is_(True),
+            SourceMetadata.provider.in_(PUBLIC_SOURCE_PROVIDERS),
+        )
+        .order_by(SourceMetadata.provider, SourceMetadata.dataset)
+    )
 
 
 def _latest_run_statement(source_ids: tuple[str, ...]) -> Select[tuple[IngestionRun]]:

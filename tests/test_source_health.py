@@ -23,6 +23,7 @@ from app.source_health.repository import (
     SourceRunSummary,
     _latest_run_statement,
     _latest_success_statement,
+    _public_sources_statement,
 )
 from app.source_health.service import build_source_health
 
@@ -285,6 +286,31 @@ def test_latest_run_queries_use_postgres_distinct_on_and_never_select_errors() -
     assert "order by ingestion_runs.source_id" in latest
     assert "distinct on (ingestion_runs.source_id)" in success
     assert "ingestion_runs.status" in success
+
+
+def test_public_source_queries_exclude_internal_operational_providers() -> None:
+    from app.persistence.reads import _public_sources_statement as grid_sources
+
+    dialect = postgresql.dialect()
+    health_sql = str(
+        _public_sources_statement().compile(
+            dialect=dialect,
+            compile_kwargs={"literal_binds": True},
+        )
+    ).lower()
+    grid_sql = str(
+        grid_sources().compile(
+            dialect=dialect,
+            compile_kwargs={"literal_binds": True},
+        )
+    ).lower()
+
+    for statement in (health_sql, grid_sql):
+        assert "source_metadata.active is true" in statement
+        assert "source_metadata.provider in" in statement
+        assert "elexon" in statement
+        assert "neso" in statement
+        assert "history-backfill-v1" not in statement
 
 
 class FakeHealthRepository:

@@ -54,6 +54,11 @@ SOURCE_PROFILES: dict[str, SourceProfile] = {
     ),
 }
 
+# Public source inspection is an explicit product contract. Operational
+# placeholder metadata (for example one failed history chunk) must never become
+# a new user-facing publisher merely because it has a source_metadata row.
+PUBLIC_SOURCE_PROVIDERS = tuple(sorted(SOURCE_PROFILES))
+
 
 DATASET_CADENCE_SECONDS: dict[tuple[str, str], int] = {
     ("elexon", "FREQ"): 60,
@@ -161,6 +166,7 @@ def job_source_metadata_values(job_id: str) -> dict[str, Any]:
     )
     if profile is None:
         values["display_name"] = f"50Hz worker — {dataset.upper()}"
+        values["active"] = False
     return values
 
 
