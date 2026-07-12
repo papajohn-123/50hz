@@ -16,6 +16,7 @@ final class AppModel: ObservableObject {
     @Published var regionalContext: RegionalGridContext?
     @Published var events: [GridEvent] = []
     @Published var dailyGame: DailyGame?
+    @Published var todayBriefing: TodayBriefing?
     @Published var selectedFuel: FuelKind?
     @Published var selectedTime: Date?
     @Published var selectedTab: AppTab = .live
@@ -36,6 +37,11 @@ final class AppModel: ObservableObject {
     @Published var eventsError: String?
     @Published var gameLoadPhase: LoadPhase = .loading
     @Published var gameRefreshError: String?
+    @Published var briefingLoadPhase: LoadPhase = .loading
+    @Published var briefingError: String?
+    @Published var briefingRequestDate: String?
+    @Published var briefingIsFromCache = false
+    @Published var isRefreshingBriefing = false
 
     init(repository: any GridRepository = FixtureGridRepository()) {
         self.repository = repository
@@ -49,11 +55,14 @@ final class AppModel: ObservableObject {
         async let cachedTimeline = repository.cachedTimeline()
         async let cachedEvents = repository.cachedEvents()
         async let cachedDailyGame = repository.cachedDailyGame()
-        let (snapshot, timeline, events, dailyGame) = await (
+        let currentLondonDate = LondonDay.localDateKey()
+        async let cachedBriefing = repository.cachedTodayBriefing(localDate: currentLondonDate)
+        let (snapshot, timeline, events, dailyGame, briefing) = await (
             cachedSnapshot,
             cachedTimeline,
             cachedEvents,
-            cachedDailyGame
+            cachedDailyGame,
+            cachedBriefing
         )
 
         if var snapshot {
@@ -70,6 +79,12 @@ final class AppModel: ObservableObject {
         if let dailyGame {
             self.dailyGame = dailyGame
             self.gameLoadPhase = .loaded
+        }
+        if let briefing {
+            todayBriefing = briefing
+            briefingRequestDate = currentLondonDate
+            briefingIsFromCache = true
+            briefingLoadPhase = .loaded
         }
 
         await refresh()
@@ -144,6 +159,9 @@ final class AppModel: ObservableObject {
 
         Task { [weak self] in await self?.refreshEvents() }
         Task { [weak self] in await self?.refreshDailyGame() }
+        if selectedTab == .today {
+            Task { [weak self] in await self?.loadTodayBriefing() }
+        }
     }
 
     func retry() async {
@@ -245,6 +263,63 @@ final class AppModel: ObservableObject {
                   !Self.isCancellation(error) else { return }
             localWindowsError = error.localizedDescription
             localWindowsLoadPhase = localWindows == nil ? .failed(error.localizedDescription) : .loaded
+        }
+    }
+
+    func loadTodayBriefing(localDate: String = LondonDay.localDateKey()) async {
+        let request = TodayBriefingRequest(localDate: localDate)
+        guard request.localDate != "unknown-date" else {
+            let message = "The current London date could not be resolved."
+            briefingError = message
+            briefingLoadPhase = todayBriefing == nil ? .failed(message) : .loaded
+            return
+        }
+        if isRefreshingBriefing, briefingRequestDate == request.localDate { return }
+
+        briefingRequestDate = request.localDate
+        briefingError = nil
+        isRefreshingBriefing = true
+        defer {
+            if briefingRequestDate == request.localDate {
+                isRefreshingBriefing = false
+            }
+        }
+
+        if todayBriefing?.matches(request) != true {
+            todayBriefing = nil
+            briefingIsFromCache = false
+            briefingLoadPhase = .loading
+
+            if let cached = await repository.cachedTodayBriefing(localDate: request.localDate) {
+                guard !Task.isCancelled, briefingRequestDate == request.localDate else { return }
+                if cached.matches(request) {
+                    todayBriefing = cached
+                    briefingIsFromCache = true
+                    briefingLoadPhase = .loaded
+                }
+            }
+        } else {
+            briefingLoadPhase = .loaded
+        }
+
+        guard !Task.isCancelled, briefingRequestDate == request.localDate else { return }
+
+        do {
+            let refreshed = try await repository.todayBriefing(localDate: request.localDate)
+            guard !Task.isCancelled, briefingRequestDate == request.localDate else { return }
+            guard refreshed.matches(request) else {
+                throw GridAPIError.decoding("Today briefing did not match the requested London date or methodology.")
+            }
+            todayBriefing = refreshed
+            briefingIsFromCache = false
+            briefingLoadPhase = .loaded
+            briefingError = nil
+        } catch {
+            guard !Task.isCancelled,
+                  briefingRequestDate == request.localDate,
+                  !Self.isCancellation(error) else { return }
+            briefingError = error.localizedDescription
+            briefingLoadPhase = todayBriefing == nil ? .failed(error.localizedDescription) : .loaded
         }
     }
 

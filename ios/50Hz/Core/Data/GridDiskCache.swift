@@ -8,6 +8,11 @@ struct GridCacheKey: Hashable, Sendable {
     static let events = GridCacheKey(rawValue: "events")
     static let dailyGame = GridCacheKey(rawValue: "game-today")
 
+    static func todayBriefing(localDate: String) -> GridCacheKey {
+        let safeDate = LondonDay.isValidLocalDateKey(localDate) ? localDate : "unknown-date"
+        return GridCacheKey(rawValue: "briefing-\(safeDate)")
+    }
+
     static func region(_ postcode: String) -> GridCacheKey {
         let outward = PostcodePrivacy.outwardCode(from: postcode).lowercased()
         return GridCacheKey(rawValue: "region-\(outward)")

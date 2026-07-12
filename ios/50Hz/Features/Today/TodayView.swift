@@ -1,471 +1,698 @@
 import SwiftUI
 
-private struct TodayMoment: Identifiable {
-    let id: String
-    let time: Date
-    let title: String
-    let detail: String
-    let factClass: FactClass
-    let subject: FuelKind?
-    let importance: Bool
-    let event: GridEvent?
-}
-
 struct TodayView: View {
     @EnvironmentObject private var model: AppModel
-    @Environment(\.accessibilityReduceMotion) private var reduceMotion
-    @State private var sharePayload: GridShareCardPayload?
+
+    private var londonDate: String { LondonDay.localDateKey() }
 
     var body: some View {
         Group {
-            if let snapshot = model.snapshot, let timeline = model.timeline {
-                content(snapshot: snapshot, timeline: timeline)
+            if let briefing = model.todayBriefing {
+                briefingContent(briefing)
             } else {
-                TodayLoadingView()
+                emptyState
             }
         }
         .gridPageBackground()
-        .sheet(item: $sharePayload) { payload in
-            ShareCardSheet(payload: payload)
-                .presentationDetents([.large])
-                .presentationDragIndicator(.visible)
-                .presentationBackground(GridTheme.surface)
+        .task(id: londonDate) {
+            await model.loadTodayBriefing(localDate: londonDate)
         }
     }
 
-    private func content(snapshot: GridSnapshot, timeline: GridTimeline) -> some View {
-        let moments = makeMoments(snapshot: snapshot, timeline: timeline)
-        let hasForecast = model.isForecastTimelineUsable
-        return ScrollView {
-            LazyVStack(alignment: .leading, spacing: 0) {
-                HStack(alignment: .firstTextBaseline) {
-                    Text("Today")
-                        .font(.system(.largeTitle, design: .rounded, weight: .medium))
-                        .tracking(-1.2)
-                        .accessibilityAddTraits(.isHeader)
-                    Spacer()
-                    Text(snapshot.timestamp.formatted(.dateTime.weekday(.abbreviated).day().month(.abbreviated)))
-                        .font(.caption)
-                        .fontDesign(.monospaced)
-                        .foregroundStyle(GridTheme.textTertiary)
-                    GlobalInfoButton()
-                }
-                .padding(.bottom, 6)
+    private func briefingContent(_ briefing: TodayBriefing) -> some View {
+        ScrollView {
+            LazyVStack(alignment: .leading, spacing: 27) {
+                header(briefing)
 
-                Text("Britain’s daily view — what changed, and what the forecast suggests next.")
-                    .font(.subheadline)
-                    .foregroundStyle(GridTheme.textSecondary)
-                    .padding(.bottom, 28)
-
-                if !hasForecast {
-                    ForecastUnavailableNotice(detail: model.forecastUnavailableReason)
-                        .padding(.bottom, 24)
-                } else if model.timelineRefreshError != nil {
-                    TimelineRefreshNotice(confirmedAt: timeline.nowBoundary) {
-                        Task { await model.retry() }
+                if let error = model.briefingError {
+                    TodayStateNotice(
+                        title: "Showing the last briefing",
+                        message: error,
+                        systemImage: "clock.badge.exclamationmark"
+                    ) {
+                        Task { await model.loadTodayBriefing(localDate: londonDate) }
                     }
-                    .padding(.bottom, 20)
-                }
-
-                if let eventError = model.eventsError, !model.events.isEmpty {
-                    Text("Reported events are shown from the last confirmed event list. \(eventError)")
+                } else if model.briefingIsFromCache {
+                    Label("Saved briefing · checking for an update", systemImage: "arrow.clockwise")
                         .font(.caption)
                         .foregroundStyle(GridTheme.staleAmber)
-                        .padding(.bottom, 18)
                 }
 
-                if let lead = moments.first(where: \.importance) {
-                    LeadMoment(
-                        moment: lead,
-                        action: { open(lead) },
-                        share: {
-                            sharePayload = .moment(
-                                title: lead.title,
-                                detail: lead.detail,
-                                timestamp: lead.time,
-                                factClass: lead.factClass,
-                                sources: snapshot.sources
-                            )
-                        }
-                    )
-                    .padding(.bottom, 30)
+                if briefing.coverage.status != .complete {
+                    coverageNotice(briefing)
                 }
 
-                SectionLabel(
-                    "Chronology",
-                    trailing: hasForecast ? "Observed + forecast" : "Observed"
-                )
-                    .padding(.bottom, 8)
-
-                ForEach(moments.filter { !$0.importance }) { moment in
-                    MomentRow(moment: moment, isNow: moment.id.hasPrefix("now-")) {
-                        open(moment)
-                    }
-                }
-
-                VStack(alignment: .leading, spacing: 8) {
-                    Hairline()
-                    Text(hasForecast
-                        ? "Forecast moments use a timeline confirmed within the past hour. Predictions can change as weather and system conditions evolve."
-                        : "Only confirmed observations are shown while the forecast freshness gate is closed.")
-                        .font(.caption2)
-                        .foregroundStyle(GridTheme.textTertiary)
-                }
-                .padding(.top, 10)
-                .padding(.bottom, 28)
+                nowSection(briefing)
+                bestWindowSection(briefing)
+                changesSection(briefing)
+                nextSection(briefing)
+                eventsSection(briefing)
+                coverageFooter(briefing)
             }
             .padding(.horizontal, GridTheme.horizontalPadding)
             .padding(.top, 12)
+            .padding(.bottom, 32)
         }
         .scrollIndicators(.hidden)
-    }
-
-    private func open(_ moment: TodayMoment) {
-        if let event = moment.event {
-            model.selectedTab = .live
-            Task { @MainActor in
-                await Task.yield()
-                model.selectedEvent = event
-            }
-            return
-        }
-        let selectMoment = {
-            model.selectedTime = moment.time
-            model.selectedFuel = moment.subject
-            model.selectedTab = .live
-        }
-        if reduceMotion {
-            selectMoment()
-        } else {
-            withAnimation(.snappy(duration: 0.3), selectMoment)
+        .refreshable {
+            await model.loadTodayBriefing(localDate: LondonDay.localDateKey())
         }
     }
 
-    private func makeMoments(snapshot: GridSnapshot, timeline: GridTimeline) -> [TodayMoment] {
-        let boundary = timeline.nowBoundary
-        let observed = timeline.samples.filter { $0.factClass != .forecast && $0.timestamp <= boundary }
-        let forecast = model.isForecastTimelineUsable
-            ? timeline.samples.filter {
-                $0.factClass == .forecast
-                    && $0.timestamp >= boundary
-                    && $0.timestamp > Date()
-            }
-            : []
-        var moments: [TodayMoment] = []
-
-        if let cleanest = forecast.min(by: { $0.carbonIntensity < $1.carbonIntensity }) {
-            moments.append(
-                TodayMoment(
-                    id: "forecast-cleanest-\(cleanest.timestamp.timeIntervalSince1970)",
-                    time: cleanest.timestamp,
-                    title: "Cleanest forecast period",
-                    detail: "The latest forecast reaches about \(Int(cleanest.carbonIntensity.rounded())) gCO₂/kWh. Treat this as a window that can move as the forecast updates.",
-                    factClass: .forecast,
-                    subject: leadingFuel(in: cleanest),
-                    importance: true,
-                    event: nil
-                )
-            )
-        }
-
-        if let solarHigh = observed.max(by: { megawatts(.solar, in: $0) < megawatts(.solar, in: $1) }),
-           megawatts(.solar, in: solarHigh) > 0 {
-            moments.append(
-                TodayMoment(
-                    id: "observed-solar-high-\(solarHigh.timestamp.timeIntervalSince1970)",
-                    time: solarHigh.timestamp,
-                    title: "Solar’s observed high",
-                    detail: "The national estimate reached \(gigawatts(megawatts(.solar, in: solarHigh))) GW in the available timeline.",
-                    factClass: solarHigh.generation.first(where: { $0.fuel == .solar })?.factClass ?? .estimated,
-                    subject: .solar,
-                    importance: false,
-                    event: nil
-                )
-            )
-        }
-
-        if let observedDemandHigh = observed.max(by: { $0.demandMW < $1.demandMW }) {
-            moments.append(
-                TodayMoment(
-                    id: "observed-demand-high-\(observedDemandHigh.timestamp.timeIntervalSince1970)",
-                    time: observedDemandHigh.timestamp,
-                    title: "Observed demand high",
-                    detail: "Demand reached \(gigawatts(observedDemandHigh.demandMW)) GW in the timeline currently held by 50Hz.",
-                    factClass: .observed,
-                    subject: nil,
-                    importance: false,
-                    event: nil
-                )
-            )
-        }
-
-        moments.append(
-            TodayMoment(
-                id: "now-\(snapshot.timestamp.timeIntervalSince1970)",
-                time: snapshot.timestamp,
-                title: [snapshot.headline.balance, snapshot.headline.energyPosition].joined(separator: " · "),
-                detail: snapshot.headline.publicInterpretation(for: snapshot.generation),
-                factClass: .observed,
-                subject: snapshot.generation.min(by: { $0.rank < $1.rank })?.fuel,
-                importance: false,
-                event: nil
-            )
-        )
-
-        if let demandHigh = forecast.max(by: { $0.demandMW < $1.demandMW }) {
-            moments.append(
-                TodayMoment(
-                    id: "forecast-demand-high-\(demandHigh.timestamp.timeIntervalSince1970)",
-                    time: demandHigh.timestamp,
-                    title: "Forecast demand high",
-                    detail: "The available forecast reaches about \(gigawatts(demandHigh.demandMW)) GW. This is a forecast, not a system warning.",
-                    factClass: .forecast,
-                    subject: leadingFuel(in: demandHigh),
-                    importance: false,
-                    event: nil
-                )
-            )
-        }
-
-        if let windHigh = forecast.max(by: { megawatts(.wind, in: $0) < megawatts(.wind, in: $1) }),
-           megawatts(.wind, in: windHigh) > 0 {
-            moments.append(
-                TodayMoment(
-                    id: "forecast-wind-high-\(windHigh.timestamp.timeIntervalSince1970)",
-                    time: windHigh.timestamp,
-                    title: "Forecast wind high",
-                    detail: "Wind reaches about \(gigawatts(megawatts(.wind, in: windHigh))) GW in the latest available forecast.",
-                    factClass: .forecast,
-                    subject: .wind,
-                    importance: false,
-                    event: nil
-                )
-            )
-        }
-
-        let startOfToday = Calendar.autoupdatingCurrent.startOfDay(for: snapshot.timestamp)
-        var reportedEvents = model.events.filter {
-            $0.startedAt >= startOfToday && $0.startedAt <= snapshot.timestamp
-        }
-        if let active = snapshot.activeEvent, !reportedEvents.contains(where: { $0.id == active.id }) {
-            reportedEvents.append(active)
-        }
-        moments.append(contentsOf: reportedEvents.map { event in
-            TodayMoment(
-                id: "event-\(event.id)",
-                time: event.startedAt,
-                title: event.title,
-                detail: event.summary,
-                factClass: .observed,
-                subject: nil,
-                importance: false,
-                event: event
-            )
-        })
-
-        return moments.sorted { lhs, rhs in
-            if lhs.importance != rhs.importance { return lhs.importance }
-            return lhs.time < rhs.time
-        }
-    }
-
-    private func megawatts(_ fuel: FuelKind, in sample: GridTimelineSample) -> Double {
-        sample.generation.first(where: { $0.fuel == fuel })?.megawatts ?? 0
-    }
-
-    private func leadingFuel(in sample: GridTimelineSample) -> FuelKind? {
-        sample.generation.max(by: { $0.megawatts < $1.megawatts })?.fuel
-    }
-
-    private func gigawatts(_ megawatts: Double) -> String {
-        (megawatts / 1_000).formatted(.number.precision(.fractionLength(1)))
-    }
-
-}
-
-private struct ForecastUnavailableNotice: View {
-    let detail: String
-
-    var body: some View {
-        HStack(alignment: .top, spacing: 11) {
-            Image(systemName: "cloud.slash")
-                .foregroundStyle(GridTheme.staleAmber)
-            VStack(alignment: .leading, spacing: 3) {
-                Text("Current forecast unavailable")
-                    .font(.subheadline.weight(.semibold))
-                Text(detail)
-                    .font(.caption)
-                    .foregroundStyle(GridTheme.textSecondary)
-            }
-        }
-        .padding(14)
-        .background(GridTheme.staleAmber.opacity(0.07), in: RoundedRectangle(cornerRadius: 12))
-        .overlay(RoundedRectangle(cornerRadius: 12).stroke(GridTheme.staleAmber.opacity(0.18), lineWidth: 1))
-    }
-}
-
-private struct TimelineRefreshNotice: View {
-    let confirmedAt: Date
-    let retry: () -> Void
-
-    var body: some View {
-        HStack(alignment: .top, spacing: 11) {
-            Image(systemName: "clock.badge.exclamationmark")
-                .foregroundStyle(GridTheme.staleAmber)
-            VStack(alignment: .leading, spacing: 3) {
-                Text("Forecast refresh incomplete")
-                    .font(.subheadline.weight(.semibold))
-                Text("Showing the last timeline confirmed at \(confirmedAt.formatted(.dateTime.hour().minute())). It remains inside 50Hz’s one-hour display limit.")
-                    .font(.caption)
-                    .foregroundStyle(GridTheme.textSecondary)
-            }
-            Spacer(minLength: 4)
-            Button("Retry", action: retry)
-                .font(.caption.weight(.semibold))
-                .foregroundStyle(GridTheme.staleAmber)
-                .frame(minHeight: 44)
-        }
-        .padding(14)
-        .background(GridTheme.staleAmber.opacity(0.07), in: RoundedRectangle(cornerRadius: 12))
-        .overlay(RoundedRectangle(cornerRadius: 12).stroke(GridTheme.staleAmber.opacity(0.18), lineWidth: 1))
-    }
-}
-
-private struct LeadMoment: View {
-    let moment: TodayMoment
-    let action: () -> Void
-    let share: () -> Void
-
-    var body: some View {
-        VStack(alignment: .leading, spacing: 15) {
-            HStack {
-                Label("FORECAST", systemImage: "moon.stars")
-                    .font(.caption2.weight(.semibold))
-                    .fontDesign(.monospaced)
-                    .tracking(0.8)
-                    .foregroundStyle(GridTheme.forecastViolet)
-                Spacer()
-                Text(moment.time.formatted(.dateTime.hour().minute()))
-                    .font(.caption)
-                    .fontDesign(.monospaced)
-                    .foregroundStyle(GridTheme.textTertiary)
-                Button(action: share) {
-                    Image(systemName: "square.and.arrow.up")
-                        .font(.subheadline)
-                        .foregroundStyle(GridTheme.textSecondary)
-                        .frame(width: 44, height: 44)
+    private func header(_ briefing: TodayBriefing) -> some View {
+        VStack(alignment: .leading, spacing: 7) {
+            ViewThatFits(in: .horizontal) {
+                HStack(alignment: .firstTextBaseline, spacing: 10) {
+                    todayTitle
+                    Spacer(minLength: 8)
+                    briefingDate(briefing)
+                    GlobalInfoButton()
                 }
-                .buttonStyle(.plain)
-                .accessibilityLabel("Share this forecast moment")
-            }
-
-            Button(action: action) {
-                VStack(alignment: .leading, spacing: 15) {
-                    Text(moment.title)
-                        .font(.system(.title, design: .rounded, weight: .medium))
-                        .tracking(-0.8)
-                        .foregroundStyle(GridTheme.textPrimary)
-                    Text(moment.detail)
-                        .font(.subheadline)
-                        .foregroundStyle(GridTheme.textSecondary)
-                        .lineSpacing(4)
+                VStack(alignment: .leading, spacing: 4) {
                     HStack {
-                        Text("Open on Live map")
-                            .font(.caption.weight(.semibold))
+                        todayTitle
                         Spacer()
-                        Image(systemName: "arrow.right")
+                        GlobalInfoButton()
                     }
-                    .foregroundStyle(GridTheme.forecastViolet)
+                    briefingDate(briefing)
                 }
+            }
+            Text(briefing.headline)
+                .font(.subheadline)
+                .foregroundStyle(GridTheme.textSecondary)
+            Text("\(TodayBriefingPresentation.systemScope) · as of \(TodayBriefingPresentation.timeLabel(briefing.asOf, relativeTo: briefing.displayPeriod.localDate))")
+                .font(.caption2)
+                .foregroundStyle(GridTheme.textTertiary)
+        }
+    }
+
+    private var todayTitle: some View {
+        Text("Today")
+            .font(.system(.largeTitle, design: .rounded, weight: .medium))
+            .tracking(-1.2)
+            .accessibilityAddTraits(.isHeader)
+    }
+
+    private func briefingDate(_ briefing: TodayBriefing) -> some View {
+        Text(TodayBriefingPresentation.dateLabel(briefing.asOf))
+            .font(.caption)
+            .fontDesign(.monospaced)
+            .foregroundStyle(GridTheme.textTertiary)
+    }
+
+    private func coverageNotice(_ briefing: TodayBriefing) -> some View {
+        HStack(alignment: .top, spacing: 11) {
+            Image(systemName: coverageSymbol(briefing.coverage.status))
+                .foregroundStyle(GridTheme.staleAmber)
+                .accessibilityHidden(true)
+            VStack(alignment: .leading, spacing: 4) {
+                Text(TodayBriefingPresentation.statusTitle(briefing.coverage.status))
+                    .font(.subheadline.weight(.semibold))
+                Text(briefing.summary)
+                    .font(.caption)
+                    .foregroundStyle(GridTheme.textSecondary)
+                    .fixedSize(horizontal: false, vertical: true)
+            }
+        }
+        .frame(maxWidth: .infinity, alignment: .leading)
+        .padding(14)
+        .background(GridTheme.staleAmber.opacity(0.07), in: RoundedRectangle(cornerRadius: 12))
+        .overlay(RoundedRectangle(cornerRadius: 12).stroke(GridTheme.staleAmber.opacity(0.18), lineWidth: 1))
+        .accessibilityElement(children: .combine)
+    }
+
+    private func coverageSymbol(_ status: TodayBriefingStatus) -> String {
+        switch status {
+        case .partial: "circle.lefthalf.filled"
+        case .offline: "wifi.slash"
+        case .observedOnly: "eye"
+        case .empty: "tray"
+        case .complete: "checkmark.circle"
+        case .unknown: "questionmark.circle"
+        }
+    }
+
+    private func nowSection(_ briefing: TodayBriefing) -> some View {
+        VStack(alignment: .leading, spacing: 14) {
+            SectionLabel("Now", trailing: briefing.now.status.rawValue.uppercased())
+            Text("\(TodayBriefingPresentation.systemScope.uppercased()) · \(TodayBriefingPresentation.timeLabel(briefing.now.asOf ?? briefing.asOf, relativeTo: briefing.displayPeriod.localDate))")
+                .font(.caption2.weight(.semibold))
+                .fontDesign(.monospaced)
+                .tracking(0.5)
+                .foregroundStyle(GridTheme.liveCyan)
+            Text(briefing.now.text)
+                .font(.system(.title3, design: .rounded, weight: .medium))
+                .foregroundStyle(GridTheme.textPrimary)
+                .fixedSize(horizontal: false, vertical: true)
+
+            if !briefing.now.values.isEmpty {
+                Hairline()
+                LazyVGrid(
+                    columns: [GridItem(.adaptive(minimum: 140), spacing: 18, alignment: .leading)],
+                    alignment: .leading,
+                    spacing: 16
+                ) {
+                    ForEach(briefing.now.values.prefix(3)) { value in
+                        currentValue(value, localDate: briefing.displayPeriod.localDate)
+                    }
+                }
+            }
+
+            if !briefing.now.missingMetricIDs.isEmpty {
+                Text("Unavailable now: \(briefing.now.missingMetricIDs.prefix(3).joined(separator: ", ")).")
+                    .font(.caption2)
+                    .foregroundStyle(GridTheme.staleAmber)
+            }
+        }
+    }
+
+    private func currentValue(_ value: TodayCurrentValue, localDate: String) -> some View {
+        VStack(alignment: .leading, spacing: 4) {
+            Text("\(TodayBriefingPresentation.classification(value.factClass)) · GB")
+                .font(.caption2.weight(.semibold))
+                .fontDesign(.monospaced)
+                .foregroundStyle(classificationColor(value.factClass))
+            Text(TodayBriefingPresentation.timeLabel(value.observedAt, relativeTo: localDate))
+                .font(.caption2)
+                .fontDesign(.monospaced)
+                .foregroundStyle(GridTheme.textTertiary)
+            Text(TodayBriefingPresentation.value(value.value, unit: value.unit))
+                .font(.system(.title3, design: .rounded, weight: .medium))
+                .foregroundStyle(GridTheme.textPrimary)
+            Text(value.label)
+                .font(.caption)
+                .foregroundStyle(GridTheme.textSecondary)
+        }
+        .frame(maxWidth: .infinity, alignment: .leading)
+        .accessibilityElement(children: .combine)
+    }
+
+    private func classificationColor(_ factClass: TodayCurrentFactClass) -> Color {
+        switch factClass {
+        case .reported: GridTheme.warning
+        case .unknown: GridTheme.textTertiary
+        default: GridTheme.liveCyan
+        }
+    }
+
+    @ViewBuilder
+    private func bestWindowSection(_ briefing: TodayBriefing) -> some View {
+        VStack(alignment: .leading, spacing: 12) {
+            SectionLabel("Best GB window", trailing: "60 MIN CONTINUOUS")
+            if let window = TodayBriefingPresentation.visibleBestWindow(briefing) {
+                VStack(alignment: .leading, spacing: 14) {
+                    Text("FORECAST · GB NATIONAL · COMPLETE COVERAGE")
+                        .font(.caption2.weight(.semibold))
+                        .fontDesign(.monospaced)
+                        .tracking(0.5)
+                        .foregroundStyle(GridTheme.forecastViolet)
+                    Text(TodayBriefingPresentation.windowLabel(window, relativeTo: briefing.displayPeriod.localDate))
+                        .font(.system(.title2, design: .monospaced, weight: .medium))
+                        .foregroundStyle(GridTheme.forecastViolet)
+                        .fixedSize(horizontal: false, vertical: true)
+                    Text(window.label)
+                        .font(.subheadline.weight(.medium))
+                    Hairline()
+                    ViewThatFits(in: .horizontal) {
+                        HStack(alignment: .top, spacing: 24) {
+                            briefingFact(
+                                value: TodayBriefingPresentation.value(window.averageValue, unit: window.unit),
+                                label: "Average forecast intensity"
+                            )
+                            briefingFact(
+                                value: TodayBriefingPresentation.timeLabel(window.capturedAt, relativeTo: briefing.displayPeriod.localDate),
+                                label: "Captured"
+                            )
+                        }
+                        VStack(alignment: .leading, spacing: 12) {
+                            briefingFact(
+                                value: TodayBriefingPresentation.value(window.averageValue, unit: window.unit),
+                                label: "Average forecast intensity"
+                            )
+                            briefingFact(
+                                value: TodayBriefingPresentation.timeLabel(window.capturedAt, relativeTo: briefing.displayPeriod.localDate),
+                                label: "Captured"
+                            )
+                        }
+                    }
+                    Text("100% of the selected window is covered by one compatible national forecast capture.")
+                        .font(.caption2)
+                        .foregroundStyle(GridTheme.textTertiary)
+                    Button {
+                        model.selectedTab = .mine
+                    } label: {
+                        Label("Plan an activity in Local", systemImage: "arrow.right")
+                            .font(.caption.weight(.semibold))
+                            .foregroundStyle(GridTheme.forecastViolet)
+                            .frame(maxWidth: .infinity, minHeight: 44, alignment: .leading)
+                            .contentShape(Rectangle())
+                    }
+                    .buttonStyle(.plain)
+                }
+                .padding(16)
+                .background(GridTheme.forecastViolet.opacity(0.075), in: RoundedRectangle(cornerRadius: GridTheme.cornerRadius))
+                .overlay(RoundedRectangle(cornerRadius: GridTheme.cornerRadius).stroke(GridTheme.forecastViolet.opacity(0.2), lineWidth: 1))
+            } else {
+                TodayEmptySection(
+                    message: "No complete future GB national forecast window is included in this briefing."
+                )
+            }
+        }
+    }
+
+    private func briefingFact(value: String, label: String) -> some View {
+        VStack(alignment: .leading, spacing: 4) {
+            Text(value)
+                .font(.subheadline.weight(.medium))
+                .fontDesign(.monospaced)
+                .fixedSize(horizontal: false, vertical: true)
+            Text(label)
+                .font(.caption2)
+                .foregroundStyle(GridTheme.textTertiary)
+        }
+        .frame(maxWidth: .infinity, alignment: .leading)
+    }
+
+    private func changesSection(_ briefing: TodayBriefing) -> some View {
+        let changes = TodayBriefingPresentation.displayedChanges(briefing)
+        return VStack(alignment: .leading, spacing: 0) {
+            SectionLabel("What changed", trailing: changes.isEmpty ? "NONE" : "OBSERVED · \(changes.count)")
+                .padding(.bottom, 8)
+            if changes.isEmpty {
+                TodayEmptySection(message: "No material observed changes qualified for this briefing.")
+            } else {
+                ForEach(changes) { change in
+                    momentRow(
+                        classification: "OBSERVED · GB",
+                        time: TodayBriefingPresentation.timeLabel(change.observedAt, relativeTo: briefing.displayPeriod.localDate),
+                        title: change.label,
+                        detail: change.text,
+                        color: GridTheme.liveCyan,
+                        momentTime: change.observedAt
+                    )
+                }
+            }
+        }
+    }
+
+    private func nextSection(_ briefing: TodayBriefing) -> some View {
+        let moments = TodayBriefingPresentation.displayedNextMoments(briefing)
+        return VStack(alignment: .leading, spacing: 0) {
+            SectionLabel("Coming next", trailing: moments.isEmpty ? "NONE" : "\(moments.count)")
+                .padding(.bottom, 8)
+            if moments.isEmpty {
+                TodayEmptySection(message: "No qualifying future forecast or reported moment is included.")
+            } else {
+                ForEach(moments) { moment in
+                    momentRow(
+                        classification: "\(TodayBriefingPresentation.classification(moment.factClass)) · GB",
+                        time: TodayBriefingPresentation.timeLabel(moment.startsAt, relativeTo: briefing.displayPeriod.localDate),
+                        title: moment.label,
+                        detail: moment.text,
+                        color: moment.factClass == .forecast ? GridTheme.forecastViolet : GridTheme.warning,
+                        momentTime: moment.startsAt
+                    )
+                }
+            }
+        }
+    }
+
+    @ViewBuilder
+    private func momentRow(
+        classification: String,
+        time: String,
+        title: String,
+        detail: String,
+        color: Color,
+        momentTime: Date?
+    ) -> some View {
+        if let momentTime {
+            Button {
+                openMoment(momentTime)
+            } label: {
+                briefingRowContent(
+                    classification: classification,
+                    time: time,
+                    title: title,
+                    detail: detail,
+                    color: color,
+                    showsChevron: true
+                )
                 .contentShape(Rectangle())
             }
             .buttonStyle(.plain)
+            .frame(minHeight: 44)
+            .accessibilityHint("Opens this supplied moment on Live")
+        } else {
+            briefingRowContent(
+                classification: classification,
+                time: time,
+                title: title,
+                detail: detail,
+                color: color,
+                showsChevron: false
+            )
         }
-        .padding(18)
-        .background(GridTheme.forecastViolet.opacity(0.075), in: RoundedRectangle(cornerRadius: GridTheme.cornerRadius))
-        .overlay(RoundedRectangle(cornerRadius: GridTheme.cornerRadius).stroke(GridTheme.forecastViolet.opacity(0.20), lineWidth: 1))
-        .accessibilityElement(children: .contain)
-    }
-}
-
-private struct MomentRow: View {
-    let moment: TodayMoment
-    let isNow: Bool
-    let action: () -> Void
-
-    private var color: Color {
-        moment.factClass == .forecast ? GridTheme.forecastViolet : GridTheme.liveCyan
     }
 
-    var body: some View {
-        Button(action: action) {
-            HStack(alignment: .top, spacing: 14) {
-                VStack(spacing: 0) {
-                    Circle()
-                        .fill(color)
-                        .frame(width: isNow ? 9 : 6, height: isNow ? 9 : 6)
-                        .shadow(color: color.opacity(0.5), radius: 5)
-                        .padding(.top, 7)
-                    Rectangle()
-                        .fill(color.opacity(0.18))
-                        .frame(width: 1, height: 82)
+    private func briefingRowContent(
+        classification: String,
+        time: String,
+        title: String,
+        detail: String,
+        color: Color,
+        showsChevron: Bool
+    ) -> some View {
+        VStack(alignment: .leading, spacing: 6) {
+            ViewThatFits(in: .horizontal) {
+                HStack(alignment: .firstTextBaseline, spacing: 8) {
+                    classificationLabel(classification, color: color)
+                    Spacer(minLength: 8)
+                    timeLabel(time)
                 }
-                VStack(alignment: .leading, spacing: 5) {
-                    HStack {
-                        Text(timestampLabel)
-                            .font(.caption2.weight(.semibold))
-                            .fontDesign(.monospaced)
-                            .foregroundStyle(color)
-                        Text(moment.factClass.rawValue.uppercased())
-                            .font(.system(size: 8, weight: .medium, design: .monospaced))
-                            .foregroundStyle(GridTheme.textTertiary)
-                    }
-                    Text(moment.title)
-                        .font(.headline)
-                        .foregroundStyle(GridTheme.textPrimary)
-                    Text(moment.detail)
+                VStack(alignment: .leading, spacing: 3) {
+                    classificationLabel(classification, color: color)
+                    timeLabel(time)
+                }
+            }
+            HStack(alignment: .firstTextBaseline, spacing: 8) {
+                Text(title)
+                    .font(.headline)
+                    .foregroundStyle(GridTheme.textPrimary)
+                Spacer(minLength: 4)
+                if showsChevron {
+                    Image(systemName: "chevron.right")
                         .font(.caption)
-                        .foregroundStyle(GridTheme.textSecondary)
-                        .lineLimit(3)
-                        .fixedSize(horizontal: false, vertical: true)
+                        .foregroundStyle(GridTheme.textTertiary)
+                        .accessibilityHidden(true)
                 }
-                Spacer(minLength: 0)
+            }
+            Text(detail)
+                .font(.caption)
+                .foregroundStyle(GridTheme.textSecondary)
+                .fixedSize(horizontal: false, vertical: true)
+        }
+        .frame(maxWidth: .infinity, minHeight: 82, alignment: .leading)
+        .padding(.vertical, 10)
+        .overlay(alignment: .bottom) { Hairline() }
+        .accessibilityElement(children: .combine)
+    }
+
+    private func classificationLabel(_ text: String, color: Color) -> some View {
+        Text(text)
+            .font(.caption2.weight(.semibold))
+            .fontDesign(.monospaced)
+            .foregroundStyle(color)
+    }
+
+    private func timeLabel(_ text: String) -> some View {
+        Text(text)
+            .font(.caption2)
+            .fontDesign(.monospaced)
+            .foregroundStyle(GridTheme.textTertiary)
+    }
+
+    private func eventsSection(_ briefing: TodayBriefing) -> some View {
+        let events = TodayBriefingPresentation.displayedEvents(briefing)
+        return VStack(alignment: .leading, spacing: 0) {
+            SectionLabel(
+                "Reported events",
+                trailing: TodayBriefingPresentation.eventCountLabel(briefing.reportedEvents)
+            )
+            .padding(.bottom, 8)
+
+            if events.isEmpty {
+                TodayEmptySection(message: "No active or next-24-hour reported events are included.")
+            } else {
+                ForEach(events) { event in
+                    eventRow(event, briefing: briefing)
+                }
+                if TodayBriefingPresentation.shouldShowAllEvents(briefing.reportedEvents) {
+                    Text("Showing \(events.count) of \(briefing.reportedEvents.totalCount) server-ranked reported events.")
+                        .font(.caption2)
+                        .foregroundStyle(GridTheme.textTertiary)
+                        .padding(.top, 10)
+                    Button {
+                        model.selectedTab = .live
+                    } label: {
+                        Label("See all in Live", systemImage: "arrow.right")
+                            .font(.caption.weight(.semibold))
+                            .foregroundStyle(GridTheme.liveCyan)
+                            .frame(maxWidth: .infinity, minHeight: 44, alignment: .leading)
+                            .contentShape(Rectangle())
+                    }
+                    .buttonStyle(.plain)
+                }
+            }
+        }
+    }
+
+    @ViewBuilder
+    private func eventRow(_ event: TodayReportedEvent, briefing: TodayBriefing) -> some View {
+        if let mapped = mappedEvent(event) {
+            Button {
+                open(mapped)
+            } label: {
+                eventRowContent(event, localDate: briefing.displayPeriod.localDate, showsChevron: true)
+                    .contentShape(Rectangle())
+            }
+            .buttonStyle(.plain)
+            .frame(minHeight: 44)
+            .accessibilityHint("Opens the matching reported event")
+        } else {
+            eventRowContent(event, localDate: briefing.displayPeriod.localDate, showsChevron: false)
+        }
+    }
+
+    private func eventRowContent(
+        _ event: TodayReportedEvent,
+        localDate: String,
+        showsChevron: Bool
+    ) -> some View {
+        HStack(alignment: .top, spacing: 12) {
+            VStack(alignment: .leading, spacing: 6) {
+                ViewThatFits(in: .horizontal) {
+                    HStack(alignment: .firstTextBaseline, spacing: 8) {
+                        eventClassification(event)
+                        Spacer(minLength: 8)
+                        eventTime(event, localDate: localDate)
+                    }
+                    VStack(alignment: .leading, spacing: 3) {
+                        eventClassification(event)
+                        eventTime(event, localDate: localDate)
+                    }
+                }
+                Text(event.title)
+                    .font(.headline)
+                    .foregroundStyle(GridTheme.textPrimary)
+                Text(event.text)
+                    .font(.caption)
+                    .foregroundStyle(GridTheme.textSecondary)
+                    .fixedSize(horizontal: false, vertical: true)
+            }
+            if showsChevron {
                 Image(systemName: "chevron.right")
+                    .font(.caption)
+                    .foregroundStyle(GridTheme.textTertiary)
+                    .padding(.top, 4)
+                    .accessibilityHidden(true)
+            }
+        }
+        .frame(maxWidth: .infinity, minHeight: 82, alignment: .leading)
+        .padding(.vertical, 10)
+        .overlay(alignment: .bottom) { Hairline() }
+        .accessibilityElement(children: .combine)
+    }
+
+    private func eventClassification(_ event: TodayReportedEvent) -> some View {
+        Text("REPORTED · \(event.timing.rawValue.uppercased())")
+            .font(.caption2.weight(.semibold))
+            .fontDesign(.monospaced)
+            .foregroundStyle(eventColor(event.severity))
+    }
+
+    private func eventTime(_ event: TodayReportedEvent, localDate: String) -> some View {
+        Text(TodayBriefingPresentation.timeLabel(event.startsAt ?? event.publishedAt, relativeTo: localDate))
+            .font(.caption2)
+            .fontDesign(.monospaced)
+            .foregroundStyle(GridTheme.textTertiary)
+    }
+
+    private func eventColor(_ severity: TodayReportedEventSeverity) -> Color {
+        switch severity {
+        case .critical, .material: GridTheme.warning
+        case .notable: GridTheme.staleAmber
+        case .info: GridTheme.liveCyan
+        case .unknown: GridTheme.textTertiary
+        }
+    }
+
+    private func mappedEvent(_ event: TodayReportedEvent) -> GridEvent? {
+        guard !event.stableID.isEmpty,
+              event.evidenceClass.caseInsensitiveCompare("reported") == .orderedSame else { return nil }
+        return model.events.first {
+            $0.id == event.stableID && $0.isAuthoritativelyReported
+        }
+    }
+
+    private func open(_ event: GridEvent) {
+        model.selectedTab = .live
+        Task { @MainActor in
+            await Task.yield()
+            model.selectedEvent = event
+        }
+    }
+
+    private func openMoment(_ time: Date) {
+        model.selectedTime = time
+        model.selectedFuel = nil
+        model.selectedTab = .live
+    }
+
+    private func coverageFooter(_ briefing: TodayBriefing) -> some View {
+        VStack(alignment: .leading, spacing: 9) {
+            Hairline()
+            SectionLabel("Coverage", trailing: briefing.coverage.status.rawValue.uppercased())
+            Text(briefing.summary)
+                .font(.caption)
+                .foregroundStyle(GridTheme.textSecondary)
+            if let counts = TodayBriefingPresentation.sourceCountLabel(briefing.coverage.sourceCountsByState) {
+                Text("Sources: \(counts).")
                     .font(.caption2)
                     .foregroundStyle(GridTheme.textTertiary)
-                    .padding(.top, 8)
             }
-            .contentShape(Rectangle())
+            if !briefing.coverage.missingFamilies.isEmpty {
+                Text("Unavailable families: \(briefing.coverage.missingFamilies.prefix(6).joined(separator: ", ")).")
+                    .font(.caption2)
+                    .foregroundStyle(GridTheme.staleAmber)
+            }
+            ForEach(Array(briefing.coverage.notes.prefix(3).enumerated()), id: \.offset) { _, note in
+                Text(note)
+                    .font(.caption2)
+                    .foregroundStyle(GridTheme.textTertiary)
+            }
+            Text("Briefing as of \(TodayBriefingPresentation.timeLabel(briefing.asOf, relativeTo: briefing.displayPeriod.localDate))\(generatedSuffix(briefing)).")
+                .font(.caption2)
+                .foregroundStyle(GridTheme.textTertiary)
+            Text(TodayBriefingPresentation.methodologyCopy)
+                .font(.caption2)
+                .foregroundStyle(GridTheme.textTertiary)
+            ForEach(Array(briefing.limitations.prefix(2).enumerated()), id: \.offset) { _, limitation in
+                Text(limitation)
+                    .font(.caption2)
+                    .foregroundStyle(GridTheme.textTertiary)
+            }
         }
-        .buttonStyle(.plain)
-        .accessibilityElement(children: .combine)
-        .accessibilityHint("Opens this moment on the Live map")
     }
 
-    private var timestampLabel: String {
-        if isNow { return "NOW" }
-        if Calendar.autoupdatingCurrent.isDateInToday(moment.time) {
-            return moment.time.formatted(.dateTime.hour().minute())
+    private func generatedSuffix(_ briefing: TodayBriefing) -> String {
+        guard let generatedAt = briefing.generatedAt else { return "" }
+        return ", generated \(TodayBriefingPresentation.timeLabel(generatedAt, relativeTo: briefing.displayPeriod.localDate))"
+    }
+
+    @ViewBuilder
+    private var emptyState: some View {
+        VStack(alignment: .leading, spacing: 20) {
+            HStack {
+                Text("Today")
+                    .font(.system(.largeTitle, design: .rounded, weight: .medium))
+                    .accessibilityAddTraits(.isHeader)
+                Spacer()
+                GlobalInfoButton()
+            }
+            switch model.briefingLoadPhase {
+            case .loading:
+                ProgressView("Building today’s briefing…")
+                    .tint(GridTheme.liveCyan)
+                    .foregroundStyle(GridTheme.textSecondary)
+            case .failed(let message):
+                TodayStateNotice(
+                    title: "Today’s briefing is unavailable",
+                    message: message,
+                    systemImage: "wifi.exclamationmark"
+                ) {
+                    Task { await model.loadTodayBriefing(localDate: londonDate) }
+                }
+            case .loaded:
+                TodayEmptySection(message: "No briefing has been returned for the current London date.")
+            }
+            Spacer()
         }
-        let currentYear = Calendar.autoupdatingCurrent.component(.year, from: Date())
-        let momentYear = Calendar.autoupdatingCurrent.component(.year, from: moment.time)
-        if momentYear != currentYear {
-            return moment.time.formatted(.dateTime.day().month(.abbreviated).year().hour().minute())
-        }
-        return moment.time.formatted(.dateTime.day().month(.abbreviated).hour().minute())
+        .padding(.horizontal, GridTheme.horizontalPadding)
+        .padding(.top, 12)
     }
 }
 
-private struct TodayLoadingView: View {
+private struct TodayEmptySection: View {
+    let message: String
+
     var body: some View {
-        VStack(alignment: .leading, spacing: 18) {
-            Text("Today").font(.largeTitle)
-            Text("Waiting for a confirmed timeline…")
-                .foregroundStyle(GridTheme.textSecondary)
-            ProgressView().tint(GridTheme.liveCyan)
-            Spacer()
+        Text(message)
+            .font(.caption)
+            .foregroundStyle(GridTheme.textSecondary)
+            .frame(maxWidth: .infinity, minHeight: 54, alignment: .leading)
+            .padding(.vertical, 6)
+    }
+}
+
+private struct TodayStateNotice: View {
+    let title: String
+    let message: String
+    let systemImage: String
+    let retry: () -> Void
+
+    var body: some View {
+        ViewThatFits(in: .horizontal) {
+            HStack(alignment: .top, spacing: 11) {
+                noticeIcon
+                noticeCopy
+                Spacer(minLength: 4)
+                retryButton(expands: false)
+            }
+            VStack(alignment: .leading, spacing: 10) {
+                HStack(alignment: .firstTextBaseline, spacing: 10) {
+                    noticeIcon
+                    Text(title)
+                        .font(.subheadline.weight(.semibold))
+                }
+                Text(message)
+                    .font(.caption)
+                    .foregroundStyle(GridTheme.textSecondary)
+                    .fixedSize(horizontal: false, vertical: true)
+                retryButton(expands: true)
+            }
         }
-        .frame(maxWidth: .infinity, alignment: .leading)
-        .padding(GridTheme.horizontalPadding)
+        .padding(14)
+        .background(GridTheme.staleAmber.opacity(0.07), in: RoundedRectangle(cornerRadius: 12))
+        .overlay(RoundedRectangle(cornerRadius: 12).stroke(GridTheme.staleAmber.opacity(0.18), lineWidth: 1))
+    }
+
+    private var noticeIcon: some View {
+        Image(systemName: systemImage)
+            .foregroundStyle(GridTheme.staleAmber)
+            .accessibilityHidden(true)
+    }
+
+    private var noticeCopy: some View {
+        VStack(alignment: .leading, spacing: 4) {
+            Text(title)
+                .font(.subheadline.weight(.semibold))
+            Text(message)
+                .font(.caption)
+                .foregroundStyle(GridTheme.textSecondary)
+                .fixedSize(horizontal: false, vertical: true)
+        }
+    }
+
+    private func retryButton(expands: Bool) -> some View {
+        Button("Retry", action: retry)
+            .font(.caption.weight(.semibold))
+            .foregroundStyle(GridTheme.staleAmber)
+            .frame(
+                minWidth: 44,
+                maxWidth: expands ? .infinity : nil,
+                minHeight: 44,
+                alignment: .leading
+            )
     }
 }

@@ -58,6 +58,7 @@ actor HTTPGridRepository: GridRepository {
         case timeline
         case events
         case dailyGame
+        case todayBriefing(localDate: String)
         case region(String)
         case localWindows(postcode: String, durationMinutes: Int)
 
@@ -67,6 +68,7 @@ actor HTTPGridRepository: GridRepository {
             case .timeline: .timeline
             case .events: .events
             case .dailyGame: .dailyGame
+            case .todayBriefing(let localDate): .todayBriefing(localDate: localDate)
             case .region(let postcode): .region(postcode)
             case .localWindows(let postcode, let durationMinutes):
                 .localWindows(postcode: postcode, durationMinutes: durationMinutes)
@@ -81,6 +83,7 @@ actor HTTPGridRepository: GridRepository {
     private var timelineTask: Task<GridTimeline, Error>?
     private var eventsTask: Task<[GridEvent], Error>?
     private var dailyGameTask: Task<DailyGame, Error>?
+    private var todayBriefingTasks: [TodayBriefingRequest: Task<TodayBriefing, Error>] = [:]
     private var regionTasks: [String: Task<RegionalGridContext, Error>] = [:]
     private var localWindowsTasks: [LocalWindowsRequest: Task<LocalWindowsResponse, Error>] = [:]
 
@@ -177,6 +180,24 @@ actor HTTPGridRepository: GridRepository {
             return try GridJSON.decoder.decode(DailyGame.self, from: entry.data)
         } catch {
             await cache.remove(.dailyGame)
+            return nil
+        }
+    }
+
+    func cachedTodayBriefing(localDate: String) async -> TodayBriefing? {
+        let request = TodayBriefingRequest(localDate: localDate)
+        guard request.localDate != "unknown-date" else { return nil }
+        let key = GridCacheKey.todayBriefing(localDate: request.localDate)
+        guard let entry = await cache.entry(for: key) else { return nil }
+        do {
+            let decoded = try GridJSON.decoder.decode(TodayBriefing.self, from: entry.data)
+            guard decoded.matches(request) else {
+                await cache.remove(key)
+                return nil
+            }
+            return decoded
+        } catch {
+            await cache.remove(key)
             return nil
         }
     }
@@ -285,6 +306,36 @@ actor HTTPGridRepository: GridRepository {
         }
     }
 
+    func todayBriefing(localDate: String) async throws -> TodayBriefing {
+        let request = TodayBriefingRequest(localDate: localDate)
+        guard request.localDate != "unknown-date" else { throw GridAPIError.invalidResponse }
+        if let task = todayBriefingTasks[request] { return try await task.value }
+
+        let task = Task<TodayBriefing, Error> {
+            let endpoint = Endpoint.todayBriefing(localDate: request.localDate)
+            let response = try await Self.fetch(
+                endpoint: endpoint,
+                requestURL: Self.todayBriefingURL(baseURL: baseURL),
+                session: session,
+                cache: cache,
+                as: TodayBriefing.self
+            )
+            guard response.matches(request) else {
+                await cache.remove(endpoint.cacheKey)
+                throw GridAPIError.decoding("Today briefing did not match the requested London date or methodology.")
+            }
+            return response
+        }
+        todayBriefingTasks[request] = task
+        defer { todayBriefingTasks[request] = nil }
+
+        return try await withTaskCancellationHandler {
+            try await task.value
+        } onCancel: {
+            task.cancel()
+        }
+    }
+
     func events() async throws -> [GridEvent] {
         if let eventsTask { return try await eventsTask.value }
 
@@ -355,6 +406,10 @@ actor HTTPGridRepository: GridRepository {
 
     private nonisolated static func currentURL(baseURL: URL) throws -> URL {
         baseURL.appendingPathComponent("v1/grid/current")
+    }
+
+    private nonisolated static func todayBriefingURL(baseURL: URL) -> URL {
+        baseURL.appendingPathComponent("v1/briefing/today")
     }
 
     private nonisolated static func timelineURL(baseURL: URL, now: Date) throws -> URL {
