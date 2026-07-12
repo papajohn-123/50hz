@@ -92,6 +92,8 @@ class ConditionalJSONMiddleware:
 def _cache_seconds(path: str) -> int | None:
     if path == "/v1/grid/current":
         return 30
+    if path == "/v1/sources/status":
+        return 30
     if path == "/v1/grid/timeline":
         return 60
     if path in {"/v1/briefing/today", "/v1/events", "/v1/game/today"}:

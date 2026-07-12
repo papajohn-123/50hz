@@ -24,6 +24,10 @@ def client() -> TestClient:
     async def export_schema() -> dict[str, object]:
         return {"formats": ["json", "csv"]}
 
+    @app.get("/v1/sources/status")
+    async def source_status() -> dict[str, object]:
+        return {"sourceCount": 1}
+
     return TestClient(app)
 
 
@@ -59,3 +63,11 @@ def test_export_schema_is_long_lived_but_generated_exports_are_not_cached() -> N
     assert schema.headers["cache-control"].startswith("public, max-age=3600")
     assert "etag" in schema.headers
     assert "etag" not in export.headers
+
+
+def test_source_status_uses_short_current_state_cache() -> None:
+    with client() as test_client:
+        response = test_client.get("/v1/sources/status")
+
+    assert response.headers["cache-control"].startswith("public, max-age=30")
+    assert "etag" in response.headers

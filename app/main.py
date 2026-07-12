@@ -16,6 +16,7 @@ from app.legal import router as legal_router
 from app.rate_limit import RateLimitMiddleware
 from app.runtime import lifespan
 from app.persistence import GridReadRepository
+from app.source_health.api import router as source_health_router
 
 
 app = FastAPI(
@@ -28,6 +29,7 @@ app.include_router(api_router)
 app.include_router(intelligence_router)
 app.include_router(export_router)
 app.include_router(legal_router)
+app.include_router(source_health_router)
 app.add_middleware(ConditionalJSONMiddleware)
 app.add_middleware(GZipMiddleware, minimum_size=1_000)
 app.add_middleware(RateLimitMiddleware)
