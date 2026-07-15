@@ -1,0 +1,13 @@
+.git
+.github
+.env
+.env.*
+.venv
+**/__pycache__
+.pytest_cache
+*.pyc
+*.egg-info
+ios
+qa-artifacts
+tests
+*.zip
