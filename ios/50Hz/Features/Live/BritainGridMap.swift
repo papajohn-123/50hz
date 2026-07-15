@@ -40,6 +40,47 @@ struct BritainShape: Shape {
     }
 }
 
+private enum LiveMapSemanticLevel: Int, Equatable {
+    case national
+    case regional
+    case sites
+    case evidence
+
+    init(zoomScale: CGFloat) {
+        switch zoomScale {
+        case ..<1.55: self = .national
+        case ..<3.2: self = .regional
+        case ..<5.8: self = .sites
+        default: self = .evidence
+        }
+    }
+
+    var markerLimit: Int {
+        switch self {
+        case .national: 0
+        case .regional: 48
+        case .sites, .evidence: 100
+        }
+    }
+
+    var labelLimit: Int {
+        switch self {
+        case .national, .regional: 0
+        case .sites: 5
+        case .evidence: 8
+        }
+    }
+
+    var fieldEmphasis: Double {
+        switch self {
+        case .national: 1
+        case .regional: 0.58
+        case .sites: 0.30
+        case .evidence: 0.20
+        }
+    }
+}
+
 struct LiveMapAssetCluster: Identifiable, Equatable, Sendable {
     let id: String
     let assets: [LiveMapAsset]
@@ -53,9 +94,12 @@ struct LiveMapAssetCluster: Identifiable, Equatable, Sendable {
         return capacities.isEmpty ? nil : capacities.reduce(0, +)
     }
     var dominantFuel: FuelKind? {
-        var counts: [FuelKind: Int] = [:]
-        for fuel in assets.compactMap(\.fuel) { counts[fuel, default: 0] += 1 }
-        return counts.max { lhs, rhs in
+        var capacityByFuel: [FuelKind: Double] = [:]
+        for asset in assets {
+            guard let fuel = asset.fuel else { continue }
+            capacityByFuel[fuel, default: 0] += max(asset.capacityMW ?? 1, 1)
+        }
+        return capacityByFuel.max { lhs, rhs in
             lhs.value == rhs.value
                 ? lhs.key.displayName > rhs.key.displayName
                 : lhs.value < rhs.value
@@ -107,7 +151,7 @@ enum LiveAssetClustering {
         zoomScale: CGFloat,
         offset: CGSize,
         viewportSize: CGSize,
-        maximumMarkerCount: Int = 180
+        maximumMarkerCount: Int = 100
     ) -> ViewportSelection {
         let requestedBand = band(for: zoomScale)
         let safeMaximum = max(maximumMarkerCount, 1)
@@ -126,9 +170,22 @@ enum LiveAssetClustering {
                     offset: offset
                 )
             }
-            if visible.count <= safeMaximum || candidateBand == 1 {
+            if visible.count <= safeMaximum {
                 return ViewportSelection(
                     clusters: visible,
+                    requestedBand: requestedBand,
+                    renderedBand: candidateBand
+                )
+            }
+            if candidateBand == 1 {
+                let limited = visible.sorted {
+                    if $0.totalCapacityMW != $1.totalCapacityMW {
+                        return ($0.totalCapacityMW ?? -1) > ($1.totalCapacityMW ?? -1)
+                    }
+                    return $0.id < $1.id
+                }
+                return ViewportSelection(
+                    clusters: Array(limited.prefix(safeMaximum)),
                     requestedBand: requestedBand,
                     renderedBand: candidateBand
                 )
@@ -140,9 +197,9 @@ enum LiveAssetClustering {
 
     private static func band(for zoomScale: CGFloat) -> Int {
         switch zoomScale {
-        case ..<1.5: 1
-        case ..<2.75: 2
-        case ..<4.75: 3
+        case ..<1.55: 1
+        case ..<3.2: 2
+        case ..<5.8: 3
         default: 4
         }
     }
@@ -168,11 +225,15 @@ enum LiveAssetClustering {
 
         return groups.map { cell, members in
             let ordered = members.sorted { $0.id < $1.id }
+            let weightedMembers = ordered.map { asset in
+                (asset: asset, weight: max(asset.capacityMW ?? 1, 1))
+            }
+            let totalWeight = weightedMembers.reduce(0) { $0 + $1.weight }
             return LiveMapAssetCluster(
                 id: "\(cell.zoomBand):\(cell.x):\(cell.y)",
                 assets: ordered,
-                latitude: ordered.reduce(0) { $0 + $1.latitude } / Double(ordered.count),
-                longitude: ordered.reduce(0) { $0 + $1.longitude } / Double(ordered.count)
+                latitude: weightedMembers.reduce(0) { $0 + ($1.asset.latitude * $1.weight) } / totalWeight,
+                longitude: weightedMembers.reduce(0) { $0 + ($1.asset.longitude * $1.weight) } / totalWeight
             )
         }
         .sorted { $0.id < $1.id }
@@ -253,7 +314,7 @@ private struct LiveAssetOverlay: View {
     let assets: [LiveMapAsset]
     let zoomScale: CGFloat
     let offset: CGSize
-    let showLabels: Bool
+    let semanticLevel: LiveMapSemanticLevel
     let onAssetTap: ((LiveMapAsset) -> Void)?
     let onClusterTap: (LiveMapAssetCluster, CGPoint, CGSize) -> Void
 
@@ -261,53 +322,53 @@ private struct LiveAssetOverlay: View {
 
     var body: some View {
         GeometryReader { proxy in
-            let selection = LiveAssetClustering.visibleClusters(
-                in: clusterIndex,
-                zoomScale: zoomScale,
-                offset: offset,
-                viewportSize: proxy.size
-            )
+            if semanticLevel != .national {
+                let selection = LiveAssetClustering.visibleClusters(
+                    in: clusterIndex,
+                    zoomScale: zoomScale,
+                    offset: offset,
+                    viewportSize: proxy.size,
+                    maximumMarkerCount: semanticLevel.markerLimit
+                )
+                let labelledAssetIDs = labelledAssetIDs(in: selection.clusters)
 
-            ForEach(selection.clusters) { cluster in
-                let point = LiveAssetMapProjection.position(
-                    latitude: cluster.latitude,
-                    longitude: cluster.longitude,
-                    viewportSize: proxy.size
-                )
-                Button {
-                    if let asset = cluster.singleAsset {
-                        onAssetTap?(asset)
-                    } else {
-                        onClusterTap(cluster, point, proxy.size)
-                    }
-                } label: {
-                    marker(for: cluster)
-                    .frame(width: 44, height: 44)
-                    .overlay(alignment: .leading) {
-                        if showLabels, let asset = cluster.singleAsset {
-                            Text(asset.name)
-                                .font(.system(size: 8, weight: .semibold, design: .monospaced))
-                                .lineLimit(1)
-                                .foregroundStyle(GridTheme.textPrimary)
-                                .padding(.horizontal, 5)
-                                .padding(.vertical, 3)
-                                .background(GridTheme.surface.opacity(0.92), in: Capsule())
-                                .offset(x: 30)
+                ForEach(selection.clusters) { cluster in
+                    let point = LiveAssetMapProjection.position(
+                        latitude: cluster.latitude,
+                        longitude: cluster.longitude,
+                        viewportSize: proxy.size
+                    )
+                    Button {
+                        if semanticLevel != .regional, let asset = cluster.singleAsset {
+                            onAssetTap?(asset)
+                        } else {
+                            onClusterTap(cluster, point, proxy.size)
                         }
+                    } label: {
+                        marker(for: cluster)
+                            .frame(width: 56, height: 56)
+                            .overlay(alignment: .leading) {
+                                if let asset = cluster.singleAsset,
+                                   labelledAssetIDs.contains(asset.id) {
+                                    Text(asset.name)
+                                        .font(.system(size: 8, weight: .semibold, design: .rounded))
+                                        .lineLimit(1)
+                                        .foregroundStyle(GridTheme.textPrimary)
+                                        .padding(.horizontal, 4)
+                                        .padding(.vertical, 2)
+                                        .background(GridTheme.background.opacity(0.82))
+                                        .shadow(color: GridTheme.background, radius: 3)
+                                        .offset(x: 32)
+                                }
+                            }
                     }
+                    .buttonStyle(.plain)
+                    .disabled(onAssetTap == nil && cluster.singleAsset != nil && semanticLevel != .regional)
+                    .scaleEffect(1 / max(zoomScale, 1))
+                    .position(point)
+                    .accessibilityLabel(accessibilityLabel(cluster))
+                    .accessibilityHint(accessibilityHint(cluster))
                 }
-                .buttonStyle(.plain)
-                .disabled(onAssetTap == nil && cluster.singleAsset != nil)
-                .scaleEffect(1 / max(zoomScale, 1))
-                .position(point)
-                .accessibilityLabel(accessibilityLabel(cluster))
-                .accessibilityHint(
-                    cluster.singleAsset == nil
-                        ? (zoomScale < 7.75
-                           ? "Recenters and zooms towards this group of source-located sites"
-                           : "Opens a list of the source-located sites in this group")
-                        : "Opens the source-backed generator inspector"
-                )
             }
         }
         .task(id: assetCacheKey) {
@@ -332,40 +393,165 @@ private struct LiveAssetOverlay: View {
 
     @ViewBuilder
     private func marker(for cluster: LiveMapAssetCluster) -> some View {
-        let accent = cluster.dominantFuel.map(GridTheme.fuel) ?? GridTheme.liveCyan
-        if cluster.count == 1 {
-            ZStack {
-                Circle()
-                    .fill(accent)
-                    .frame(width: 8, height: 8)
-                    .shadow(color: accent.opacity(0.55), radius: 4)
-                Circle()
-                    .stroke(GridTheme.textPrimary.opacity(0.75), lineWidth: 1)
-                    .frame(width: 13, height: 13)
-            }
-        } else {
-            Text(cluster.count.formatted())
-                .font(.system(size: 9, weight: .bold, design: .monospaced))
-                .foregroundStyle(GridTheme.background)
-                .lineLimit(1)
-                .minimumScaleFactor(0.65)
-                .frame(width: 27, height: 27)
-                .background(accent, in: Circle())
-                .overlay(Circle().stroke(GridTheme.textPrimary.opacity(0.75), lineWidth: 1))
-                .shadow(color: accent.opacity(0.38), radius: 5)
+        if semanticLevel == .regional || cluster.singleAsset == nil {
+            capacityWell(cluster)
+        } else if let asset = cluster.singleAsset {
+            siteGlyph(asset)
         }
     }
 
+    private func capacityWell(_ cluster: LiveMapAssetCluster) -> some View {
+        let accent = cluster.dominantFuel.map(GridTheme.fuel) ?? GridTheme.liveCyan
+        let diameter = capacityWellDiameter(cluster.totalCapacityMW)
+
+        return ZStack {
+            Circle()
+                .fill(accent.opacity(0.055))
+                .frame(width: diameter, height: diameter)
+                .shadow(color: accent.opacity(0.18), radius: diameter * 0.28)
+
+            Circle()
+                .stroke(accent.opacity(0.24), lineWidth: 0.8)
+                .frame(width: diameter, height: diameter)
+
+            Circle()
+                .stroke(accent.opacity(0.44), lineWidth: 0.8)
+                .frame(width: diameter * 0.67, height: diameter * 0.67)
+
+            Circle()
+                .fill(accent.opacity(0.88))
+                .frame(width: 3.5, height: 3.5)
+        }
+    }
+
+    private func siteGlyph(_ asset: LiveMapAsset) -> some View {
+        let accent = asset.fuel.map(GridTheme.fuel) ?? GridTheme.liveCyan
+        let diameter = siteDiameter(asset.capacityMW)
+        let hasPlan = asset.operatingEvidence?.participantSubmittedPlan != nil
+        let hasSettledEvidence = asset.operatingEvidence?.latestSettledMetered != nil
+
+        return ZStack {
+            fuelGlyph(asset.fuel, color: accent, diameter: diameter)
+                .shadow(color: accent.opacity(0.42), radius: 3)
+
+            if asset.linkedBMUnitCount > 0 {
+                Circle()
+                    .stroke(GridTheme.textPrimary.opacity(0.58), lineWidth: 0.75)
+                    .frame(width: diameter + 6, height: diameter + 6)
+            }
+
+            if hasPlan {
+                Circle()
+                    .trim(from: 0.04, to: 0.30)
+                    .stroke(
+                        GridTheme.forecastViolet,
+                        style: StrokeStyle(lineWidth: 1.5, lineCap: .round)
+                    )
+                    .rotationEffect(.degrees(-90))
+                    .frame(width: diameter + 10, height: diameter + 10)
+            }
+
+            if hasSettledEvidence {
+                Circle()
+                    .stroke(
+                        GridTheme.liveCyan.opacity(0.72),
+                        style: StrokeStyle(lineWidth: 0.9, dash: [2, 2])
+                    )
+                    .frame(width: diameter + 14, height: diameter + 14)
+            }
+        }
+    }
+
+    @ViewBuilder
+    private func fuelGlyph(_ fuel: FuelKind?, color: Color, diameter: CGFloat) -> some View {
+        switch fuel {
+        case .wind:
+            ZStack {
+                Circle()
+                    .fill(color)
+                    .frame(width: max(diameter * 0.32, 3.5), height: max(diameter * 0.32, 3.5))
+                ForEach(0..<3, id: \.self) { index in
+                    Capsule()
+                        .fill(color)
+                        .frame(width: max(diameter * 0.16, 1.5), height: diameter * 0.56)
+                        .offset(y: -diameter * 0.22)
+                        .rotationEffect(.degrees(Double(index) * 120))
+                }
+            }
+            .frame(width: diameter, height: diameter)
+        case .solar:
+            RoundedRectangle(cornerRadius: max(diameter * 0.16, 1.5), style: .continuous)
+                .fill(color)
+                .frame(width: diameter * 0.88, height: diameter * 0.88)
+        case .hydro:
+            RoundedRectangle(cornerRadius: max(diameter * 0.12, 1), style: .continuous)
+                .fill(color)
+                .frame(width: diameter * 0.72, height: diameter * 0.72)
+                .rotationEffect(.degrees(45))
+        case .storage:
+            Circle()
+                .fill(color.opacity(0.14))
+                .frame(width: diameter, height: diameter)
+                .overlay(Circle().stroke(color, lineWidth: max(diameter * 0.18, 1.4)))
+        default:
+            Circle()
+                .fill(color)
+                .frame(width: diameter, height: diameter)
+        }
+    }
+
+    private func capacityWellDiameter(_ capacityMW: Double?) -> CGFloat {
+        let capacity = max(capacityMW ?? 0, 0)
+        return min(max(20 + CGFloat(sqrt(capacity)) * 0.24, 22), 48)
+    }
+
+    private func siteDiameter(_ capacityMW: Double?) -> CGFloat {
+        let capacity = max(capacityMW ?? 0, 0)
+        return min(max(7 + CGFloat(sqrt(capacity)) * 0.22, 7), 17)
+    }
+
+    private func labelledAssetIDs(in clusters: [LiveMapAssetCluster]) -> Set<String> {
+        let assets = clusters.compactMap(\.singleAsset)
+            .sorted {
+                if $0.capacityMW != $1.capacityMW {
+                    return ($0.capacityMW ?? -1) > ($1.capacityMW ?? -1)
+                }
+                return $0.name.localizedStandardCompare($1.name) == .orderedAscending
+            }
+        return Set(assets.prefix(semanticLevel.labelLimit).map(\.id))
+    }
+
+    private func accessibilityHint(_ cluster: LiveMapAssetCluster) -> String {
+        if semanticLevel == .regional {
+            return "Recenters and reveals source-located sites in this area"
+        }
+        if cluster.singleAsset != nil {
+            return "Opens the source-backed generator inspector"
+        }
+        return zoomScale < 7.75
+            ? "Recenters and zooms towards this group of source-located sites"
+            : "Opens a list of the source-located sites in this group"
+    }
+
+    private func evidenceDescription(_ asset: LiveMapAsset) -> String {
+        var evidence: [String] = ["published site reference"]
+        if asset.linkedBMUnitCount > 0 { evidence.append("linked balancing unit") }
+        if asset.operatingEvidence?.participantSubmittedPlan != nil { evidence.append("participant plan available") }
+        if asset.operatingEvidence?.latestSettledMetered != nil { evidence.append("delayed settled evidence available") }
+        if asset.operatingEvidence?.hasLiveMeteredOutput != true { evidence.append("no live unit meter") }
+        return evidence.joined(separator: ", ")
+    }
+
     private func accessibilityLabel(_ cluster: LiveMapAssetCluster) -> String {
-        guard let asset = cluster.singleAsset else {
+        guard let asset = cluster.singleAsset, semanticLevel != .regional else {
             let capacity = cluster.totalCapacityMW.map {
-                ", \($0.formatted(.number.precision(.fractionLength(0)))) megawatts reported capacity"
+                ", \($0.formatted(.number.precision(.fractionLength(0)))) megawatts registered capacity"
             } ?? ""
-            return "\(cluster.count) source-located energy sites\(capacity)"
+            return "\(cluster.count) source-located energy sites\(capacity), not live output"
         }
         let fuel = asset.fuel.map { ", \($0.displayName)" } ?? ""
-        let capacity = asset.capacityMW.map { ", \($0.formatted(.number.precision(.fractionLength(0)))) megawatts" } ?? ""
-        return "\(asset.name)\(fuel)\(capacity), source located"
+        let capacity = asset.capacityMW.map { ", \($0.formatted(.number.precision(.fractionLength(0)))) megawatts registered capacity" } ?? ""
+        return "\(asset.name)\(fuel)\(capacity), \(evidenceDescription(asset))"
     }
 }
 
@@ -412,7 +598,7 @@ struct BritainGridMap: View {
 
     var body: some View {
         ZStack {
-            TimelineView(.animation(minimumInterval: reduceMotion ? 1 : 1 / 30, paused: reduceMotion)) { timeline in
+            TimelineView(.animation(minimumInterval: reduceMotion ? 1 : 1 / 20, paused: reduceMotion)) { timeline in
                 Canvas(rendersAsynchronously: true) { context, size in
                     drawScene(context: &context, size: size, date: timeline.date)
                 }
@@ -423,10 +609,13 @@ struct BritainGridMap: View {
                     assets: authoritativeAssets,
                     zoomScale: effectiveScale,
                     offset: effectiveOffset,
-                    showLabels: effectiveScale >= 5.5,
+                    semanticLevel: semanticLevel,
                     onAssetTap: onAssetTap,
                     onClusterTap: handleClusterTap
                 )
+                .opacity(semanticLevel == .national ? 0 : 1)
+                .allowsHitTesting(semanticLevel != .national)
+                .animation(reduceMotion ? nil : .easeInOut(duration: 0.22), value: semanticLevel)
             }
         }
         .scaleEffect(effectiveScale)
@@ -434,28 +623,8 @@ struct BritainGridMap: View {
         .gesture(zoomGesture)
         .simultaneousGesture(panGesture)
         .clipped()
-        .overlay(alignment: .topLeading) {
-            VStack(alignment: .leading, spacing: 4) {
-                Text(LiveTruthCopy.mapScope)
-                    .font(.system(size: 8, weight: .semibold, design: .monospaced))
-                    .tracking(0.8)
-                Text(authoritativeAssets.isEmpty ? "No asset locations" : "\(authoritativeAssets.count) source-located assets")
-                    .font(.system(size: 9, weight: .regular, design: .monospaced))
-            }
-            .foregroundStyle(GridTheme.textTertiary)
-            .padding(.top, 10)
-            .padding(.leading, 10)
-        }
-        .overlay(alignment: .topTrailing) {
-            Text(interconnectorPositionLabel)
-                .font(.system(size: 8, weight: .semibold, design: .monospaced))
-                .tracking(0.8)
-                .foregroundStyle(GridTheme.textTertiary)
-                .padding(.top, 10)
-                .padding(.trailing, 10)
-        }
         .overlay(alignment: .bottomLeading) {
-            Text(effectiveScale > 1.01 ? "\(Double(effectiveScale).formatted(.number.precision(.fractionLength(1))))× · DRAG TO PAN" : "PINCH TO INSPECT")
+            Text(mapGestureLabel)
                 .font(.system(size: 8, weight: .semibold, design: .monospaced))
                 .tracking(0.6)
                 .foregroundStyle(GridTheme.textTertiary)
@@ -498,7 +667,7 @@ struct BritainGridMap: View {
             }
         }
         .contentShape(Rectangle())
-        .accessibilityElement(children: authoritativeAssets.isEmpty ? .combine : .contain)
+        .accessibilityElement(children: authoritativeAssets.isEmpty || semanticLevel == .national ? .combine : .contain)
         .accessibilityLabel("Schematic national view of Great Britain's electricity system")
         .accessibilityValue(accessibilityValue)
         .accessibilityHint(mapDisclosure)
@@ -529,9 +698,29 @@ struct BritainGridMap: View {
         )
     }
 
+    private var semanticLevel: LiveMapSemanticLevel {
+        LiveMapSemanticLevel(zoomScale: effectiveScale)
+    }
+
+    private var mapGestureLabel: String {
+        switch semanticLevel {
+        case .national:
+            authoritativeAssets.isEmpty ? "PINCH TO EXPLORE" : "PINCH TO REVEAL SITES"
+        case .regional:
+            "REGISTERED CAPACITY · NOT LIVE OUTPUT"
+        case .sites:
+            "SOURCE-LOCATED · \(Double(effectiveScale).formatted(.number.precision(.fractionLength(1))))×"
+        case .evidence:
+            "SITE EVIDENCE · \(Double(effectiveScale).formatted(.number.precision(.fractionLength(1))))×"
+        }
+    }
+
     private var mapDisclosure: String {
         if authoritativeAssets.isEmpty { return LiveTruthCopy.mapDisclosure }
-        return "Interconnector paths remain schematic. Asset dots use publisher-backed coordinates, approximately projected onto this abstract Britain outline."
+        if semanticLevel == .national {
+            return "National currents and interconnector paths are schematic. Pinch to reveal publisher-backed generator geography."
+        }
+        return "Capacity wells and site marks use publisher-backed coordinates. They show registered sites and evidence availability, not live generator output. Interconnector paths remain schematic."
     }
 
     private var zoomGesture: some Gesture {
@@ -585,7 +774,12 @@ struct BritainGridMap: View {
         viewportSize: CGSize
     ) {
         if effectiveScale < 7.75 {
-            let targetScale = min(max(effectiveScale * 1.8, 2), 8)
+            let targetScale: CGFloat
+            switch semanticLevel {
+            case .national, .regional: targetScale = 3.35
+            case .sites: targetScale = 5.95
+            case .evidence: targetScale = 8
+            }
             let centeredOffset = LiveAssetMapProjection.centeredOffset(
                 for: point,
                 viewportSize: viewportSize,
@@ -602,12 +796,6 @@ struct BritainGridMap: View {
         } else {
             onClusterInspect?(cluster)
         }
-    }
-
-    private var interconnectorPositionLabel: String {
-        guard !snapshot.interconnectors.isEmpty else { return "FLOW UNAVAILABLE" }
-        let net = snapshot.interconnectors.reduce(0) { $0 + $1.megawatts }
-        return net >= 0 ? "NET IMPORT" : "NET EXPORT"
     }
 
     private var accessibilityValue: String {
@@ -628,15 +816,21 @@ struct BritainGridMap: View {
         let mapRect = CGRect(x: size.width * 0.14, y: 8, width: size.width * 0.72, height: size.height - 18)
         let shape = BritainShape().path(in: mapRect)
         let accent = mapAccent
+        let emphasis = semanticLevel.fieldEmphasis
         let frequencyDeviation = abs((snapshot.frequency?.value ?? 50) - 50)
         let breatheAmount = min(frequencyDeviation * 5, 0.35)
-        let breathe = reduceMotion ? 0 : sin(date.timeIntervalSinceReferenceDate * 1.45) * (0.03 + breatheAmount)
+        let breathePhase = (sin(date.timeIntervalSinceReferenceDate * 1.1) + 1) / 2
+        let breathe = reduceMotion ? 0 : breathePhase * (0.025 + breatheAmount * 0.22)
 
-        drawField(context: &context, size: size, date: date, accent: accent)
+        drawField(context: &context, size: size, date: date, accent: accent, emphasis: emphasis)
 
         var coastGlow = context
         coastGlow.addFilter(.blur(radius: 9))
-        coastGlow.stroke(shape, with: .color(accent.opacity(0.20 + breathe)), lineWidth: 3)
+        coastGlow.stroke(
+            shape,
+            with: .color(accent.opacity(0.10 + emphasis * 0.10 + breathe)),
+            lineWidth: 2 + emphasis
+        )
 
         context.fill(
             shape,
@@ -646,7 +840,7 @@ struct BritainGridMap: View {
                 endPoint: CGPoint(x: mapRect.midX, y: mapRect.maxY)
             )
         )
-        context.stroke(shape, with: .color(accent.opacity(0.34)), lineWidth: 0.9)
+        context.stroke(shape, with: .color(accent.opacity(0.22 + emphasis * 0.14)), lineWidth: 0.9)
 
         if newDataGlow > 0 {
             var arrivalGlow = context
@@ -654,10 +848,24 @@ struct BritainGridMap: View {
             arrivalGlow.stroke(shape, with: .color(accent.opacity(0.42 * newDataGlow)), lineWidth: 5)
         }
 
-        drawTopography(context: &context, in: mapRect, clippedTo: shape, accent: accent)
-        drawNationalSignal(context: &context, in: mapRect, clippedTo: shape, accent: accent, date: date)
+        drawTopography(context: &context, in: mapRect, clippedTo: shape, accent: accent, emphasis: emphasis)
+        drawNationalSignal(
+            context: &context,
+            in: mapRect,
+            clippedTo: shape,
+            accent: accent,
+            date: date,
+            emphasis: emphasis
+        )
+        drawNationalCurrents(
+            context: &context,
+            in: mapRect,
+            clippedTo: shape,
+            date: date,
+            emphasis: emphasis
+        )
         let links = mapLinks(in: mapRect)
-        drawLinks(links, context: &context, date: date, accent: accent)
+        drawLinks(links, context: &context, date: date, emphasis: emphasis)
     }
 
     private var mapAccent: Color {
@@ -666,7 +874,13 @@ struct BritainGridMap: View {
         return GridTheme.liveCyan
     }
 
-    private func drawField(context: inout GraphicsContext, size: CGSize, date: Date, accent: Color) {
+    private func drawField(
+        context: inout GraphicsContext,
+        size: CGSize,
+        date: Date,
+        accent: Color,
+        emphasis: Double
+    ) {
         for index in 0..<38 {
             let x = CGFloat((index * 47) % 101) / 101 * size.width
             let y = CGFloat((index * 73 + 19) % 103) / 103 * size.height
@@ -674,19 +888,25 @@ struct BritainGridMap: View {
             let radius = CGFloat(index % 3 + 1) * 0.45
             context.fill(
                 Path(ellipseIn: CGRect(x: x, y: y, width: radius, height: radius)),
-                with: .color(accent.opacity(0.05 + phase * 0.08))
+                with: .color(accent.opacity((0.035 + phase * 0.075) * emphasis))
             )
         }
     }
 
-    private func drawTopography(context: inout GraphicsContext, in rect: CGRect, clippedTo shape: Path, accent: Color) {
+    private func drawTopography(
+        context: inout GraphicsContext,
+        in rect: CGRect,
+        clippedTo shape: Path,
+        accent: Color,
+        emphasis: Double
+    ) {
         var clipped = context
         clipped.clip(to: shape)
         for index in 0..<11 {
             let inset = CGFloat(index) * 10 - 30
             let topoRect = rect.insetBy(dx: inset, dy: CGFloat(index) * 16 - 50)
             let path = Path(ellipseIn: topoRect)
-            clipped.stroke(path, with: .color(accent.opacity(0.045)), lineWidth: 0.6)
+            clipped.stroke(path, with: .color(accent.opacity(0.035 + emphasis * 0.025)), lineWidth: 0.6)
         }
 
         if isForecast {
@@ -694,7 +914,11 @@ struct BritainGridMap: View {
                 var hatch = Path()
                 hatch.move(to: CGPoint(x: rect.minX + CGFloat(index), y: rect.maxY))
                 hatch.addLine(to: CGPoint(x: rect.minX + CGFloat(index) + rect.height, y: rect.minY))
-                clipped.stroke(hatch, with: .color(GridTheme.forecastViolet.opacity(0.045)), lineWidth: 0.6)
+                clipped.stroke(
+                    hatch,
+                    with: .color(GridTheme.forecastViolet.opacity(0.03 + emphasis * 0.025)),
+                    lineWidth: 0.6
+                )
             }
         }
     }
@@ -704,7 +928,8 @@ struct BritainGridMap: View {
         in rect: CGRect,
         clippedTo shape: Path,
         accent: Color,
-        date: Date
+        date: Date,
+        emphasis: Double
     ) {
         var clipped = context
         clipped.clip(to: shape)
@@ -720,7 +945,7 @@ struct BritainGridMap: View {
                 control1: CGPoint(x: rect.minX + rect.width * 0.34, y: y - 16),
                 control2: CGPoint(x: rect.minX + rect.width * 0.66, y: y + 16)
             )
-            clipped.stroke(line, with: .color(accent.opacity(0.085)), lineWidth: 0.7)
+            clipped.stroke(line, with: .color(accent.opacity(0.035 + emphasis * 0.055)), lineWidth: 0.7)
         }
 
         let centre = CGPoint(x: rect.midX + rect.width * 0.04, y: rect.midY + rect.height * 0.08)
@@ -729,9 +954,72 @@ struct BritainGridMap: View {
         let radius = CGFloat(15 + frequencyDeviation * 40 + pulse * 2)
         clipped.stroke(
             Path(ellipseIn: CGRect(x: centre.x - radius, y: centre.y - radius, width: radius * 2, height: radius * 2)),
-            with: .color(accent.opacity(0.10)),
+            with: .color(accent.opacity(0.035 + emphasis * 0.075)),
             lineWidth: 0.8
         )
+    }
+
+    private func drawNationalCurrents(
+        context: inout GraphicsContext,
+        in rect: CGRect,
+        clippedTo shape: Path,
+        date: Date,
+        emphasis: Double
+    ) {
+        let readings = snapshot.generation
+            .filter { $0.megawatts > 0 }
+            .sorted { $0.megawatts > $1.megawatts }
+            .prefix(5)
+        let total = max(snapshot.generation.reduce(0) { $0 + max($1.megawatts, 0) }, 1)
+        guard !readings.isEmpty else { return }
+
+        var clipped = context
+        clipped.clip(to: shape)
+
+        // These are national mix currents, not transmission routes or unit output.
+        for (index, reading) in readings.enumerated() {
+            let share = min(max(reading.megawatts / total, 0), 1)
+            let lane = CGFloat(index + 1) / CGFloat(readings.count + 1)
+            let focused = selectedFuel == nil || selectedFuel == reading.fuel
+            let focusOpacity = focused ? 1.0 : 0.16
+            let wave = reduceMotion ? 0 : CGFloat(sin(date.timeIntervalSinceReferenceDate * 0.14 + Double(index))) * 5
+            let start = CGPoint(x: rect.minX - 8, y: rect.minY + rect.height * lane + wave)
+            let end = CGPoint(x: rect.maxX + 8, y: rect.minY + rect.height * (1 - lane * 0.72) - wave)
+            let control = CGPoint(
+                x: rect.midX + (index.isMultiple(of: 2) ? -rect.width * 0.12 : rect.width * 0.12),
+                y: rect.midY + wave * 1.8
+            )
+            let color = GridTheme.fuel(reading.fuel)
+            let opacity = (0.07 + share * 0.32) * emphasis * focusOpacity
+
+            var path = Path()
+            path.move(to: start)
+            path.addQuadCurve(to: end, control: control)
+            clipped.stroke(
+                path,
+                with: .color(color.opacity(opacity)),
+                style: StrokeStyle(
+                    lineWidth: 0.6 + CGFloat(share) * 2.6,
+                    lineCap: .round,
+                    lineJoin: .round
+                )
+            )
+
+            guard !reduceMotion, focused, emphasis > 0.25 else { continue }
+            let particleCount = min(max(Int(share * 10), 1), 4)
+            for particle in 0..<particleCount {
+                let progress = (
+                    date.timeIntervalSinceReferenceDate * (0.035 + share * 0.08)
+                    + Double(particle) / Double(particleCount)
+                    + Double(index) * 0.13
+                ).truncatingRemainder(dividingBy: 1)
+                let point = quadraticPoint(start: start, control: control, end: end, progress: progress)
+                clipped.fill(
+                    Path(ellipseIn: CGRect(x: point.x - 1.25, y: point.y - 1.25, width: 2.5, height: 2.5)),
+                    with: .color(color.opacity(0.52 * emphasis))
+                )
+            }
+        }
     }
 
     private func mapLinks(in rect: CGRect) -> [MapLink] {
@@ -757,7 +1045,12 @@ struct BritainGridMap: View {
         }
     }
 
-    private func drawLinks(_ links: [MapLink], context: inout GraphicsContext, date: Date, accent: Color) {
+    private func drawLinks(
+        _ links: [MapLink],
+        context: inout GraphicsContext,
+        date: Date,
+        emphasis: Double
+    ) {
         for link in links {
             let color = GridTheme.fuel(.imports)
             let focused = selectedFuel == nil || selectedFuel == .imports
@@ -768,13 +1061,20 @@ struct BritainGridMap: View {
             var path = Path()
             path.move(to: link.start)
             path.addQuadCurve(to: link.end, control: control)
-            context.stroke(path, with: .color(color.opacity(focused ? 0.23 : 0.045)), lineWidth: focused ? 0.9 : 0.5)
+            context.stroke(
+                path,
+                with: .color(color.opacity((focused ? 0.23 : 0.045) * max(emphasis, 0.28))),
+                lineWidth: focused ? 0.9 : 0.5
+            )
 
             guard focused else { continue }
             if reduceMotion {
                 let startProgress = link.reversed ? 0.60 : 0.40
                 let point = quadraticPoint(start: link.start, control: control, end: link.end, progress: startProgress)
-                context.fill(Path(ellipseIn: CGRect(x: point.x - 1.5, y: point.y - 1.5, width: 3, height: 3)), with: .color(color.opacity(0.8)))
+                context.fill(
+                    Path(ellipseIn: CGRect(x: point.x - 1.5, y: point.y - 1.5, width: 3, height: 3)),
+                    with: .color(color.opacity(0.8 * max(emphasis, 0.32)))
+                )
                 continue
             }
 
@@ -789,8 +1089,14 @@ struct BritainGridMap: View {
                 let radius: CGFloat = particle == 0 ? 2.2 : 1.5
                 var glow = context
                 glow.addFilter(.blur(radius: 3))
-                glow.fill(Path(ellipseIn: CGRect(x: point.x - 3, y: point.y - 3, width: 6, height: 6)), with: .color(color.opacity(0.30)))
-                context.fill(Path(ellipseIn: CGRect(x: point.x - radius, y: point.y - radius, width: radius * 2, height: radius * 2)), with: .color(color.opacity(0.88)))
+                glow.fill(
+                    Path(ellipseIn: CGRect(x: point.x - 3, y: point.y - 3, width: 6, height: 6)),
+                    with: .color(color.opacity(0.30 * max(emphasis, 0.28)))
+                )
+                context.fill(
+                    Path(ellipseIn: CGRect(x: point.x - radius, y: point.y - radius, width: radius * 2, height: radius * 2)),
+                    with: .color(color.opacity(0.88 * max(emphasis, 0.32)))
+                )
             }
         }
     }
