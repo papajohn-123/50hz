@@ -38,6 +38,14 @@ from app.db.models import (
     SourceMetadata,
 )
 from app.domain.enums import IngestionRunStatus
+from app.geography.records import (
+    REPD_ASSET_TYPE,
+    REPD_SOURCE_ID,
+    map_repd_site,
+    repd_snapshot_membership,
+    repd_source_metadata_values,
+)
+from app.geography.repd import REPDSite
 from app.persistence.event_lifecycle import materialize_reported_notice_rows
 from app.persistence.records import (
     BM_UNIT_REFERENCE_SOURCE_ID,
@@ -85,6 +93,7 @@ _RUN_NAMESPACE = UUID("b1f130e2-ec87-5a79-88a3-a3ed99a5321c")
 _RAW_PAYLOAD_NAMESPACE = UUID("40321ac1-3394-58d2-9cf7-33dbb7187b6c")
 _DISTRIBUTION_CURRENT_NAMESPACE = UUID("d9b24b44-6241-5089-b0f2-91f64325b921")
 _BM_UNIT_ASSET_NAMESPACE = UUID("5834312d-f415-51a7-acb7-cc5dff551b73")
+_REPD_ASSET_NAMESPACE = UUID("b946b36d-248e-5e25-9213-49cd56bcd1aa")
 
 
 @dataclass(frozen=True, slots=True)
@@ -432,10 +441,16 @@ class PostgresIngestionRepository:
             raise ValueError("raw payload checksum must be a SHA-256 hex digest")
         checksum_sha256 = result.checksum_sha256.lower()
 
-        metadata = source_metadata_values(
-            provider=result.source_id,
-            dataset=result.dataset,
-            request_url=result.request_url,
+        _validate_record_types(result.records)
+        _validate_repd_snapshot_contract(result)
+        metadata = (
+            repd_source_metadata_values()
+            if _is_repd_snapshot(result)
+            else source_metadata_values(
+                provider=result.source_id,
+                dataset=result.dataset,
+                request_url=result.request_url,
+            )
         )
         source_id = metadata["id"]
         idempotency_key = _success_idempotency_key(job_id, result)
@@ -444,8 +459,6 @@ class PostgresIngestionRepository:
             _RAW_PAYLOAD_NAMESPACE,
             f"{source_id}|{result.endpoint}|{checksum_sha256}",
         )
-        _validate_record_types(result.records)
-
         async with self._session_factory() as session:
             async with session.begin():
                 await session.execute(_source_metadata_upsert(metadata))
@@ -542,6 +555,21 @@ class PostgresIngestionRepository:
                     inserted += asset_inserted
                     updated_count += asset_updated
                     unchanged += asset_unchanged
+
+                repd_sites = tuple(
+                    record for record in result.records if isinstance(record, REPDSite)
+                )
+                if repd_sites:
+                    repd_inserted, repd_updated, repd_unchanged = (
+                        await _persist_repd_snapshot(
+                            session,
+                            source_id=source_id,
+                            records=repd_sites,
+                        )
+                    )
+                    inserted += repd_inserted
+                    updated_count += repd_updated
+                    unchanged += repd_unchanged
 
                 dependent_records = tuple(
                     record
@@ -897,9 +925,10 @@ def _map_record_batches(
     asset_ids = asset_ids or {}
     grouped: dict[_UpsertSpec, list[dict[str, Any]]] = defaultdict(list)
     for record in records:
-        if isinstance(record, AssetReference):
+        if isinstance(record, (AssetReference, REPDSite)):
             # Reference snapshots are handled first so dependent FK rows can be
-            # resolved in the same transaction.
+            # resolved in the same transaction. REPD complete-snapshot rows are
+            # likewise persisted by their deliberately scoped path.
             continue
         if isinstance(record, PlannedProfileSegment):
             grouped[_PHYSICAL_NOTIFICATION_SPEC].append(
@@ -1010,6 +1039,7 @@ def _map_record_batches(
 def _validate_record_types(records: Sequence[Any]) -> None:
     supported = (
         AssetReference,
+        REPDSite,
         PlannedProfileSegment,
         SettledMeteredEnergy,
         GenerationRecord,
@@ -1047,6 +1077,51 @@ def _is_distribution_snapshot(result: AdapterResult[Any]) -> bool:
 
 def _is_physical_notification_snapshot(result: AdapterResult[Any]) -> bool:
     return result.source_id == "elexon.pn" and result.dataset.upper() == "PN"
+
+
+def _is_repd_snapshot(result: AdapterResult[Any]) -> bool:
+    return result.source_id == REPD_SOURCE_ID and result.dataset.upper() == "REPD"
+
+
+def _validate_repd_snapshot_contract(result: AdapterResult[Any]) -> None:
+    """Require proof of a complete parsed extract before membership changes.
+
+    A missing, empty, mixed, or manually sliced result must fail before opening
+    a database transaction. This keeps the complete-snapshot deactivation path
+    available only to the official adapter contract.
+    """
+
+    repd_records = tuple(
+        record for record in result.records if isinstance(record, REPDSite)
+    )
+    is_repd_source = _is_repd_snapshot(result)
+    if repd_records and not is_repd_source:
+        raise ValueError("REPD sites must use the canonical DESNZ source contract")
+    if not is_repd_source:
+        return
+    if not result.records:
+        raise ValueError("a complete REPD snapshot cannot be empty")
+    if len(repd_records) != len(result.records):
+        raise ValueError("a complete REPD snapshot cannot mix record types")
+    if result.metadata.get("snapshotKind") != "complete_reference":
+        raise ValueError("REPD result is not declared as a complete reference snapshot")
+
+    record_count = result.metadata.get("recordCount")
+    if isinstance(record_count, bool) or record_count != len(repd_records):
+        raise ValueError("REPD snapshot metadata record count does not match records")
+    if not isinstance(result.raw_payload, Mapping):
+        raise ValueError("REPD snapshot raw payload must be a parse summary object")
+    parse_summary = result.raw_payload.get("parse")
+    if not isinstance(parse_summary, Mapping):
+        raise ValueError("REPD snapshot is missing its complete parse summary")
+    retained_rows = parse_summary.get("retainedRows")
+    if isinstance(retained_rows, bool) or retained_rows != len(repd_records):
+        raise ValueError("REPD parse summary does not match snapshot membership")
+    source_ids = [record.source_id.strip() for record in repd_records]
+    if any(not source_id for source_id in source_ids):
+        raise ValueError("REPD snapshot contains an empty source record ID")
+    if len(set(source_ids)) != len(source_ids):
+        raise ValueError("REPD complete snapshot contains duplicate source record IDs")
 
 
 def _required_asset_id(asset_ids: Mapping[str, UUID], external_id: str) -> UUID:
@@ -1100,6 +1175,59 @@ async def _persist_asset_reference_snapshot(
             .returning(Asset.id)
         )
         updated_count += len(deactivated.scalars().all())
+    return inserted, updated_count, unchanged
+
+
+async def _persist_repd_snapshot(
+    session: AsyncSession,
+    *,
+    source_id: str,
+    records: Sequence[REPDSite],
+) -> tuple[int, int, int]:
+    """Atomically upsert one complete REPD extract and retire absent sites."""
+
+    if source_id != REPD_SOURCE_ID:
+        raise ValueError("REPD sites must use their canonical source ID")
+    if not records:
+        raise ValueError("refusing to persist an empty REPD complete snapshot")
+    rows = [map_repd_site(record, source_id=source_id) for record in records]
+    membership = repd_snapshot_membership(records, source_id=source_id)
+    external_ids = membership.active_external_ids
+    if len(external_ids) != len(rows):
+        raise ValueError("REPD complete snapshot contains duplicate external IDs")
+    for row in rows:
+        row["id"] = uuid.uuid5(
+            _REPD_ASSET_NAMESPACE,
+            f"{source_id}|{row['external_id']}",
+        )
+
+    inserted = 0
+    updated_count = 0
+    unchanged = 0
+    for write_rows in _normalized_write_batches(rows):
+        result = await session.execute(
+            _observation_upsert(_ASSET_REFERENCE_SPEC, write_rows)
+        )
+        flags = list(result.scalars().all())
+        inserted += sum(1 for flag in flags if bool(flag))
+        updated_count += sum(1 for flag in flags if not bool(flag))
+        unchanged += len(write_rows) - len(flags)
+
+    # Scope deactivation to this publisher and this reference asset family.
+    # The non-empty guard above ensures a malformed/partial run can never turn
+    # this into a source-wide mass retirement.
+    deactivated = await session.execute(
+        update(Asset)
+        .where(
+            Asset.source_id == source_id,
+            Asset.asset_type == REPD_ASSET_TYPE,
+            Asset.active.is_(True),
+            Asset.external_id.not_in(external_ids),
+        )
+        .values(active=False, updated_at=func.now())
+        .returning(Asset.id)
+    )
+    updated_count += len(deactivated.scalars().all())
     return inserted, updated_count, unchanged
 
 

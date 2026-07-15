@@ -16,6 +16,7 @@ from app.assets.adapters import (
     BMUnitReferenceAdapter,
     PhysicalNotificationAdapter,
 )
+from app.geography.adapters import GOV_UK_BASE_URL, REPDReferenceAdapter
 from app.sources.client import (
     DEFAULT_ELEXON_BASE_URL,
     DEFAULT_NESO_CARBON_BASE_URL,
@@ -67,6 +68,8 @@ CARBON_JOB_IDS = frozenset(
 
 UKPN_JOB_IDS = frozenset({"ukpn.live_faults"})
 
+DESNZ_JOB_IDS = frozenset({"desnz.repd"})
+
 
 class ForwardWindowAdapter:
     """Translate a scheduler tick window into a forward forecast horizon.
@@ -109,6 +112,7 @@ def build_production_schedules(
     elexon_client: AsyncJSONClient,
     carbon_client: AsyncJSONClient,
     ukpn_client: AsyncJSONClient,
+    repd_client: AsyncJSONClient,
 ) -> tuple[PollSchedule, ...]:
     """Return every continuously collected production source schedule.
 
@@ -122,6 +126,19 @@ def build_production_schedules(
     )
 
     schedules = (
+        # REPD is a quarterly reference register, not a live feed. The adapter
+        # checks the lightweight GOV.UK publication document daily and reuses
+        # its parsed content-addressed CSV unless DESNZ publishes a new extract.
+        PollSchedule(
+            job_id="desnz.repd",
+            adapter=REPDReferenceAdapter(repd_client),
+            cadence=timedelta(days=1),
+            overlap=timedelta(hours=1),
+            initial_lookback=timedelta(days=1),
+            max_incremental_lookback=timedelta(days=7),
+            reconcile_every=None,
+            reconcile_lookback=timedelta(days=1),
+        ),
         # The complete reference catalogue is small and changes slowly. It runs
         # first so most PN/B1610 rows resolve directly; persistence also creates
         # non-geographic placeholders if a later job wins a startup race.
@@ -312,6 +329,7 @@ class ProductionSourceBundle:
     elexon_client: AsyncJSONClient
     carbon_client: AsyncJSONClient
     ukpn_client: AsyncJSONClient
+    repd_client: AsyncJSONClient
     schedules: tuple[PollSchedule, ...]
 
     @classmethod
@@ -319,14 +337,17 @@ class ProductionSourceBundle:
         elexon_client = AsyncJSONClient(base_url=DEFAULT_ELEXON_BASE_URL)
         carbon_client = AsyncJSONClient(base_url=DEFAULT_NESO_CARBON_BASE_URL)
         ukpn_client = AsyncJSONClient(base_url=DEFAULT_UKPN_BASE_URL)
+        repd_client = AsyncJSONClient(base_url=GOV_UK_BASE_URL)
         return cls(
             elexon_client=elexon_client,
             carbon_client=carbon_client,
             ukpn_client=ukpn_client,
+            repd_client=repd_client,
             schedules=build_production_schedules(
                 elexon_client=elexon_client,
                 carbon_client=carbon_client,
                 ukpn_client=ukpn_client,
+                repd_client=repd_client,
             ),
         )
 
@@ -334,6 +355,7 @@ class ProductionSourceBundle:
         await self.elexon_client.aclose()
         await self.carbon_client.aclose()
         await self.ukpn_client.aclose()
+        await self.repd_client.aclose()
 
     async def __aenter__(self) -> ProductionSourceBundle:
         return self

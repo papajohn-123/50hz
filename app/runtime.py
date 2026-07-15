@@ -7,6 +7,7 @@ from fastapi import FastAPI
 
 from app.config import get_settings
 from app.db import dispose_engine, get_session_factory
+from app.geography.adapters import GOV_UK_BASE_URL
 from app.persistence import PostgresAdvisoryLockProvider, PostgresIngestionRepository
 from app.persistence.observed_events import (
     PostgresObservedEventRepository,
@@ -47,6 +48,7 @@ async def lifespan(app: FastAPI):
             base_url=settings.ukpn_base_url.rstrip("/") + "/",
             headers=ukpn_authorization_headers(settings.ukpn_api_key),
         )
+        repd_client = AsyncJSONClient(base_url=GOV_UK_BASE_URL)
         session_factory = get_session_factory()
         locks = PostgresAdvisoryLockProvider(session_factory)
         observed_event_action = ObservedEventMaintenanceAction(
@@ -59,6 +61,7 @@ async def lifespan(app: FastAPI):
                 elexon_client=elexon_client,
                 carbon_client=carbon_client,
                 ukpn_client=ukpn_client,
+                repd_client=repd_client,
             ),
             repository=PostgresIngestionRepository(session_factory),
             locks=locks,
@@ -87,7 +90,7 @@ async def lifespan(app: FastAPI):
             stop_event=stop_event,
             task=task,
             retention_task=retention_task,
-            clients=(elexon_client, carbon_client, ukpn_client),
+            clients=(elexon_client, carbon_client, ukpn_client, repd_client),
             started_at=datetime.now(UTC),
         )
         app.state.worker_runtime = runtime

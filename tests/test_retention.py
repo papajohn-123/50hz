@@ -294,6 +294,7 @@ async def test_runtime_starts_retention_as_a_separate_worker_only_task(
             type(ingestion_kwargs["post_success_actions"][0]).__name__
             == "ObservedEventMaintenanceAction"
         )
+        assert len(app.state.worker_runtime.clients) == 4
 
     assert all(client.closed for client in clients)
     runtime_module.dispose_engine.assert_awaited_once()

@@ -47,6 +47,26 @@ def test_indo_metadata_uses_the_source_half_hour_cadence() -> None:
     assert values["expected_cadence_seconds"] == 1_800
 
 
+def test_repd_metadata_is_public_quarterly_reference_data_under_ogl() -> None:
+    values = source_metadata_values(
+        provider="desnz.repd",
+        dataset="REPD",
+        request_url=(
+            "https://assets.publishing.service.gov.uk/media/hash/repd.csv"
+        ),
+    )
+    failed = job_source_metadata_values("desnz.repd")
+
+    assert values["id"] == "desnz.repd"
+    assert values["provider"] == "desnz"
+    assert values["expected_cadence_seconds"] == 91 * 24 * 60 * 60
+    assert values["licence_name"] == "Open Government Licence v3.0"
+    assert "Department for Energy Security and Net Zero" in values["attribution"]
+    assert failed["id"] == "desnz.repd"
+    assert failed["base_url"] == "https://www.gov.uk"
+    assert failed["active"] is True
+
+
 def test_operational_failure_metadata_is_not_a_public_active_source() -> None:
     backfill = job_source_metadata_values(
         "history-backfill-v1:elexon.fuelinst:20260701T2300Z:20260702T2300Z"

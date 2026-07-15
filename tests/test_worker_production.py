@@ -9,6 +9,7 @@ from app.sources.client import AsyncJSONClient
 from app.sources.types import ObservationWindow
 from app.worker.production import (
     CARBON_JOB_IDS,
+    DESNZ_JOB_IDS,
     ELEXON_JOB_IDS,
     ForwardWindowAdapter,
     ProductionSourceBundle,
@@ -17,7 +18,12 @@ from app.worker.production import (
 )
 
 
-def clients() -> tuple[AsyncJSONClient, AsyncJSONClient, AsyncJSONClient]:
+def clients() -> tuple[
+    AsyncJSONClient,
+    AsyncJSONClient,
+    AsyncJSONClient,
+    AsyncJSONClient,
+]:
     empty = httpx.MockTransport(
         lambda request: httpx.Response(200, json={"data": []}, request=request)
     )
@@ -34,37 +40,44 @@ def clients() -> tuple[AsyncJSONClient, AsyncJSONClient, AsyncJSONClient]:
             base_url="https://ukpn.example.test/",
             transport=empty,
         ),
+        AsyncJSONClient(
+            base_url="https://www.gov.uk/",
+            transport=empty,
+        ),
     )
 
 
 def test_production_plan_has_every_continuous_job_once_and_no_postcode_job() -> None:
-    elexon, carbon, ukpn = clients()
+    elexon, carbon, ukpn, repd = clients()
     try:
         schedules = build_production_schedules(
             elexon_client=elexon,
             carbon_client=carbon,
             ukpn_client=ukpn,
+            repd_client=repd,
         )
     finally:
         asyncio.run(elexon.aclose())
         asyncio.run(carbon.aclose())
         asyncio.run(ukpn.aclose())
+        asyncio.run(repd.aclose())
 
     job_ids = {schedule.job_id for schedule in schedules}
-    assert len(schedules) == 15
-    assert job_ids == ELEXON_JOB_IDS | CARBON_JOB_IDS | UKPN_JOB_IDS
+    assert len(schedules) == 16
+    assert job_ids == ELEXON_JOB_IDS | CARBON_JOB_IDS | UKPN_JOB_IDS | DESNZ_JOB_IDS
     assert len(job_ids) == len(schedules)
     assert all("postcode" not in job_id for job_id in job_ids)
     assert len({schedule.lock_name for schedule in schedules}) == len(schedules)
 
 
 def test_production_jobs_use_the_correct_separate_client() -> None:
-    elexon, carbon, ukpn = clients()
+    elexon, carbon, ukpn, repd = clients()
     try:
         schedules = build_production_schedules(
             elexon_client=elexon,
             carbon_client=carbon,
             ukpn_client=ukpn,
+            repd_client=repd,
         )
         for schedule in schedules:
             adapter = schedule.adapter
@@ -77,17 +90,20 @@ def test_production_jobs_use_the_correct_separate_client() -> None:
                 assert underlying.client is elexon
             elif schedule.job_id in CARBON_JOB_IDS:
                 assert underlying.client is carbon
+            elif schedule.job_id in DESNZ_JOB_IDS:
+                assert underlying.client is repd
             else:
                 assert underlying.client is ukpn
-        assert len({id(elexon), id(carbon), id(ukpn)}) == 3
+        assert len({id(elexon), id(carbon), id(ukpn), id(repd)}) == 4
     finally:
         asyncio.run(elexon.aclose())
         asyncio.run(carbon.aclose())
         asyncio.run(ukpn.aclose())
+        asyncio.run(repd.aclose())
 
 
 def test_source_aware_poll_and_overlap_policy() -> None:
-    elexon, carbon, ukpn = clients()
+    elexon, carbon, ukpn, repd = clients()
     try:
         schedules = {
             schedule.job_id: schedule
@@ -95,14 +111,17 @@ def test_source_aware_poll_and_overlap_policy() -> None:
                 elexon_client=elexon,
                 carbon_client=carbon,
                 ukpn_client=ukpn,
+                repd_client=repd,
             )
         }
     finally:
         asyncio.run(elexon.aclose())
         asyncio.run(carbon.aclose())
         asyncio.run(ukpn.aclose())
+        asyncio.run(repd.aclose())
 
     expected = {
+        "desnz.repd": (timedelta(days=1), timedelta(hours=1)),
         "elexon.bm-unit-reference": (timedelta(days=1), timedelta(hours=1)),
         "elexon.pn": (timedelta(minutes=10), timedelta(minutes=10)),
         "elexon.b1610": (timedelta(days=1), timedelta(hours=1)),
@@ -143,6 +162,8 @@ def test_source_aware_poll_and_overlap_policy() -> None:
         assert schedules[job_id].reconcile_every is None
     for job_id in UKPN_JOB_IDS:
         assert schedules[job_id].reconcile_every is None
+    for job_id in DESNZ_JOB_IDS:
+        assert schedules[job_id].reconcile_every is None
     for job_id in {
         "elexon.bm-unit-reference",
         "elexon.pn",
@@ -158,20 +179,23 @@ def test_source_aware_poll_and_overlap_policy() -> None:
 
 
 def test_bm_unit_jobs_are_ordered_reference_first_and_never_poll_pn_too_fast() -> None:
-    elexon, carbon, ukpn = clients()
+    elexon, carbon, ukpn, repd = clients()
     try:
         schedules = build_production_schedules(
             elexon_client=elexon,
             carbon_client=carbon,
             ukpn_client=ukpn,
+            repd_client=repd,
         )
     finally:
         asyncio.run(elexon.aclose())
         asyncio.run(carbon.aclose())
         asyncio.run(ukpn.aclose())
+        asyncio.run(repd.aclose())
 
     job_ids = [schedule.job_id for schedule in schedules]
-    assert job_ids[:3] == [
+    assert job_ids[:4] == [
+        "desnz.repd",
         "elexon.bm-unit-reference",
         "elexon.pn",
         "elexon.b1610",
@@ -202,6 +226,10 @@ def test_carbon_forecast_wrapper_queries_forward_48_hours_but_checkpoints_tick()
             base_url="https://ukpn.example.test/",
             transport=httpx.MockTransport(handler),
         )
+        repd = AsyncJSONClient(
+            base_url="https://www.gov.uk/",
+            transport=httpx.MockTransport(handler),
+        )
         try:
             schedule = next(
                 schedule
@@ -209,6 +237,7 @@ def test_carbon_forecast_wrapper_queries_forward_48_hours_but_checkpoints_tick()
                     elexon_client=elexon,
                     carbon_client=carbon,
                     ukpn_client=ukpn,
+                    repd_client=repd,
                 )
                 if schedule.job_id == "neso.carbon.national.forecast"
             )
@@ -222,6 +251,7 @@ def test_carbon_forecast_wrapper_queries_forward_48_hours_but_checkpoints_tick()
             await elexon.aclose()
             await carbon.aclose()
             await ukpn.aclose()
+            await repd.aclose()
 
     result, tick_window = asyncio.run(scenario())
     assert requests[0].url.path == (
@@ -238,6 +268,9 @@ def test_owned_bundle_creates_distinct_clients_and_closes_as_one_lifecycle() -> 
             assert bundle.elexon_client is not bundle.carbon_client
             assert bundle.ukpn_client is not bundle.elexon_client
             assert bundle.ukpn_client is not bundle.carbon_client
-            assert len(bundle.schedules) == 15
+            assert bundle.repd_client is not bundle.elexon_client
+            assert bundle.repd_client is not bundle.carbon_client
+            assert bundle.repd_client is not bundle.ukpn_client
+            assert len(bundle.schedules) == 16
 
     asyncio.run(scenario())

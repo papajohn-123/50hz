@@ -16,6 +16,15 @@ from app.assets.models import (
     SettledMeteredEnergy,
 )
 from app.domain.enums import FactQuality
+from app.geography.records import (
+    REPD_EXPECTED_CADENCE_SECONDS,
+    REPD_SOURCE_ATTRIBUTION,
+)
+from app.geography.repd import (
+    REPD_LICENCE_NAME,
+    REPD_LICENCE_URL,
+    REPD_PUBLICATION_URL,
+)
 from app.sources.types import (
     CarbonIntensityRecord,
     DataClassification as SourceDataClassification,
@@ -46,6 +55,13 @@ class SourceProfile:
 
 
 SOURCE_PROFILES: dict[str, SourceProfile] = {
+    "desnz": SourceProfile(
+        display_name="DESNZ Renewable Energy Planning Database",
+        documentation_url=REPD_PUBLICATION_URL,
+        licence_name=REPD_LICENCE_NAME,
+        licence_url=REPD_LICENCE_URL,
+        attribution=REPD_SOURCE_ATTRIBUTION,
+    ),
     "elexon": SourceProfile(
         display_name="Elexon Insights",
         documentation_url="https://bmrs.elexon.co.uk/api-documentation",
@@ -77,6 +93,7 @@ SOURCE_PROFILES: dict[str, SourceProfile] = {
 # a new user-facing publisher merely because it has a source_metadata row.
 PUBLIC_SOURCE_PROVIDERS = tuple(sorted(SOURCE_PROFILES))
 PUBLIC_SOURCE_IDS = (
+    "desnz.repd",
     "elexon.b1610",
     "elexon.bm-unit-reference",
     "elexon.freq",
@@ -94,6 +111,10 @@ PUBLIC_SOURCE_IDS = (
 
 
 DATASET_CADENCE_SECONDS: dict[tuple[str, str], int] = {
+    # REPD is a quarterly reference register. The worker checks GOV.UK daily
+    # for a changed content-addressed attachment, but the dataset itself must
+    # never be presented as a daily or live operating feed.
+    ("desnz", "REPD"): REPD_EXPECTED_CADENCE_SECONDS,
     ("elexon", "B1610"): 86_400,
     ("elexon", "BM_UNIT_REFERENCE"): 86_400,
     ("elexon", "FREQ"): 60,
@@ -198,6 +219,7 @@ def job_source_metadata_values(job_id: str) -> dict[str, Any]:
     if not separator:
         provider, dataset = "worker", base_job
     base_url = {
+        "desnz": "https://www.gov.uk",
         "elexon": "https://data.elexon.co.uk",
         "neso": "https://api.carbonintensity.org.uk",
         "ukpn": "https://ukpowernetworks.opendatasoft.com",

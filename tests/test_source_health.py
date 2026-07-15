@@ -317,6 +317,8 @@ def test_public_source_queries_exclude_internal_operational_providers() -> None:
         assert "elexon.bm-unit-reference" in statement
         assert "elexon.pn" in statement
         assert "elexon.b1610" in statement
+        assert "desnz" in statement
+        assert "desnz.repd" in statement
 
 
 class FakeHealthRepository:
