@@ -1,0 +1,32 @@
+[
+  {
+    "dataset": "B1610",
+    "psrType": "Generation",
+    "bmUnit": "T_ABRBO-1",
+    "nationalGridBmUnitId": "ABRBO-1",
+    "settlementDate": "2024-07-01",
+    "settlementPeriod": 20,
+    "halfHourEndTime": "2024-07-01T09:00:00",
+    "quantity": -0.381
+  },
+  {
+    "dataset": "B1610",
+    "psrType": "Generation",
+    "bmUnit": "T_TEST-1",
+    "nationalGridBmUnitId": "TEST-1",
+    "settlementDate": "2024-07-01",
+    "settlementPeriod": 20,
+    "halfHourEndTime": "2024-07-01T09:00:00Z",
+    "quantity": 116.109
+  },
+  {
+    "dataset": "B1610",
+    "psrType": "Generation",
+    "bmUnit": "T_BROKEN-1",
+    "nationalGridBmUnitId": "BROKEN-1",
+    "settlementDate": "2024-07-01",
+    "settlementPeriod": 20,
+    "halfHourEndTime": "2024-07-01T09:30:00Z",
+    "quantity": "not-a-number"
+  }
+]

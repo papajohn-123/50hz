@@ -1,0 +1,42 @@
+[
+  {
+    "nationalGridBmUnit": "ABRBO-1",
+    "elexonBmUnit": "T_ABRBO-1",
+    "eic": "48W00000ABRBO-19",
+    "fuelType": "WIND",
+    "leadPartyName": "Aberdeen Offshore Wind Farm",
+    "bmUnitType": "T",
+    "fpnFlag": true,
+    "bmUnitName": "ABRBO-1",
+    "leadPartyId": "ABERDEEN",
+    "demandCapacity": "-2.000",
+    "generationCapacity": "99.000",
+    "productionOrConsumptionFlag": "P",
+    "gspGroupId": null,
+    "gspGroupName": null,
+    "interconnectorId": null,
+    "latitude": null,
+    "longitude": null
+  },
+  {
+    "nationalGridBmUnit": "ABERU-1",
+    "elexonBmUnit": "E_ABERDARE",
+    "eic": null,
+    "fuelType": null,
+    "leadPartyName": "UK Power Reserve Limited",
+    "bmUnitType": "E",
+    "fpnFlag": true,
+    "bmUnitName": "Aberdare Power Station",
+    "leadPartyId": "UKPR",
+    "demandCapacity": "0.000",
+    "generationCapacity": "15.400",
+    "productionOrConsumptionFlag": "C",
+    "gspGroupId": "_K",
+    "gspGroupName": "South Wales",
+    "interconnectorId": null
+  },
+  {
+    "elexonBmUnit": "MALFORMED_WITHOUT_NATIONAL_ID",
+    "generationCapacity": "not-a-number"
+  }
+]
