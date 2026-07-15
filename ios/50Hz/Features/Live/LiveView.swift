@@ -4,6 +4,7 @@ struct LiveView: View {
     @EnvironmentObject private var model: AppModel
     @State private var sharePayload: GridShareCardPayload?
     @State private var isDataDetailsPresented = false
+    @State private var isGridDetailsPresented = false
     @State private var isEventListPresented = false
     @State private var selectedMapAsset: LiveMapAsset?
     @State private var selectedMapCluster: LiveMapAssetCluster?
@@ -68,6 +69,26 @@ struct LiveView: View {
                     .presentationBackground(GridTheme.background)
             }
         }
+        .sheet(isPresented: $isGridDetailsPresented) {
+            if let snapshot = model.presentedSnapshot {
+                GridStateDetailsSheet(
+                    snapshot: snapshot,
+                    mode: model.timelineModeLabel,
+                    selectedFuel: $model.selectedFuel,
+                    assetResponse: model.timelineModeLabel == "LIVE" ? assetMapResponse : nil,
+                    isAssetMapLoading: model.timelineModeLabel == "LIVE" && isAssetMapLoading,
+                    assetMapError: model.timelineModeLabel == "LIVE" ? assetMapError : nil,
+                    eventCount: model.events.count,
+                    eventsUnavailable: model.eventsError != nil,
+                    onBrowseSites: { isGeneratorExplorerPresented = true },
+                    onBrowseEvents: { isEventListPresented = true },
+                    onRetryAssets: { Task { await loadAssetMap(force: true) } }
+                )
+                .presentationDetents([.medium, .large])
+                .presentationDragIndicator(.visible)
+                .presentationBackground(GridTheme.background)
+            }
+        }
         .sheet(isPresented: $isEventListPresented) {
             ReportedEventsListSheet()
                 .presentationDetents([.large])
@@ -108,130 +129,56 @@ struct LiveView: View {
 
     private func loadedContent(snapshot: GridSnapshot, model: AppModel) -> some View {
         let isForecast = model.selectedSample?.factClass == .forecast
+        let mapOpacity = snapshot.freshness == .offline ? 0.62 : (snapshot.freshness == .stale ? 0.82 : 1)
 
-        return VStack(spacing: 0) {
-            LivePersistentHeader(
+        return ZStack {
+            BritainGridMap(
                 snapshot: snapshot,
-                mode: model.timelineModeLabel,
-                onAsk: { model.isAskPresented = true },
-                onShare: { sharePayload = .current(snapshot) },
-                onStatusTap: { isDataDetailsPresented = true }
+                selectedFuel: model.selectedFuel,
+                isForecast: isForecast,
+                assets: model.timelineModeLabel == "LIVE" ? liveMapAssets : [],
+                onAssetTap: { selectedMapAsset = $0 },
+                onClusterInspect: { selectedMapCluster = $0 }
             )
+            .opacity(mapOpacity)
+            .ignoresSafeArea(edges: .top)
 
-            ScrollView {
-                LazyVStack(alignment: .leading, spacing: 19) {
+            LinearGradient(
+                colors: [GridTheme.background.opacity(0.96), GridTheme.background.opacity(0.18), .clear],
+                startPoint: .top,
+                endPoint: .bottom
+            )
+            .frame(height: 132)
+            .frame(maxHeight: .infinity, alignment: .top)
+            .allowsHitTesting(false)
 
-                    if snapshot.freshness != .live || model.lastRefreshError != nil {
-                        DataStateBanner(snapshot: snapshot, lastError: model.lastRefreshError, isRefreshing: model.isRefreshing) {
-                            Task { await model.retry() }
-                        }
-                    }
+            VStack(spacing: 0) {
+                GridCanvasHeader(
+                    snapshot: snapshot,
+                    mode: model.timelineModeLabel,
+                    selectedFuel: $model.selectedFuel,
+                    availableFuels: snapshot.generation.map(\.fuel),
+                    hasSites: !liveMapAssets.isEmpty,
+                    onStatusTap: { isDataDetailsPresented = true },
+                    onSearch: { isGeneratorExplorerPresented = true },
+                    onShare: { sharePayload = .current(snapshot) },
+                    onEvents: { isEventListPresented = true }
+                )
 
-                    ConditionHeadlineView(
-                        headline: snapshot.headline,
-                        isForecast: isForecast,
-                        interpretation: snapshot.headline.publicInterpretation(for: snapshot.generation)
-                    )
+                Spacer(minLength: 0)
 
-                    LiveMeasurementLedger(snapshot: snapshot, mode: model.timelineModeLabel)
+                GridNowDock(
+                    snapshot: snapshot,
+                    mode: model.timelineModeLabel,
+                    eventCount: model.events.count,
+                    hasEventError: model.eventsError != nil,
+                    onExplain: { model.isAskPresented = true },
+                    onOpenDetails: { isGridDetailsPresented = true }
+                )
 
-                    LiveAssetLayerStatus(
-                        response: model.timelineModeLabel == "LIVE" ? assetMapResponse : nil,
-                        isLoading: model.timelineModeLabel == "LIVE" && isAssetMapLoading,
-                        errorMessage: model.timelineModeLabel == "LIVE" ? assetMapError : nil,
-                        isLiveMode: model.timelineModeLabel == "LIVE",
-                        onBrowse: { isGeneratorExplorerPresented = true },
-                        onRetry: { Task { await loadAssetMap(force: true) } }
-                    )
-
-                    BritainGridMap(
-                        snapshot: snapshot,
-                        selectedFuel: model.selectedFuel,
-                        isForecast: isForecast,
-                        assets: model.timelineModeLabel == "LIVE" ? liveMapAssets : [],
-                        onAssetTap: { selectedMapAsset = $0 },
-                        onClusterInspect: { selectedMapCluster = $0 }
-                    )
-                    .frame(height: 340)
-                    .opacity(snapshot.freshness == .offline ? 0.62 : (snapshot.freshness == .stale ? 0.82 : 1))
-                    .padding(.horizontal, -GridTheme.horizontalPadding)
-
-                    if model.timelineModeLabel == "LIVE" {
-                        Button {
-                            isEventListPresented = true
-                        } label: {
-                            HStack(spacing: 12) {
-                                Image(systemName: "exclamationmark.bubble")
-                                    .foregroundStyle(model.eventsError == nil ? GridTheme.liveCyan : GridTheme.staleAmber)
-                                    .frame(width: 22)
-                                VStack(alignment: .leading, spacing: 3) {
-                                    Text("Active reported events")
-                                        .font(.subheadline.weight(.semibold))
-                                        .foregroundStyle(GridTheme.textPrimary)
-                                    Text(model.eventsError == nil
-                                         ? "\(model.events.count) in the current server-ranked list"
-                                         : "Saved list · refresh incomplete")
-                                        .font(.caption2)
-                                        .foregroundStyle(GridTheme.textTertiary)
-                                }
-                                Spacer(minLength: 8)
-                                Image(systemName: "chevron.right")
-                                    .font(.caption)
-                                    .foregroundStyle(GridTheme.textTertiary)
-                                    .accessibilityHidden(true)
-                            }
-                            .frame(maxWidth: .infinity, minHeight: 54, alignment: .leading)
-                            .contentShape(Rectangle())
-                            .overlay(alignment: .bottom) { Hairline() }
-                        }
-                        .buttonStyle(.plain)
-                        .accessibilityHint("Opens the full active reported-event list")
-                    }
-
-                    if model.timelineModeLabel == "LIVE" {
-                        InterconnectorLedger(snapshot: snapshot)
-                    }
-
-                    if snapshot.generation.isEmpty {
-                        VStack(alignment: .leading, spacing: 8) {
-                            SectionLabel(LiveTruthCopy.supplyTitle, trailing: "NOT IN FRAME")
-                            Text("A time-aligned transmission-visible supply mix is not available for this frame, so 50Hz does not project one.")
-                                .font(.caption)
-                                .foregroundStyle(GridTheme.textSecondary)
-                        }
-                    } else {
-                        VStack(alignment: .leading, spacing: 12) {
-                            SectionLabel(
-                                LiveTruthCopy.supplyTitle,
-                                trailing: "\((snapshot.totalGenerationMW / 1_000).formatted(.number.precision(.fractionLength(1)))) GW"
-                            )
-                            Text(supplyScope(snapshot))
-                                .font(.caption)
-                                .foregroundStyle(GridTheme.textTertiary)
-                                .fixedSize(horizontal: false, vertical: true)
-                            GenerationMixBar(readings: snapshot.generation, selectedFuel: model.selectedFuel)
-                        }
-
-                        FuelFilter(readings: snapshot.generation, selection: $model.selectedFuel)
-
-                        if let fuel = model.selectedFuel,
-                           let reading = snapshot.reading(for: fuel),
-                           let timeline = model.displayTimeline {
-                            TransmissionFuelFocusView(reading: reading, timeline: timeline)
-                        }
-                    }
-
-                    SourceFootnote(snapshot: snapshot, mode: model.timelineModeLabel)
-                        .padding(.bottom, 20)
+                if let timeline = model.displayTimeline {
+                    GridTimelineView(timeline: timeline, selectedTime: $model.selectedTime)
                 }
-                .padding(.horizontal, GridTheme.horizontalPadding)
-            }
-            .scrollIndicators(.hidden)
-            .layoutPriority(1)
-
-            if let timeline = model.displayTimeline {
-                GridTimelineView(timeline: timeline, selectedTime: $model.selectedTime)
-                    .background(GridTheme.background.opacity(0.95))
             }
         }
         .overlay(alignment: .leading) {
@@ -280,6 +227,328 @@ struct LiveView: View {
         } catch {
             assetMapError = "Generator locations could not be refreshed. The national grid view remains available."
         }
+    }
+}
+
+private struct GridCanvasHeader: View {
+    let snapshot: GridSnapshot
+    let mode: String
+    @Binding var selectedFuel: FuelKind?
+    let availableFuels: [FuelKind]
+    let hasSites: Bool
+    let onStatusTap: () -> Void
+    let onSearch: () -> Void
+    let onShare: () -> Void
+    let onEvents: () -> Void
+
+    @Environment(\.openInfo) private var openInfo
+
+    var body: some View {
+        TimelineView(.periodic(from: .now, by: 30)) { context in
+            HStack(spacing: 6) {
+                Text("50Hz")
+                    .font(.system(.title2, design: .rounded, weight: .bold))
+                    .tracking(-0.9)
+                    .foregroundStyle(GridTheme.textPrimary)
+                    .accessibilityAddTraits(.isHeader)
+
+                Button(action: onStatusTap) {
+                    HStack(spacing: 6) {
+                        Circle()
+                            .fill(statusColor(at: context.date))
+                            .frame(width: 6, height: 6)
+                            .shadow(color: statusColor(at: context.date).opacity(0.7), radius: 4)
+                        Text(statusLabel(at: context.date))
+                            .font(.caption2.weight(.semibold))
+                            .fontDesign(.monospaced)
+                            .lineLimit(1)
+                    }
+                    .foregroundStyle(GridTheme.textSecondary)
+                    .padding(.horizontal, 10)
+                    .frame(minHeight: 44)
+                    .contentShape(Capsule())
+                }
+                .buttonStyle(.plain)
+                .accessibilityLabel("Data status, \(statusLabel(at: context.date))")
+                .accessibilityHint("Opens source timing")
+
+                Spacer(minLength: 4)
+
+                Button(action: onSearch) {
+                    Image(systemName: "magnifyingglass")
+                        .font(.subheadline.weight(.semibold))
+                        .foregroundStyle(hasSites ? GridTheme.textPrimary : GridTheme.textTertiary)
+                        .frame(width: 44, height: 44)
+                        .contentShape(Circle())
+                }
+                .buttonStyle(.plain)
+                .disabled(!hasSites)
+                .accessibilityLabel("Find an energy site")
+
+                Menu {
+                    Button {
+                        selectedFuel = nil
+                    } label: {
+                        Label("All energy", systemImage: selectedFuel == nil ? "checkmark" : "circle")
+                    }
+
+                    ForEach(uniqueFuels, id: \.self) { fuel in
+                        Button {
+                            selectedFuel = fuel
+                        } label: {
+                            Label(fuel.displayName, systemImage: selectedFuel == fuel ? "checkmark" : "circle")
+                        }
+                    }
+
+                    Divider()
+
+                    Button(action: onEvents) {
+                        Label("Reported events", systemImage: "exclamationmark.bubble")
+                    }
+                    Button(action: onShare) {
+                        Label("Share grid state", systemImage: "square.and.arrow.up")
+                    }
+                    Button { openInfo() } label: {
+                        Label("Information and help", systemImage: "info.circle")
+                    }
+                } label: {
+                    Image(systemName: selectedFuel == nil ? "line.3.horizontal.decrease" : "line.3.horizontal.decrease.circle.fill")
+                        .font(.subheadline.weight(.semibold))
+                        .foregroundStyle(selectedFuel.map(GridTheme.fuel) ?? GridTheme.textPrimary)
+                        .frame(width: 44, height: 44)
+                        .contentShape(Circle())
+                }
+                .accessibilityLabel("Map layers and actions")
+            }
+            .padding(.horizontal, 16)
+            .padding(.top, 2)
+        }
+    }
+
+    private var uniqueFuels: [FuelKind] {
+        availableFuels.reduce(into: []) { result, fuel in
+            if !result.contains(fuel) { result.append(fuel) }
+        }
+    }
+
+    private func statusLabel(at date: Date) -> String {
+        switch mode {
+        case "FORECAST":
+            return "Forecast \(snapshot.timestamp.formatted(.dateTime.hour().minute()))"
+        case "REPLAY":
+            return "Replay \(snapshot.timestamp.formatted(.dateTime.hour().minute()))"
+        default:
+            let state = LiveFreshnessPresentation.make(snapshot: snapshot, at: date)
+            return state.hasConcern ? "Delayed" : "Live"
+        }
+    }
+
+    private func statusColor(at date: Date) -> Color {
+        if mode == "FORECAST" { return GridTheme.forecastViolet }
+        if mode == "REPLAY" { return GridTheme.liveCyan.opacity(0.75) }
+        return LiveFreshnessPresentation.make(snapshot: snapshot, at: date).hasConcern
+            ? GridTheme.staleAmber
+            : GridTheme.liveCyan
+    }
+}
+
+private struct GridNowDock: View {
+    let snapshot: GridSnapshot
+    let mode: String
+    let eventCount: Int
+    let hasEventError: Bool
+    let onExplain: () -> Void
+    let onOpenDetails: () -> Void
+
+    private var insight: GridPrimaryInsight {
+        GridPrimaryInsight.make(snapshot: snapshot)
+    }
+
+    var body: some View {
+        VStack(alignment: .leading, spacing: 11) {
+            HStack(alignment: .firstTextBaseline, spacing: 12) {
+                Text(insight.title)
+                    .font(.system(.title2, design: .rounded, weight: .medium))
+                    .tracking(-0.65)
+                    .foregroundStyle(GridTheme.textPrimary)
+                    .lineLimit(2)
+                Spacer(minLength: 4)
+                Button(action: onExplain) {
+                    Label("Why?", systemImage: "sparkles")
+                        .font(.caption.weight(.semibold))
+                        .foregroundStyle(insight.accent.color)
+                        .frame(minHeight: 44)
+                }
+                .buttonStyle(.plain)
+                .accessibilityLabel(insight.contextualQuestion)
+                .accessibilityHint("Explains this selected grid state using supplied evidence")
+            }
+
+            Text(insight.detail)
+                .font(.subheadline)
+                .foregroundStyle(GridTheme.textSecondary)
+                .lineLimit(2)
+                .fixedSize(horizontal: false, vertical: true)
+
+            HStack(spacing: 0) {
+                metric(
+                    label: "Frequency",
+                    value: snapshot.frequency?.value.formatted(.number.precision(.fractionLength(2))) ?? "—",
+                    unit: snapshot.frequency == nil ? "" : "Hz"
+                )
+                divider
+                metric(
+                    label: "Demand",
+                    value: (snapshot.demand.value / 1_000).formatted(.number.precision(.fractionLength(1))),
+                    unit: "GW"
+                )
+                divider
+                metric(
+                    label: "Carbon",
+                    value: snapshot.carbonIntensity.formatted(),
+                    unit: "g/kWh"
+                )
+            }
+
+            Button(action: onOpenDetails) {
+                HStack(spacing: 8) {
+                    Text(mode == "LIVE" ? "Explore the grid" : "Inspect this frame")
+                    if mode == "LIVE", eventCount > 0 {
+                        Text("· \(eventCount) event\(eventCount == 1 ? "" : "s")")
+                            .foregroundStyle(hasEventError ? GridTheme.staleAmber : GridTheme.textTertiary)
+                    }
+                    Spacer(minLength: 4)
+                    Image(systemName: "chevron.up")
+                        .font(.caption2.weight(.bold))
+                }
+                .font(.caption.weight(.semibold))
+                .foregroundStyle(GridTheme.textSecondary)
+                .frame(maxWidth: .infinity, minHeight: 44, alignment: .leading)
+                .contentShape(Rectangle())
+            }
+            .buttonStyle(.plain)
+            .accessibilityHint("Opens generation mix, events, flows and source details")
+        }
+        .padding(.horizontal, GridTheme.horizontalPadding)
+        .padding(.top, 17)
+        .padding(.bottom, 5)
+        .background(.ultraThinMaterial.opacity(0.88))
+        .overlay(alignment: .top) { Hairline() }
+    }
+
+    private func metric(label: String, value: String, unit: String) -> some View {
+        VStack(alignment: .leading, spacing: 3) {
+            Text(label.uppercased())
+                .font(.system(size: 8, weight: .semibold, design: .monospaced))
+                .tracking(0.7)
+                .foregroundStyle(GridTheme.textTertiary)
+            HStack(alignment: .firstTextBaseline, spacing: 3) {
+                Text(value)
+                    .font(.system(.subheadline, design: .monospaced, weight: .semibold))
+                    .foregroundStyle(GridTheme.textPrimary)
+                    .contentTransition(.numericText())
+                Text(unit)
+                    .font(.system(size: 8, design: .monospaced))
+                    .foregroundStyle(GridTheme.textTertiary)
+            }
+        }
+        .frame(maxWidth: .infinity, alignment: .leading)
+        .accessibilityElement(children: .combine)
+        .accessibilityLabel("\(label), \(value) \(unit)")
+    }
+
+    private var divider: some View {
+        Rectangle()
+            .fill(GridTheme.hairline)
+            .frame(width: 1, height: 30)
+            .padding(.trailing, 12)
+            .accessibilityHidden(true)
+    }
+}
+
+private struct GridStateDetailsSheet: View {
+    let snapshot: GridSnapshot
+    let mode: String
+    @Binding var selectedFuel: FuelKind?
+    let assetResponse: GridAssetMapResponse?
+    let isAssetMapLoading: Bool
+    let assetMapError: String?
+    let eventCount: Int
+    let eventsUnavailable: Bool
+    let onBrowseSites: () -> Void
+    let onBrowseEvents: () -> Void
+    let onRetryAssets: () -> Void
+
+    @Environment(\.dismiss) private var dismiss
+
+    var body: some View {
+        NavigationStack {
+            ScrollView {
+                LazyVStack(alignment: .leading, spacing: 25) {
+                    LiveMeasurementLedger(snapshot: snapshot, mode: mode)
+
+                    if !snapshot.generation.isEmpty {
+                        VStack(alignment: .leading, spacing: 12) {
+                            SectionLabel(
+                                LiveTruthCopy.supplyTitle,
+                                trailing: "\((snapshot.totalGenerationMW / 1_000).formatted(.number.precision(.fractionLength(1)))) GW"
+                            )
+                            GenerationMixBar(readings: snapshot.generation, selectedFuel: selectedFuel)
+                            FuelFilter(readings: snapshot.generation, selection: $selectedFuel)
+                        }
+                    }
+
+                    if mode == "LIVE" {
+                        Button(action: onBrowseEvents) {
+                            HStack(spacing: 12) {
+                                Image(systemName: "exclamationmark.bubble")
+                                    .foregroundStyle(eventsUnavailable ? GridTheme.staleAmber : GridTheme.liveCyan)
+                                Text("Reported events")
+                                    .font(.subheadline.weight(.semibold))
+                                Spacer()
+                                Text(eventCount.formatted())
+                                    .font(.subheadline.monospacedDigit())
+                                    .foregroundStyle(GridTheme.textSecondary)
+                                Image(systemName: "chevron.right")
+                                    .font(.caption)
+                                    .foregroundStyle(GridTheme.textTertiary)
+                            }
+                            .frame(minHeight: 52)
+                            .contentShape(Rectangle())
+                            .overlay(alignment: .bottom) { Hairline() }
+                        }
+                        .buttonStyle(.plain)
+
+                        InterconnectorLedger(snapshot: snapshot)
+
+                        LiveAssetLayerStatus(
+                            response: assetResponse,
+                            isLoading: isAssetMapLoading,
+                            errorMessage: assetMapError,
+                            isLiveMode: true,
+                            onBrowse: onBrowseSites,
+                            onRetry: onRetryAssets
+                        )
+                    }
+
+                    SourceFootnote(snapshot: snapshot, mode: mode)
+                        .padding(.bottom, 20)
+                }
+                .padding(.horizontal, GridTheme.horizontalPadding)
+                .padding(.top, 12)
+            }
+            .scrollIndicators(.hidden)
+            .background(GridTheme.background)
+            .navigationTitle("Grid state")
+            .navigationBarTitleDisplayMode(.inline)
+            .toolbar {
+                ToolbarItem(placement: .topBarTrailing) {
+                    Button("Done") { dismiss() }
+                        .foregroundStyle(GridTheme.liveCyan)
+                }
+            }
+        }
+        .preferredColorScheme(.dark)
     }
 }
 

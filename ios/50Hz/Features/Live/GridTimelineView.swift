@@ -38,16 +38,11 @@ struct GridTimelineView: View {
     }
 
     var body: some View {
-        VStack(spacing: 11) {
+        VStack(spacing: 5) {
             HStack(alignment: .firstTextBaseline) {
-                VStack(alignment: .leading, spacing: 2) {
-                    Text(isLive ? "NOW" : selectedDateLabel)
-                        .font(.system(.subheadline, design: .monospaced, weight: .semibold))
-                        .foregroundStyle(isForecast ? GridTheme.forecastViolet : GridTheme.textPrimary)
-                    Text(isLive ? "Live snapshot" : (isForecast ? "Forecast frame" : "Observed replay"))
-                        .font(.caption2)
-                        .foregroundStyle(GridTheme.textTertiary)
-                }
+                Text(isLive ? "NOW" : selectedDateLabel)
+                    .font(.system(.caption, design: .monospaced, weight: .semibold))
+                    .foregroundStyle(isForecast ? GridTheme.forecastViolet : GridTheme.textPrimary)
 
                 Spacer()
 
@@ -55,17 +50,16 @@ struct GridTimelineView: View {
                     Button {
                         resumeLive()
                     } label: {
-                        Label("Resume live", systemImage: "dot.radiowaves.left.and.right")
-                            .font(.caption.weight(.semibold))
+                        Label("Live", systemImage: "dot.radiowaves.left.and.right")
+                            .font(.caption2.weight(.semibold))
                             .foregroundStyle(GridTheme.liveCyan)
-                            .padding(.horizontal, 10)
                             .frame(minHeight: 44)
-                            .background(GridTheme.liveCyan.opacity(0.09), in: Capsule())
                     }
                     .buttonStyle(.plain)
                 } else {
-                    Text("\(timeline.sourceResolutionSeconds / 60) min source resolution")
+                    Text(isForecast ? "FORECAST" : "LIVE")
                         .font(.caption2)
+                        .fontDesign(.monospaced)
                         .foregroundStyle(GridTheme.textTertiary)
                 }
             }
@@ -120,35 +114,27 @@ struct GridTimelineView: View {
                     )
                 }
             }
-            .frame(height: 44)
+            .frame(height: 34)
             .sensoryFeedback(.selection, trigger: feedbackTick)
 
-            GeometryReader { proxy in
-                ZStack {
-                    Text(axisLabel(for: firstDate))
-                        .frame(maxWidth: .infinity, alignment: .leading)
-
-                    if hasForecastRange {
-                        Text("NOW")
-                            .position(
-                                x: (proxy.size.width * nowRatio).clamped(to: 48...(proxy.size.width - 48)),
-                                y: proxy.size.height / 2
-                            )
-                        Text(axisLabel(for: lastDate))
-                            .frame(maxWidth: .infinity, alignment: .trailing)
-                    } else {
-                        Text("NOW")
-                            .frame(maxWidth: .infinity, alignment: .trailing)
-                    }
+            HStack {
+                Text(axisLabel(for: firstDate))
+                Spacer()
+                if hasForecastRange {
+                    Text("NOW")
+                    Spacer()
+                    Text(axisLabel(for: lastDate))
+                } else {
+                    Text("NOW")
                 }
             }
-            .frame(height: 12)
-            .font(.system(size: 9, weight: .medium, design: .monospaced))
+            .font(.system(size: 8, weight: .medium, design: .monospaced))
             .foregroundStyle(GridTheme.textTertiary)
         }
         .padding(.horizontal, GridTheme.horizontalPadding)
-        .padding(.vertical, 14)
-        .background(.ultraThinMaterial.opacity(0.68))
+        .padding(.top, 4)
+        .padding(.bottom, 8)
+        .background(.ultraThinMaterial.opacity(0.88))
         .overlay(alignment: .top) { Hairline() }
     }
 
