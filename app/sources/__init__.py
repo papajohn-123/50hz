@@ -28,12 +28,19 @@ from app.sources.neso_carbon import (
     PostcodeCarbonIntensityAdapter,
     normalize_outward_postcode,
 )
+from app.sources.ukpn import (
+    DEFAULT_UKPN_BASE_URL,
+    UKPNLiveFaultsAdapter,
+    normalize_outward_code,
+    ukpn_authorization_headers,
+)
 from app.sources.types import (
     AdapterResult,
     CarbonIntensityRecord,
     DataClassification,
     DemandRecord,
     DemandForecastRecord,
+    DistributionIncidentRecord,
     FlowDirection,
     FrequencyRecord,
     GenerationMixShare,
@@ -53,9 +60,11 @@ __all__ = [
     "CarbonIntensityRecord",
     "DEFAULT_ELEXON_BASE_URL",
     "DEFAULT_NESO_CARBON_BASE_URL",
+    "DEFAULT_UKPN_BASE_URL",
     "DataClassification",
     "DemandForecastRecord",
     "DemandRecord",
+    "DistributionIncidentRecord",
     "FlowDirection",
     "FreqAdapter",
     "FrequencyRecord",
@@ -82,8 +91,11 @@ __all__ = [
     "SystemWarningRecord",
     "SystemWarningsAdapter",
     "SystemFrequencyAdapter",
+    "UKPNLiveFaultsAdapter",
     "WindForAdapter",
     "WindForecastRecord",
     "WindGenerationForecastAdapter",
     "normalize_outward_postcode",
+    "normalize_outward_code",
+    "ukpn_authorization_headers",
 ]

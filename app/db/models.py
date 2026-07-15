@@ -602,6 +602,153 @@ class ReportedNotice(Base):
     )
 
 
+class DistributionIncidentRevision(Base):
+    """Immutable, privacy-reduced revision of a DNO incident publication."""
+
+    __tablename__ = "distribution_incident_revisions"
+
+    id: Mapped[uuid.UUID] = mapped_column(Uuid, primary_key=True, default=uuid.uuid4)
+    source_id: Mapped[str] = mapped_column(
+        ForeignKey("source_metadata.id", ondelete="RESTRICT"), nullable=False
+    )
+    raw_payload_id: Mapped[uuid.UUID | None] = mapped_column(
+        ForeignKey("raw_payloads.id", ondelete="SET NULL")
+    )
+    incident_reference: Mapped[str] = mapped_column(String(120), nullable=False)
+    revision: Mapped[int] = mapped_column(
+        Integer, nullable=False, default=0, server_default="0"
+    )
+    content_sha256: Mapped[str] = mapped_column(String(64), nullable=False)
+    classification: Mapped[str] = mapped_column(
+        String(16), nullable=False, default="reported", server_default="reported"
+    )
+    status: Mapped[str] = mapped_column(String(32), nullable=False)
+    status_id: Mapped[int | None] = mapped_column(Integer)
+    source_created_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True))
+    observed_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), nullable=False)
+    retrieved_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), nullable=False)
+    incident_start: Mapped[datetime | None] = mapped_column(DateTime(timezone=True))
+    restored_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True))
+    estimated_restoration_at: Mapped[datetime | None] = mapped_column(
+        DateTime(timezone=True)
+    )
+    customers_affected: Mapped[int] = mapped_column(
+        Integer, nullable=False, default=0, server_default="0"
+    )
+    calls_reported: Mapped[int] = mapped_column(
+        Integer, nullable=False, default=0, server_default="0"
+    )
+    postcode_sectors: Mapped[list[str]] = mapped_column(
+        JSON_DOCUMENT, nullable=False, default=list, server_default=text("'[]'")
+    )
+    outward_codes: Mapped[list[str]] = mapped_column(
+        JSON_DOCUMENT, nullable=False, default=list, server_default=text("'[]'")
+    )
+    latitude: Mapped[float | None] = mapped_column(Float)
+    longitude: Mapped[float | None] = mapped_column(Float)
+    geography_precision: Mapped[str] = mapped_column(String(64), nullable=False)
+    operating_zone: Mapped[str | None] = mapped_column(String(160))
+    official_summary: Mapped[str | None] = mapped_column(Text)
+    official_details: Mapped[str | None] = mapped_column(Text)
+    restoration_window_text: Mapped[str | None] = mapped_column(String(500))
+    incident_category: Mapped[str | None] = mapped_column(String(64))
+    created_at: Mapped[datetime] = mapped_column(
+        DateTime(timezone=True), nullable=False, server_default=func.now()
+    )
+
+    __table_args__ = (
+        UniqueConstraint(
+            "source_id",
+            "incident_reference",
+            "revision",
+            name="uq_distribution_incident_revision",
+        ),
+        CheckConstraint(
+            "revision >= 0", name="nonnegative_distribution_incident_revision"
+        ),
+        CheckConstraint(
+            "status IN ('planned', 'unplanned', 'restored')",
+            name="valid_distribution_incident_status",
+        ),
+        CheckConstraint(
+            "classification = 'reported'",
+            name="distribution_incident_reported_only",
+        ),
+        CheckConstraint(
+            "customers_affected >= 0 AND calls_reported >= 0",
+            name="nonnegative_distribution_incident_counts",
+        ),
+        CheckConstraint(
+            "(latitude IS NULL AND longitude IS NULL) OR "
+            "(latitude BETWEEN -90 AND 90 AND longitude BETWEEN -180 AND 180)",
+            name="valid_distribution_incident_geopoint",
+        ),
+        CheckConstraint(
+            "length(content_sha256) = 64",
+            name="valid_distribution_incident_checksum",
+        ),
+        Index(
+            "ix_distribution_incident_latest",
+            "source_id",
+            "incident_reference",
+            "revision",
+        ),
+        Index(
+            "ix_distribution_incident_status_observed",
+            "status",
+            "observed_at",
+        ),
+    )
+
+
+class DistributionIncidentCurrent(Base):
+    """Mutable membership of the most recent successful upstream snapshot."""
+
+    __tablename__ = "distribution_incident_current"
+
+    id: Mapped[uuid.UUID] = mapped_column(Uuid, primary_key=True, default=uuid.uuid4)
+    source_id: Mapped[str] = mapped_column(
+        ForeignKey("source_metadata.id", ondelete="CASCADE"), nullable=False
+    )
+    incident_reference: Mapped[str] = mapped_column(String(120), nullable=False)
+    status: Mapped[str] = mapped_column(String(32), nullable=False)
+    present: Mapped[bool] = mapped_column(
+        Boolean, nullable=False, default=True, server_default=text("true")
+    )
+    first_seen_at: Mapped[datetime] = mapped_column(
+        DateTime(timezone=True), nullable=False
+    )
+    last_seen_at: Mapped[datetime] = mapped_column(
+        DateTime(timezone=True), nullable=False
+    )
+    updated_at: Mapped[datetime] = mapped_column(
+        DateTime(timezone=True), nullable=False, server_default=func.now()
+    )
+
+    __table_args__ = (
+        UniqueConstraint(
+            "source_id",
+            "incident_reference",
+            name="uq_distribution_incident_current",
+        ),
+        CheckConstraint(
+            "status IN ('planned', 'unplanned', 'restored')",
+            name="valid_distribution_current_status",
+        ),
+        CheckConstraint(
+            "last_seen_at >= first_seen_at",
+            name="valid_distribution_current_seen_window",
+        ),
+        Index(
+            "ix_distribution_current_present_status",
+            "source_id",
+            "present",
+            "status",
+            "last_seen_at",
+        ),
+    )
+
+
 class MetricDefinition(TimestampMixin, Base):
     """Versioned identity and plain-language contract for a comparable series."""
 

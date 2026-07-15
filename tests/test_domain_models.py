@@ -215,6 +215,8 @@ def test_initial_metadata_contains_all_foundation_tables() -> None:
         "detected_events",
         "event_explanations",
         "reported_notice_explanations",
+        "distribution_incident_revisions",
+        "distribution_incident_current",
     }
 
     assert expected == set(Base.metadata.tables)

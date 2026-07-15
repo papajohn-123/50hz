@@ -18,6 +18,8 @@ from sqlalchemy.ext.asyncio import AsyncSession
 from app.db.models import (
     CarbonObservation,
     DemandObservation,
+    DistributionIncidentCurrent,
+    DistributionIncidentRevision,
     ForecastObservation,
     FrequencyObservation,
     GenerationObservation,
@@ -35,6 +37,7 @@ from app.persistence.records import (
     map_carbon_forecast_record,
     map_demand_forecast_record,
     map_demand_record,
+    map_distribution_incident_record,
     map_frequency_record,
     map_generation_record,
     map_interconnector_record,
@@ -49,6 +52,7 @@ from app.sources.types import (
     DataClassification as SourceDataClassification,
     DemandForecastRecord,
     DemandRecord,
+    DistributionIncidentRecord,
     FrequencyRecord,
     GenerationRecord,
     InterconnectorFlowRecord,
@@ -58,6 +62,7 @@ from app.sources.types import (
     WindForecastRecord,
     as_utc,
 )
+from app.sources.ukpn import contains_full_postcode, sanitize_ukpn_payload
 from app.worker.contracts import IngestionCheckpoint, PersistOutcome
 
 
@@ -65,6 +70,7 @@ SessionFactory = Callable[[], AsyncSession]
 
 _RUN_NAMESPACE = UUID("b1f130e2-ec87-5a79-88a3-a3ed99a5321c")
 _RAW_PAYLOAD_NAMESPACE = UUID("40321ac1-3394-58d2-9cf7-33dbb7187b6c")
+_DISTRIBUTION_CURRENT_NAMESPACE = UUID("d9b24b44-6241-5089-b0f2-91f64325b921")
 
 
 @dataclass(frozen=True, slots=True)
@@ -233,6 +239,34 @@ _REPORTED_NOTICE_SPEC = _UpsertSpec(
         "evidence",
     ),
 )
+_DISTRIBUTION_INCIDENT_SPEC = _UpsertSpec(
+    model=DistributionIncidentRevision,
+    conflict_columns=("source_id", "incident_reference", "revision"),
+    identity_columns=("source_id", "incident_reference"),
+    factual_columns=(
+        "content_sha256",
+        "classification",
+        "status",
+        "status_id",
+        "source_created_at",
+        "observed_at",
+        "incident_start",
+        "restored_at",
+        "estimated_restoration_at",
+        "customers_affected",
+        "calls_reported",
+        "postcode_sectors",
+        "outward_codes",
+        "latitude",
+        "longitude",
+        "geography_precision",
+        "operating_zone",
+        "official_summary",
+        "official_details",
+        "restoration_window_text",
+        "incident_category",
+    ),
+)
 
 
 class PostgresIngestionRepository:
@@ -296,6 +330,14 @@ class PostgresIngestionRepository:
             raise ValueError("completed_at cannot precede attempted_at")
         if not isinstance(result.raw_payload, (dict, list)):
             raise TypeError("raw payload must be a JSON object or array")
+        if _is_distribution_snapshot(result):
+            if (
+                contains_full_postcode(result.raw_payload)
+                or sanitize_ukpn_payload(result.raw_payload) != result.raw_payload
+            ):
+                raise ValueError(
+                    "distribution incident payload has not been privacy-reduced"
+                )
         if re.fullmatch(r"[0-9a-f]{64}", result.checksum_sha256.lower()) is None:
             raise ValueError("raw payload checksum must be a SHA-256 hex digest")
         checksum_sha256 = result.checksum_sha256.lower()
@@ -440,6 +482,20 @@ class PostgresIngestionRepository:
                     await materialize_reported_notice_rows(
                         session,
                         reported_notice_rows,
+                    )
+                if _is_distribution_snapshot(result):
+                    await _refresh_distribution_incident_current(
+                        session,
+                        source_id=source_id,
+                        records=tuple(
+                            record
+                            for record in result.records
+                            if isinstance(record, DistributionIncidentRecord)
+                        ),
+                        seen_at=as_utc(
+                            result.retrieved_at,
+                            field_name="result.retrieved_at",
+                        ),
                     )
 
                 await session.execute(
@@ -766,6 +822,14 @@ def _map_record_batches(
                     record, source_id=source_id, raw_payload_id=raw_payload_id
                 )
             )
+        elif isinstance(record, DistributionIncidentRecord):
+            grouped[_DISTRIBUTION_INCIDENT_SPEC].append(
+                map_distribution_incident_record(
+                    record,
+                    source_id=source_id,
+                    raw_payload_id=raw_payload_id,
+                )
+            )
         else:  # pragma: no cover - guarded before the transaction begins
             raise TypeError(f"unsupported normalized record: {type(record).__name__}")
     ordered_specs = (
@@ -776,6 +840,7 @@ def _map_record_batches(
         _CARBON_ACTUAL_SPEC,
         _FORECAST_SPEC,
         _REPORTED_NOTICE_SPEC,
+        _DISTRIBUTION_INCIDENT_SPEC,
     )
     return tuple((spec, grouped[spec]) for spec in ordered_specs if grouped[spec])
 
@@ -791,6 +856,7 @@ def _validate_record_types(records: Sequence[Any]) -> None:
         WindForecastRecord,
         RemitUnavailabilityRecord,
         SystemWarningRecord,
+        DistributionIncidentRecord,
     )
     for record in records:
         if not isinstance(record, supported):
@@ -805,6 +871,68 @@ def _deduplicate_rows(
         key = tuple(row[column] for column in conflict_columns)
         by_key[key] = row
     return list(by_key.values()), len(rows) - len(by_key)
+
+
+def _is_distribution_snapshot(result: AdapterResult[Any]) -> bool:
+    return (
+        result.source_id == "ukpn.live_faults"
+        and result.dataset.upper() == "LIVE_FAULTS"
+    )
+
+
+async def _refresh_distribution_incident_current(
+    session: AsyncSession,
+    *,
+    source_id: str,
+    records: Sequence[DistributionIncidentRecord],
+    seen_at: datetime,
+) -> None:
+    """Atomically replace current membership without deleting revision history."""
+
+    seen_at = as_utc(seen_at, field_name="seen_at")
+    await session.execute(
+        update(DistributionIncidentCurrent)
+        .where(
+            DistributionIncidentCurrent.source_id == source_id,
+            DistributionIncidentCurrent.present.is_(True),
+        )
+        .values(present=False, updated_at=seen_at)
+    )
+    by_reference = {record.incident_reference: record for record in records}
+    if not by_reference:
+        return
+    rows = [
+        {
+            "id": uuid.uuid5(
+                _DISTRIBUTION_CURRENT_NAMESPACE,
+                f"{source_id}|{record.incident_reference}",
+            ),
+            "source_id": source_id,
+            "incident_reference": record.incident_reference,
+            "status": record.status,
+            "present": True,
+            "first_seen_at": seen_at,
+            "last_seen_at": seen_at,
+            "updated_at": seen_at,
+        }
+        for record in by_reference.values()
+    ]
+    for write_rows in _normalized_write_batches(rows):
+        statement = pg_insert(DistributionIncidentCurrent).values(list(write_rows))
+        await session.execute(
+            statement.on_conflict_do_update(
+                index_elements=[
+                    DistributionIncidentCurrent.source_id,
+                    DistributionIncidentCurrent.incident_reference,
+                ],
+                set_={
+                    "status": statement.excluded.status,
+                    "present": True,
+                    "last_seen_at": statement.excluded.last_seen_at,
+                    "updated_at": statement.excluded.updated_at,
+                },
+            )
+        )
 
 
 def _success_idempotency_key(job_id: str, result: AdapterResult[Any]) -> str:

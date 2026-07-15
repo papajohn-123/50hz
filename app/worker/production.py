@@ -16,6 +16,7 @@ from app.sources.client import (
     DEFAULT_NESO_CARBON_BASE_URL,
     AsyncJSONClient,
 )
+from app.sources.ukpn import DEFAULT_UKPN_BASE_URL, UKPNLiveFaultsAdapter
 from app.sources.elexon import (
     FuelInstGenerationAdapter,
     InitialDemandAdapter,
@@ -55,6 +56,8 @@ CARBON_JOB_IDS = frozenset(
         "neso.carbon.national.forecast",
     }
 )
+
+UKPN_JOB_IDS = frozenset({"ukpn.live_faults"})
 
 
 class ForwardWindowAdapter:
@@ -97,6 +100,7 @@ def build_production_schedules(
     *,
     elexon_client: AsyncJSONClient,
     carbon_client: AsyncJSONClient,
+    ukpn_client: AsyncJSONClient,
 ) -> tuple[PollSchedule, ...]:
     """Return every continuously collected production source schedule.
 
@@ -235,6 +239,19 @@ def build_production_schedules(
             reconcile_every=timedelta(hours=6),
             reconcile_lookback=timedelta(hours=48),
         ),
+        # Live Faults is a complete current snapshot rather than a time-window
+        # feed. Five-minute polling is well inside the anonymous/keyed daily
+        # allowance while avoiding needless traffic to a near-real-time source.
+        PollSchedule(
+            job_id="ukpn.live_faults",
+            adapter=UKPNLiveFaultsAdapter(ukpn_client),
+            cadence=timedelta(minutes=5),
+            overlap=timedelta(minutes=10),
+            initial_lookback=timedelta(minutes=30),
+            max_incremental_lookback=timedelta(hours=48),
+            reconcile_every=None,
+            reconcile_lookback=timedelta(hours=1),
+        ),
     )
     if len({schedule.job_id for schedule in schedules}) != len(schedules):
         raise ValueError("production poll schedule job IDs must be unique")
@@ -247,24 +264,29 @@ class ProductionSourceBundle:
 
     elexon_client: AsyncJSONClient
     carbon_client: AsyncJSONClient
+    ukpn_client: AsyncJSONClient
     schedules: tuple[PollSchedule, ...]
 
     @classmethod
     def create(cls) -> ProductionSourceBundle:
         elexon_client = AsyncJSONClient(base_url=DEFAULT_ELEXON_BASE_URL)
         carbon_client = AsyncJSONClient(base_url=DEFAULT_NESO_CARBON_BASE_URL)
+        ukpn_client = AsyncJSONClient(base_url=DEFAULT_UKPN_BASE_URL)
         return cls(
             elexon_client=elexon_client,
             carbon_client=carbon_client,
+            ukpn_client=ukpn_client,
             schedules=build_production_schedules(
                 elexon_client=elexon_client,
                 carbon_client=carbon_client,
+                ukpn_client=ukpn_client,
             ),
         )
 
     async def aclose(self) -> None:
         await self.elexon_client.aclose()
         await self.carbon_client.aclose()
+        await self.ukpn_client.aclose()
 
     async def __aenter__(self) -> ProductionSourceBundle:
         return self

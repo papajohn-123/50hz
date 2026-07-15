@@ -15,6 +15,7 @@ from app.sources.types import (
     DataClassification as SourceDataClassification,
     DemandForecastRecord,
     DemandRecord,
+    DistributionIncidentRecord,
     FrequencyRecord,
     GenerationRecord,
     InterconnectorFlowRecord,
@@ -23,6 +24,7 @@ from app.sources.types import (
     WindForecastRecord,
     as_utc,
 )
+from app.sources.ukpn import contains_full_postcode
 
 
 _SLUG_PATTERN = re.compile(r"[^a-z0-9]+")
@@ -52,6 +54,16 @@ SOURCE_PROFILES: dict[str, SourceProfile] = {
         licence_url=None,
         attribution="Carbon-intensity data supplied by NESO.",
     ),
+    "ukpn": SourceProfile(
+        display_name="UK Power Networks",
+        documentation_url=(
+            "https://ukpowernetworks.opendatasoft.com/explore/dataset/"
+            "ukpn-live-faults/"
+        ),
+        licence_name="CC BY 4.0",
+        licence_url="https://creativecommons.org/licenses/by/4.0/",
+        attribution="Live Faults data supplied by UK Power Networks.",
+    ),
 }
 
 # Public source inspection is an explicit product contract. Operational
@@ -68,6 +80,7 @@ PUBLIC_SOURCE_IDS = (
     "elexon.windfor",
     "neso.carbon-intensity-national",
     "neso.carbon-intensity-regional",
+    "ukpn.live-faults",
 )
 
 
@@ -88,6 +101,7 @@ DATASET_CADENCE_SECONDS: dict[tuple[str, str], int] = {
     ("neso", "CARBON_INTENSITY"): 1800,
     ("neso", "CARBON_INTENSITY_NATIONAL"): 1800,
     ("neso", "CARBON_INTENSITY_REGIONAL"): 1800,
+    ("ukpn", "LIVE_FAULTS"): 300,
 }
 
 
@@ -168,6 +182,7 @@ def job_source_metadata_values(job_id: str) -> dict[str, Any]:
     base_url = {
         "elexon": "https://data.elexon.co.uk",
         "neso": "https://api.carbonintensity.org.uk",
+        "ukpn": "https://ukpowernetworks.opendatasoft.com",
     }.get(provider.lower(), "https://50hz.app")
     values = source_metadata_values(
         provider=provider,
@@ -254,6 +269,67 @@ def map_interconnector_record(
             "displayName": record.interconnector_name,
             "signConvention": "positive_import_into_gb",
         },
+    }
+
+
+def map_distribution_incident_record(
+    record: DistributionIncidentRecord,
+    *,
+    source_id: str,
+    raw_payload_id: UUID,
+) -> dict[str, Any]:
+    if contains_full_postcode(asdict(record)):
+        raise ValueError("distribution incident record contains a full postcode")
+    if record.classification is not SourceDataClassification.REPORTED:
+        raise ValueError("distribution incidents must be source-reported facts")
+    if record.status not in {"planned", "unplanned", "restored"}:
+        raise ValueError("distribution incident status is unsupported")
+    return {
+        "source_id": source_id,
+        "raw_payload_id": raw_payload_id,
+        "incident_reference": record.incident_reference,
+        "revision": 0,
+        "content_sha256": record.content_sha256,
+        "classification": record.classification.value,
+        "status": record.status,
+        "status_id": record.status_id,
+        "source_created_at": (
+            as_utc(record.source_created_at, field_name="source_created_at")
+            if record.source_created_at is not None
+            else None
+        ),
+        "observed_at": as_utc(record.observed_at, field_name="observed_at"),
+        "retrieved_at": as_utc(record.retrieved_at, field_name="retrieved_at"),
+        "incident_start": (
+            as_utc(record.incident_start, field_name="incident_start")
+            if record.incident_start is not None
+            else None
+        ),
+        "restored_at": (
+            as_utc(record.restored_at, field_name="restored_at")
+            if record.restored_at is not None
+            else None
+        ),
+        "estimated_restoration_at": (
+            as_utc(
+                record.estimated_restoration_at,
+                field_name="estimated_restoration_at",
+            )
+            if record.estimated_restoration_at is not None
+            else None
+        ),
+        "customers_affected": record.customers_affected,
+        "calls_reported": record.calls_reported,
+        "postcode_sectors": list(record.postcode_sectors),
+        "outward_codes": list(record.outward_codes),
+        "latitude": record.latitude,
+        "longitude": record.longitude,
+        "geography_precision": record.geography_precision,
+        "operating_zone": record.operating_zone,
+        "official_summary": record.official_summary,
+        "official_details": record.official_details,
+        "restoration_window_text": record.restoration_window_text,
+        "incident_category": record.incident_category,
     }
 
 

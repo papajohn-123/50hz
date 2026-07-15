@@ -319,12 +319,13 @@ def test_public_source_queries_exclude_internal_operational_providers() -> None:
 class FakeHealthRepository:
     async def load(self):
         item = source("elexon.indo", dataset="INDO")
+        now = datetime.now(UTC)
         return (item,), {
             item.id: SourceRunSummary(
                 source_id=item.id,
-                last_attempted_at=NOW,
+                last_attempted_at=now,
                 last_attempt_state="succeeded",
-                last_succeeded_at=NOW,
+                last_succeeded_at=now,
             )
         }
 

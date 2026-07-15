@@ -16,6 +16,7 @@ from app.http_cache import ConditionalJSONMiddleware
 from app.intelligence.api import router as intelligence_router
 from app.legal import router as legal_router
 from app.observability import RequestObservabilityMiddleware
+from app.outages.api import router as outage_router
 from app.rate_limit import RateLimitMiddleware
 from app.runtime import lifespan
 from app.persistence import GridReadRepository
@@ -35,6 +36,7 @@ app.include_router(forecast_verification_router)
 app.include_router(game_router)
 app.include_router(legal_router)
 app.include_router(source_health_router)
+app.include_router(outage_router)
 app.add_middleware(ConditionalJSONMiddleware)
 app.add_middleware(GZipMiddleware, minimum_size=1_000)
 app.add_middleware(RateLimitMiddleware)

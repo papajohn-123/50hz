@@ -68,20 +68,24 @@ class AsyncJSONClient:
         sleep: Callable[[float], Awaitable[None]] = asyncio.sleep,
         clock: Callable[[], datetime] | None = None,
         user_agent: str = "50Hz/0.1 (+https://github.com/papajohn-123/50hz)",
+        headers: Mapping[str, str] | None = None,
     ) -> None:
         resolved_timeout = timeout or httpx.Timeout(15.0, connect=5.0, pool=5.0)
         self._retry_policy = retry_policy or RetryPolicy()
         self._sleep = sleep
         self._clock = clock or (lambda: datetime.now(UTC))
+        default_headers = {
+            "Accept": "application/json",
+            "User-Agent": user_agent,
+        }
+        if headers:
+            default_headers.update(headers)
         self._client = httpx.AsyncClient(
             base_url=base_url,
             timeout=resolved_timeout,
             transport=transport,
             follow_redirects=True,
-            headers={
-                "Accept": "application/json",
-                "User-Agent": user_agent,
-            },
+            headers=default_headers,
         )
 
     async def __aenter__(self) -> AsyncJSONClient:

@@ -14,6 +14,7 @@ from app.persistence.observed_events import (
 )
 from app.persistence.retention import RawPayloadRetentionRepository
 from app.sources import AsyncJSONClient
+from app.sources.ukpn import ukpn_authorization_headers
 from app.worker.production import build_production_schedules
 from app.worker.observed_events import ObservedEventMaintenanceAction
 from app.worker.retention import RawPayloadRetentionWorker
@@ -42,6 +43,10 @@ async def lifespan(app: FastAPI):
         carbon_client = AsyncJSONClient(
             base_url=settings.carbon_intensity_base_url.rstrip("/") + "/"
         )
+        ukpn_client = AsyncJSONClient(
+            base_url=settings.ukpn_base_url.rstrip("/") + "/",
+            headers=ukpn_authorization_headers(settings.ukpn_api_key),
+        )
         session_factory = get_session_factory()
         locks = PostgresAdvisoryLockProvider(session_factory)
         observed_event_action = ObservedEventMaintenanceAction(
@@ -53,6 +58,7 @@ async def lifespan(app: FastAPI):
             schedules=build_production_schedules(
                 elexon_client=elexon_client,
                 carbon_client=carbon_client,
+                ukpn_client=ukpn_client,
             ),
             repository=PostgresIngestionRepository(session_factory),
             locks=locks,
@@ -81,7 +87,7 @@ async def lifespan(app: FastAPI):
             stop_event=stop_event,
             task=task,
             retention_task=retention_task,
-            clients=(elexon_client, carbon_client),
+            clients=(elexon_client, carbon_client, ukpn_client),
             started_at=datetime.now(UTC),
         )
         app.state.worker_runtime = runtime

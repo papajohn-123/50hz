@@ -257,6 +257,8 @@ async def test_runtime_starts_retention_as_a_separate_worker_only_task(
             database_url="postgresql://configured",
             elexon_base_url="https://elexon.test",
             carbon_intensity_base_url="https://carbon.test",
+            ukpn_base_url="https://ukpn.test",
+            ukpn_api_key=None,
             worker_poll_seconds=60,
             raw_payload_retention_hours=72,
             raw_payload_cleanup_interval_seconds=3_600,

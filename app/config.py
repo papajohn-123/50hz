@@ -10,6 +10,8 @@ class Settings(BaseSettings):
     database_url: str | None = None
     elexon_base_url: str = "https://data.elexon.co.uk/bmrs/api/v1"
     carbon_intensity_base_url: str = "https://api.carbonintensity.org.uk"
+    ukpn_base_url: str = "https://ukpowernetworks.opendatasoft.com"
+    ukpn_api_key: str | None = None
     openrouter_api_key: str | None = None
     openrouter_model: str = "openai/gpt-5.4-mini"
     openrouter_base_url: str = "https://openrouter.ai/api/v1"

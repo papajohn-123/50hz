@@ -254,6 +254,43 @@ class SystemWarningRecord:
 
 
 @dataclass(frozen=True, slots=True)
+class DistributionIncidentRecord:
+    """A privacy-reduced distribution-network incident publication.
+
+    ``postcode_sectors`` and ``outward_codes`` are deliberately coarse. Source
+    adapters must remove full-postcode fields before constructing this record or
+    returning an :class:`AdapterResult` for raw-payload retention.
+    """
+
+    source_key: str
+    incident_reference: str
+    status: str
+    observed_at: datetime
+    retrieved_at: datetime
+    content_sha256: str
+    source_created_at: datetime | None = None
+    incident_start: datetime | None = None
+    restored_at: datetime | None = None
+    estimated_restoration_at: datetime | None = None
+    status_id: int | None = None
+    customers_affected: int = 0
+    calls_reported: int = 0
+    postcode_sectors: tuple[str, ...] = ()
+    outward_codes: tuple[str, ...] = ()
+    latitude: float | None = None
+    longitude: float | None = None
+    geography_precision: str = "postcode_sector"
+    operating_zone: str | None = None
+    official_summary: str | None = None
+    official_details: str | None = None
+    restoration_window_text: str | None = None
+    incident_category: str | None = None
+    classification: DataClassification = DataClassification.REPORTED
+    source: str = "ukpn"
+    dataset: str = "LIVE_FAULTS"
+
+
+@dataclass(frozen=True, slots=True)
 class AdapterResult(Generic[RecordT]):
     """Normalized records plus enough raw provenance for an auditable write."""
 
