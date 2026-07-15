@@ -108,6 +108,54 @@ final class LiveTruthPresentationTests: XCTestCase {
         XCTAssertTrue(LiveTruthCopy.mapDisclosure.contains("do not locate"))
     }
 
+    func testAssetClusteringReducesNationalMarkersAndSeparatesThemAtHighZoom() {
+        let west = LiveMapAsset(
+            id: "west",
+            name: "West site",
+            fuel: .wind,
+            latitude: 52.40,
+            longitude: -1.70,
+            capacityMW: 300,
+            sourceID: "desnz.repd",
+            observedAt: now
+        )
+        let east = LiveMapAsset(
+            id: "east",
+            name: "East site",
+            fuel: .solar,
+            latitude: 52.45,
+            longitude: -1.30,
+            capacityMW: 100,
+            sourceID: "desnz.repd",
+            observedAt: now
+        )
+        let unsourced = LiveMapAsset(
+            id: "unsourced",
+            name: "Not drawable",
+            fuel: .gas,
+            latitude: 52.42,
+            longitude: -1.50,
+            capacityMW: 900,
+            sourceID: "",
+            observedAt: now
+        )
+
+        let national = LiveAssetClustering.clusters(
+            assets: [west, east, unsourced],
+            zoomScale: 1
+        )
+        let local = LiveAssetClustering.clusters(
+            assets: [west, east, unsourced],
+            zoomScale: 8
+        )
+
+        XCTAssertEqual(national.count, 1)
+        XCTAssertEqual(national[0].count, 2)
+        XCTAssertEqual(national[0].totalCapacityMW, 400)
+        XCTAssertEqual(local.count, 2)
+        XCTAssertTrue(local.allSatisfy { $0.singleAsset != nil })
+    }
+
     private func makeSnapshot() -> GridSnapshot {
         let sources = [
             source(id: "freq", name: "Elexon Insights", dataset: "FREQ", age: 10),

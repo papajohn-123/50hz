@@ -6,10 +6,9 @@ enum LiveTruthCopy {
     static let mapDisclosure = "Flows show national direction and magnitude. They do not locate power stations, cables or reported events."
 }
 
-/// Live-only bridge for a future source-backed asset endpoint. Nothing is
-/// rendered unless the backend supplies both an authoritative source ID and a
-/// plausible Great Britain coordinate; the current national snapshot supplies
-/// neither, so the map remains intentionally location-free.
+/// Live-only bridge from the source-backed asset endpoint into the schematic
+/// map. Nothing is rendered unless the backend supplies both provenance and a
+/// plausible Great Britain coordinate.
 struct LiveMapAsset: Identifiable, Equatable, Sendable {
     let id: String
     let name: String
@@ -19,6 +18,75 @@ struct LiveMapAsset: Identifiable, Equatable, Sendable {
     let capacityMW: Double?
     let sourceID: String
     let observedAt: Date
+    let operatorName: String?
+    let technology: String?
+    let lifecycle: GridAssetLifecycle
+    let region: String?
+    let country: String?
+    let coordinatePrecision: String?
+    let coordinateSource: GridAssetSource?
+    let linkedBMUnitCount: Int
+    let operatingEvidence: GridAssetOperatingEvidence?
+
+    init(
+        id: String,
+        name: String,
+        fuel: FuelKind?,
+        latitude: Double,
+        longitude: Double,
+        capacityMW: Double?,
+        sourceID: String,
+        observedAt: Date,
+        operatorName: String? = nil,
+        technology: String? = nil,
+        lifecycle: GridAssetLifecycle = .unknown,
+        region: String? = nil,
+        country: String? = nil,
+        coordinatePrecision: String? = nil,
+        coordinateSource: GridAssetSource? = nil,
+        linkedBMUnitCount: Int = 0,
+        operatingEvidence: GridAssetOperatingEvidence? = nil
+    ) {
+        self.id = id
+        self.name = name
+        self.fuel = fuel
+        self.latitude = latitude
+        self.longitude = longitude
+        self.capacityMW = capacityMW
+        self.sourceID = sourceID
+        self.observedAt = observedAt
+        self.operatorName = operatorName
+        self.technology = technology
+        self.lifecycle = lifecycle
+        self.region = region
+        self.country = country
+        self.coordinatePrecision = coordinatePrecision
+        self.coordinateSource = coordinateSource
+        self.linkedBMUnitCount = linkedBMUnitCount
+        self.operatingEvidence = operatingEvidence
+    }
+
+    init(item: GridAssetMapItem) {
+        self.init(
+            id: item.id,
+            name: item.name,
+            fuel: item.fuel,
+            latitude: item.coordinate.latitude,
+            longitude: item.coordinate.longitude,
+            capacityMW: item.capacityMW,
+            sourceID: item.coordinate.source.sourceID,
+            observedAt: item.coordinate.source.retrievedAt,
+            operatorName: item.operatorName,
+            technology: item.technology,
+            lifecycle: item.lifecycle,
+            region: item.region,
+            country: item.country,
+            coordinatePrecision: item.coordinate.precision,
+            coordinateSource: item.coordinate.source,
+            linkedBMUnitCount: item.linkedBMUnitCount,
+            operatingEvidence: item.operatingEvidence
+        )
+    }
 
     var hasAuthoritativeCoordinate: Bool {
         !id.isEmpty
@@ -28,6 +96,13 @@ struct LiveMapAsset: Identifiable, Equatable, Sendable {
             && longitude.isFinite
             && (49.5...61.0).contains(latitude)
             && (-9.5...3.0).contains(longitude)
+    }
+
+    var searchableText: String {
+        [name, operatorName, technology, region, country, fuel?.displayName]
+            .compactMap { $0 }
+            .joined(separator: " ")
+            .folding(options: [.diacriticInsensitive, .caseInsensitive], locale: .current)
     }
 }
 

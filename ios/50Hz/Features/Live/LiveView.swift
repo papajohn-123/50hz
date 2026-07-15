@@ -6,6 +6,17 @@ struct LiveView: View {
     @State private var isDataDetailsPresented = false
     @State private var isEventListPresented = false
     @State private var selectedMapAsset: LiveMapAsset?
+    @State private var selectedMapCluster: LiveMapAssetCluster?
+    @State private var isGeneratorExplorerPresented = false
+    @State private var assetMapResponse: GridAssetMapResponse?
+    @State private var isAssetMapLoading = false
+    @State private var assetMapError: String?
+
+    private let assetClient: any GridAssetProviding
+
+    init(assetClient: any GridAssetProviding = HTTPGridAssetClient()) {
+        self.assetClient = assetClient
+    }
 
     var body: some View {
         ZStack {
@@ -64,11 +75,32 @@ struct LiveView: View {
                 .presentationBackground(GridTheme.background)
         }
         .sheet(item: $selectedMapAsset) { asset in
-            LiveAssetInspector(asset: asset)
-                .presentationDetents([.medium])
+            LiveAssetInspector(asset: asset, assetClient: assetClient)
+                .presentationDetents([.large])
                 .presentationDragIndicator(.visible)
                 .presentationBackground(GridTheme.surface)
         }
+        .sheet(item: $selectedMapCluster) { cluster in
+            GeneratorExplorerSheet(
+                title: "Sites in this area",
+                assets: cluster.assets,
+                assetClient: assetClient
+            )
+            .presentationDetents([.large])
+            .presentationDragIndicator(.visible)
+            .presentationBackground(GridTheme.background)
+        }
+        .sheet(isPresented: $isGeneratorExplorerPresented) {
+            GeneratorExplorerSheet(
+                title: "Energy sites",
+                assets: liveMapAssets,
+                assetClient: assetClient
+            )
+            .presentationDetents([.large])
+            .presentationDragIndicator(.visible)
+            .presentationBackground(GridTheme.background)
+        }
+        .task { await loadAssetMap() }
     }
 
     private func loadedContent(snapshot: GridSnapshot, model: AppModel) -> some View {
@@ -100,12 +132,22 @@ struct LiveView: View {
 
                     LiveMeasurementLedger(snapshot: snapshot, mode: model.timelineModeLabel)
 
+                    LiveAssetLayerStatus(
+                        response: model.timelineModeLabel == "LIVE" ? assetMapResponse : nil,
+                        isLoading: model.timelineModeLabel == "LIVE" && isAssetMapLoading,
+                        errorMessage: model.timelineModeLabel == "LIVE" ? assetMapError : nil,
+                        isLiveMode: model.timelineModeLabel == "LIVE",
+                        onBrowse: { isGeneratorExplorerPresented = true },
+                        onRetry: { Task { await loadAssetMap(force: true) } }
+                    )
+
                     BritainGridMap(
                         snapshot: snapshot,
                         selectedFuel: model.selectedFuel,
                         isForecast: isForecast,
-                        assets: [],
-                        onAssetTap: { selectedMapAsset = $0 }
+                        assets: model.timelineModeLabel == "LIVE" ? liveMapAssets : [],
+                        onAssetTap: { selectedMapAsset = $0 },
+                        onClusterInspect: { selectedMapCluster = $0 }
                     )
                     .frame(height: 340)
                     .opacity(snapshot.freshness == .offline ? 0.62 : (snapshot.freshness == .stale ? 0.82 : 1))
@@ -209,62 +251,24 @@ struct LiveView: View {
         }
         return "National fuel totals visible to the transmission system. The map does not place individual generators."
     }
-}
 
-struct LiveAssetInspector: View {
-    let asset: LiveMapAsset
-    @Environment(\.dismiss) private var dismiss
-
-    var body: some View {
-        NavigationStack {
-            VStack(alignment: .leading, spacing: 18) {
-                VStack(alignment: .leading, spacing: 6) {
-                    Text(asset.name)
-                        .font(.title2.weight(.medium))
-                    Text(asset.fuel?.displayName ?? "Generation asset")
-                        .font(.subheadline)
-                        .foregroundStyle(GridTheme.textSecondary)
-                }
-
-                VStack(alignment: .leading, spacing: 0) {
-                    inspectorRow("Capacity", asset.capacityMW.map { "\($0.formatted(.number.precision(.fractionLength(0)))) MW" } ?? "Not reported")
-                    inspectorRow("Coordinate", "\(asset.latitude.formatted(.number.precision(.fractionLength(3)))), \(asset.longitude.formatted(.number.precision(.fractionLength(3))))")
-                    inspectorRow("Observed", asset.observedAt.formatted(.dateTime.day().month().hour().minute()))
-                    inspectorRow("Source", asset.sourceID)
-                }
-
-                Text("The source coordinate is approximately projected onto 50Hz’s schematic Britain outline. It is not a transmission-route map.")
-                    .font(.caption)
-                    .foregroundStyle(GridTheme.textTertiary)
-
-                Spacer(minLength: 0)
-            }
-            .padding(GridTheme.horizontalPadding)
-            .navigationTitle("Generator")
-            .navigationBarTitleDisplayMode(.inline)
-            .toolbar {
-                ToolbarItem(placement: .topBarTrailing) {
-                    Button("Done") { dismiss() }
-                        .foregroundStyle(GridTheme.liveCyan)
-                }
-            }
-        }
-        .preferredColorScheme(.dark)
+    private var liveMapAssets: [LiveMapAsset] {
+        assetMapResponse?.validLocatedAssets.map(LiveMapAsset.init(item:)) ?? []
     }
 
-    private func inspectorRow(_ label: String, _ value: String) -> some View {
-        HStack(alignment: .firstTextBaseline, spacing: 12) {
-            Text(label)
-                .font(.caption)
-                .foregroundStyle(GridTheme.textTertiary)
-            Spacer(minLength: 8)
-            Text(value)
-                .font(.subheadline)
-                .multilineTextAlignment(.trailing)
-                .foregroundStyle(GridTheme.textPrimary)
+    @MainActor
+    private func loadAssetMap(force: Bool = false) async {
+        guard force || assetMapResponse == nil else { return }
+        guard !isAssetMapLoading else { return }
+        isAssetMapLoading = true
+        assetMapError = nil
+        defer { isAssetMapLoading = false }
+
+        do {
+            assetMapResponse = try await assetClient.mapAssets()
+        } catch {
+            assetMapError = "Generator locations could not be refreshed. The national grid view remains available."
         }
-        .frame(maxWidth: .infinity, minHeight: 48)
-        .overlay(alignment: .bottom) { Hairline() }
     }
 }
 

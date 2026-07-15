@@ -40,10 +40,77 @@ struct BritainShape: Shape {
     }
 }
 
+struct LiveMapAssetCluster: Identifiable, Equatable, Sendable {
+    let id: String
+    let assets: [LiveMapAsset]
+    let latitude: Double
+    let longitude: Double
+
+    var count: Int { assets.count }
+    var singleAsset: LiveMapAsset? { assets.count == 1 ? assets[0] : nil }
+    var totalCapacityMW: Double? {
+        let capacities = assets.compactMap(\.capacityMW)
+        return capacities.isEmpty ? nil : capacities.reduce(0, +)
+    }
+    var dominantFuel: FuelKind? {
+        var counts: [FuelKind: Int] = [:]
+        for fuel in assets.compactMap(\.fuel) { counts[fuel, default: 0] += 1 }
+        return counts.max { lhs, rhs in
+            lhs.value == rhs.value
+                ? lhs.key.displayName > rhs.key.displayName
+                : lhs.value < rhs.value
+        }?.key
+    }
+}
+
+enum LiveAssetClustering {
+    private struct Cell: Hashable {
+        let zoomBand: Int
+        let x: Int
+        let y: Int
+    }
+
+    static func clusters(
+        assets: [LiveMapAsset],
+        zoomScale: CGFloat
+    ) -> [LiveMapAssetCluster] {
+        let configuration: (band: Int, longitudeStep: Double, latitudeStep: Double)
+        switch zoomScale {
+        case ..<1.5: configuration = (1, 1.4, 1.0)
+        case ..<2.75: configuration = (2, 0.72, 0.52)
+        case ..<4.75: configuration = (3, 0.36, 0.26)
+        default: configuration = (4, 0.16, 0.12)
+        }
+
+        var groups: [Cell: [LiveMapAsset]] = [:]
+        for asset in assets where asset.hasAuthoritativeCoordinate {
+            let cell = Cell(
+                zoomBand: configuration.band,
+                x: Int(floor((asset.longitude + 9.5) / configuration.longitudeStep)),
+                y: Int(floor((asset.latitude - 49.5) / configuration.latitudeStep))
+            )
+            groups[cell, default: []].append(asset)
+        }
+
+        return groups.map { cell, members in
+            let ordered = members.sorted { $0.id < $1.id }
+            return LiveMapAssetCluster(
+                id: "\(cell.zoomBand):\(cell.x):\(cell.y)",
+                assets: ordered,
+                latitude: ordered.reduce(0) { $0 + $1.latitude } / Double(ordered.count),
+                longitude: ordered.reduce(0) { $0 + $1.longitude } / Double(ordered.count)
+            )
+        }
+        .sorted { $0.id < $1.id }
+    }
+}
+
 private struct LiveAssetOverlay: View {
     let assets: [LiveMapAsset]
+    let zoomScale: CGFloat
     let showLabels: Bool
     let onAssetTap: ((LiveMapAsset) -> Void)?
+    let onClusterTap: (LiveMapAssetCluster) -> Void
 
     var body: some View {
         GeometryReader { proxy in
@@ -53,26 +120,23 @@ private struct LiveAssetOverlay: View {
                 width: proxy.size.width * 0.72,
                 height: proxy.size.height - 18
             )
+            let clusters = LiveAssetClustering.clusters(
+                assets: assets,
+                zoomScale: zoomScale
+            )
 
-            ForEach(assets) { asset in
+            ForEach(clusters) { cluster in
                 Button {
-                    onAssetTap?(asset)
-                } label: {
-                    ZStack {
-                        Circle()
-                            .fill(asset.fuel.map(GridTheme.fuel) ?? GridTheme.liveCyan)
-                            .frame(width: 8, height: 8)
-                            .shadow(
-                                color: (asset.fuel.map(GridTheme.fuel) ?? GridTheme.liveCyan).opacity(0.55),
-                                radius: 4
-                            )
-                        Circle()
-                            .stroke(GridTheme.textPrimary.opacity(0.75), lineWidth: 1)
-                            .frame(width: 13, height: 13)
+                    if let asset = cluster.singleAsset {
+                        onAssetTap?(asset)
+                    } else {
+                        onClusterTap(cluster)
                     }
+                } label: {
+                    marker(for: cluster)
                     .frame(width: 44, height: 44)
                     .overlay(alignment: .leading) {
-                        if showLabels {
+                        if showLabels, let asset = cluster.singleAsset {
                             Text(asset.name)
                                 .font(.system(size: 8, weight: .semibold, design: .monospaced))
                                 .lineLimit(1)
@@ -85,17 +149,48 @@ private struct LiveAssetOverlay: View {
                     }
                 }
                 .buttonStyle(.plain)
-                .disabled(onAssetTap == nil)
-                .position(position(for: asset, in: mapRect))
-                .accessibilityLabel(assetAccessibilityLabel(asset))
-                .accessibilityHint("Opens the source-backed generator inspector")
+                .disabled(onAssetTap == nil && cluster.singleAsset != nil)
+                .scaleEffect(1 / max(zoomScale, 1))
+                .position(position(for: cluster, in: mapRect))
+                .accessibilityLabel(accessibilityLabel(cluster))
+                .accessibilityHint(
+                    cluster.singleAsset == nil
+                        ? "Zooms towards this group of source-located sites"
+                        : "Opens the source-backed generator inspector"
+                )
             }
         }
     }
 
-    private func position(for asset: LiveMapAsset, in rect: CGRect) -> CGPoint {
-        let longitudeRatio = (asset.longitude + 9.5) / 12.5
-        let latitudeRatio = (asset.latitude - 49.5) / 11.5
+    @ViewBuilder
+    private func marker(for cluster: LiveMapAssetCluster) -> some View {
+        let accent = cluster.dominantFuel.map(GridTheme.fuel) ?? GridTheme.liveCyan
+        if cluster.count == 1 {
+            ZStack {
+                Circle()
+                    .fill(accent)
+                    .frame(width: 8, height: 8)
+                    .shadow(color: accent.opacity(0.55), radius: 4)
+                Circle()
+                    .stroke(GridTheme.textPrimary.opacity(0.75), lineWidth: 1)
+                    .frame(width: 13, height: 13)
+            }
+        } else {
+            Text(cluster.count.formatted())
+                .font(.system(size: 9, weight: .bold, design: .monospaced))
+                .foregroundStyle(GridTheme.background)
+                .lineLimit(1)
+                .minimumScaleFactor(0.65)
+                .frame(width: 27, height: 27)
+                .background(accent, in: Circle())
+                .overlay(Circle().stroke(GridTheme.textPrimary.opacity(0.75), lineWidth: 1))
+                .shadow(color: accent.opacity(0.38), radius: 5)
+        }
+    }
+
+    private func position(for cluster: LiveMapAssetCluster, in rect: CGRect) -> CGPoint {
+        let longitudeRatio = (cluster.longitude + 9.5) / 12.5
+        let latitudeRatio = (cluster.latitude - 49.5) / 11.5
         let normalized = CGPoint(
             x: 0.20 + CGFloat(longitudeRatio) * 0.68,
             y: 0.96 - CGFloat(latitudeRatio) * 0.93
@@ -106,7 +201,13 @@ private struct LiveAssetOverlay: View {
         )
     }
 
-    private func assetAccessibilityLabel(_ asset: LiveMapAsset) -> String {
+    private func accessibilityLabel(_ cluster: LiveMapAssetCluster) -> String {
+        guard let asset = cluster.singleAsset else {
+            let capacity = cluster.totalCapacityMW.map {
+                ", \($0.formatted(.number.precision(.fractionLength(0)))) megawatts reported capacity"
+            } ?? ""
+            return "\(cluster.count) source-located energy sites\(capacity)"
+        }
         let fuel = asset.fuel.map { ", \($0.displayName)" } ?? ""
         let capacity = asset.capacityMW.map { ", \($0.formatted(.number.precision(.fractionLength(0)))) megawatts" } ?? ""
         return "\(asset.name)\(fuel)\(capacity), source located"
@@ -128,6 +229,7 @@ struct BritainGridMap: View {
     let isForecast: Bool
     let assets: [LiveMapAsset]
     let onAssetTap: ((LiveMapAsset) -> Void)?
+    let onClusterInspect: ((LiveMapAssetCluster) -> Void)?
 
     @Environment(\.accessibilityReduceMotion) private var reduceMotion
     @State private var newDataGlow = 0.0
@@ -141,13 +243,15 @@ struct BritainGridMap: View {
         selectedFuel: FuelKind?,
         isForecast: Bool,
         assets: [LiveMapAsset] = [],
-        onAssetTap: ((LiveMapAsset) -> Void)? = nil
+        onAssetTap: ((LiveMapAsset) -> Void)? = nil,
+        onClusterInspect: ((LiveMapAssetCluster) -> Void)? = nil
     ) {
         self.snapshot = snapshot
         self.selectedFuel = selectedFuel
         self.isForecast = isForecast
         self.assets = assets
         self.onAssetTap = onAssetTap
+        self.onClusterInspect = onClusterInspect
     }
 
     var body: some View {
@@ -161,8 +265,10 @@ struct BritainGridMap: View {
             if !authoritativeAssets.isEmpty {
                 LiveAssetOverlay(
                     assets: authoritativeAssets,
-                    showLabels: effectiveScale >= 1.45,
-                    onAssetTap: onAssetTap
+                    zoomScale: effectiveScale,
+                    showLabels: effectiveScale >= 5.5,
+                    onAssetTap: onAssetTap,
+                    onClusterTap: handleClusterTap
                 )
             }
         }
@@ -249,7 +355,7 @@ struct BritainGridMap: View {
     }
 
     private var effectiveScale: CGFloat {
-        min(max(committedScale * gestureScale, 1), 3.5)
+        min(max(committedScale * gestureScale, 1), 8)
     }
 
     private var effectiveOffset: CGSize {
@@ -270,7 +376,7 @@ struct BritainGridMap: View {
                 state = value
             }
             .onEnded { value in
-                let nextScale = min(max(committedScale * value, 1), 3.5)
+                let nextScale = min(max(committedScale * value, 1), 8)
                 committedScale = nextScale
                 if nextScale <= 1.01 {
                     committedScale = 1
@@ -306,6 +412,17 @@ struct BritainGridMap: View {
             width: min(max(offset.width, -horizontalLimit), horizontalLimit),
             height: min(max(offset.height, -verticalLimit), verticalLimit)
         )
+    }
+
+    private func handleClusterTap(_ cluster: LiveMapAssetCluster) {
+        if effectiveScale < 7.75 {
+            withAnimation(reduceMotion ? nil : .snappy(duration: 0.28)) {
+                committedScale = min(max(effectiveScale * 1.8, 2), 8)
+                committedOffset = bounded(committedOffset, for: committedScale)
+            }
+        } else {
+            onClusterInspect?(cluster)
+        }
     }
 
     private var interconnectorPositionLabel: String {
