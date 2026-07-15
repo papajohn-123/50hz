@@ -569,6 +569,7 @@ struct BritainGridMap: View {
     let selectedFuel: FuelKind?
     let isForecast: Bool
     let assets: [LiveMapAsset]
+    let focusedAsset: LiveMapAsset?
     let onAssetTap: ((LiveMapAsset) -> Void)?
     let onClusterInspect: ((LiveMapAssetCluster) -> Void)?
 
@@ -585,6 +586,7 @@ struct BritainGridMap: View {
         selectedFuel: FuelKind?,
         isForecast: Bool,
         assets: [LiveMapAsset] = [],
+        focusedAsset: LiveMapAsset? = nil,
         onAssetTap: ((LiveMapAsset) -> Void)? = nil,
         onClusterInspect: ((LiveMapAssetCluster) -> Void)? = nil
     ) {
@@ -592,6 +594,7 @@ struct BritainGridMap: View {
         self.selectedFuel = selectedFuel
         self.isForecast = isForecast
         self.assets = assets
+        self.focusedAsset = focusedAsset
         self.onAssetTap = onAssetTap
         self.onClusterInspect = onClusterInspect
     }
@@ -680,6 +683,9 @@ struct BritainGridMap: View {
             withAnimation(.easeOut(duration: 1.1)) {
                 newDataGlow = 0
             }
+        }
+        .onChange(of: focusedAsset?.id) { _, _ in
+            focusSelectedAsset()
         }
     }
 
@@ -795,6 +801,29 @@ struct BritainGridMap: View {
             }
         } else {
             onClusterInspect?(cluster)
+        }
+    }
+
+    private func focusSelectedAsset() {
+        guard let asset = focusedAsset, asset.hasAuthoritativeCoordinate else { return }
+        let targetScale: CGFloat = 6
+        let point = LiveAssetMapProjection.position(
+            latitude: asset.latitude,
+            longitude: asset.longitude,
+            viewportSize: viewportSize
+        )
+        let centeredOffset = LiveAssetMapProjection.centeredOffset(
+            for: point,
+            viewportSize: viewportSize,
+            zoomScale: targetScale
+        )
+        withAnimation(reduceMotion ? nil : .snappy(duration: 0.42)) {
+            committedScale = targetScale
+            committedOffset = bounded(
+                centeredOffset,
+                for: targetScale,
+                viewportSize: viewportSize
+            )
         }
     }
 

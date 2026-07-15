@@ -3,10 +3,12 @@ import SwiftUI
 struct LiveView: View {
     @EnvironmentObject private var model: AppModel
     @State private var sharePayload: GridShareCardPayload?
+    @State private var askInitialQuestion: String?
     @State private var isDataDetailsPresented = false
     @State private var isGridDetailsPresented = false
     @State private var isEventListPresented = false
     @State private var selectedMapAsset: LiveMapAsset?
+    @State private var evidenceMapAsset: LiveMapAsset?
     @State private var selectedMapCluster: LiveMapAssetCluster?
     @State private var isGeneratorExplorerPresented = false
     @State private var assetMapResponse: GridAssetMapResponse?
@@ -43,7 +45,7 @@ struct LiveView: View {
         .gridPageBackground()
         .sheet(isPresented: $model.isAskPresented) {
             if let snapshot = model.presentedSnapshot {
-                AskGridInspector(snapshot: snapshot)
+                AskGridInspector(snapshot: snapshot, initialQuestion: askInitialQuestion)
                     .presentationDetents([.medium, .large])
                     .presentationDragIndicator(.visible)
                     .presentationBackground(GridTheme.surface)
@@ -95,7 +97,7 @@ struct LiveView: View {
                 .presentationDragIndicator(.visible)
                 .presentationBackground(GridTheme.background)
         }
-        .sheet(item: $selectedMapAsset) { asset in
+        .sheet(item: $evidenceMapAsset) { asset in
             LiveAssetInspector(asset: asset, assetClient: assetClient)
                 .presentationDetents([.large])
                 .presentationDragIndicator(.visible)
@@ -105,7 +107,8 @@ struct LiveView: View {
             GeneratorExplorerSheet(
                 title: "Sites in this area",
                 assets: cluster.assets,
-                assetClient: assetClient
+                assetClient: assetClient,
+                onSelect: focusOnMap
             )
             .presentationDetents([.large])
             .presentationDragIndicator(.visible)
@@ -115,7 +118,8 @@ struct LiveView: View {
             GeneratorExplorerSheet(
                 title: "Energy sites",
                 assets: liveMapAssets,
-                assetClient: assetClient
+                assetClient: assetClient,
+                onSelect: focusOnMap
             )
             .presentationDetents([.large])
             .presentationDragIndicator(.visible)
@@ -137,6 +141,7 @@ struct LiveView: View {
                 selectedFuel: model.selectedFuel,
                 isForecast: isForecast,
                 assets: model.timelineModeLabel == "LIVE" ? liveMapAssets : [],
+                focusedAsset: selectedMapAsset,
                 onAssetTap: { selectedMapAsset = $0 },
                 onClusterInspect: { selectedMapCluster = $0 }
             )
@@ -167,14 +172,27 @@ struct LiveView: View {
 
                 Spacer(minLength: 0)
 
-                GridNowDock(
-                    snapshot: snapshot,
-                    mode: model.timelineModeLabel,
-                    eventCount: model.events.count,
-                    hasEventError: model.eventsError != nil,
-                    onExplain: { model.isAskPresented = true },
-                    onOpenDetails: { isGridDetailsPresented = true }
-                )
+                if let selectedMapAsset {
+                    GridSelectedSiteDock(
+                        asset: selectedMapAsset,
+                        onClose: { self.selectedMapAsset = nil },
+                        onEvidence: { evidenceMapAsset = selectedMapAsset }
+                    )
+                    .transition(.move(edge: .bottom).combined(with: .opacity))
+                } else {
+                    GridNowDock(
+                        snapshot: snapshot,
+                        mode: model.timelineModeLabel,
+                        eventCount: model.events.count,
+                        hasEventError: model.eventsError != nil,
+                        onExplain: {
+                            askInitialQuestion = GridPrimaryInsight.make(snapshot: snapshot).contextualQuestion
+                            model.isAskPresented = true
+                        },
+                        onOpenDetails: { isGridDetailsPresented = true }
+                    )
+                    .transition(.move(edge: .bottom).combined(with: .opacity))
+                }
 
                 if let timeline = model.displayTimeline {
                     GridTimelineView(timeline: timeline, selectedTime: $model.selectedTime)
@@ -204,6 +222,11 @@ struct LiveView: View {
 
     private var liveMapAssets: [LiveMapAsset] {
         assetMapResponse?.validLocatedAssets.map(LiveMapAsset.init(item:)) ?? []
+    }
+
+    private func focusOnMap(_ asset: LiveMapAsset) {
+        selectedMapCluster = nil
+        selectedMapAsset = asset
     }
 
     @MainActor
@@ -463,6 +486,108 @@ private struct GridNowDock: View {
             .frame(width: 1, height: 30)
             .padding(.trailing, 12)
             .accessibilityHidden(true)
+    }
+}
+
+private struct GridSelectedSiteDock: View {
+    let asset: LiveMapAsset
+    let onClose: () -> Void
+    let onEvidence: () -> Void
+
+    private var accent: Color {
+        asset.fuel.map(GridTheme.fuel) ?? GridTheme.liveCyan
+    }
+
+    var body: some View {
+        VStack(alignment: .leading, spacing: 11) {
+            HStack(alignment: .top, spacing: 12) {
+                Circle()
+                    .fill(accent)
+                    .frame(width: 9, height: 9)
+                    .shadow(color: accent.opacity(0.55), radius: 4)
+                    .padding(.top, 8)
+                    .accessibilityHidden(true)
+
+                VStack(alignment: .leading, spacing: 4) {
+                    Text(asset.name)
+                        .font(.system(.title3, design: .rounded, weight: .semibold))
+                        .foregroundStyle(GridTheme.textPrimary)
+                        .lineLimit(2)
+                    Text([asset.technology, asset.region].compactMap { $0 }.joined(separator: " · "))
+                        .font(.caption)
+                        .foregroundStyle(GridTheme.textSecondary)
+                        .lineLimit(1)
+                }
+
+                Spacer(minLength: 4)
+
+                Button(action: onClose) {
+                    Image(systemName: "xmark")
+                        .font(.caption.weight(.bold))
+                        .foregroundStyle(GridTheme.textSecondary)
+                        .frame(width: 44, height: 44)
+                        .contentShape(Circle())
+                }
+                .buttonStyle(.plain)
+                .accessibilityLabel("Close site selection")
+            }
+
+            HStack(spacing: 0) {
+                siteFact(
+                    asset.capacityMW.map { "\($0.formatted(.number.precision(.fractionLength(0)))) MW" } ?? "—",
+                    label: "Registered capacity"
+                )
+                Rectangle()
+                    .fill(GridTheme.hairline)
+                    .frame(width: 1, height: 30)
+                    .padding(.horizontal, 15)
+                siteFact(evidenceLabel, label: "Available evidence")
+            }
+
+            Button(action: onEvidence) {
+                HStack {
+                    Text("Open evidence")
+                    Spacer(minLength: 8)
+                    Image(systemName: "arrow.up.right")
+                }
+                .font(.caption.weight(.semibold))
+                .foregroundStyle(accent)
+                .frame(maxWidth: .infinity, minHeight: 44, alignment: .leading)
+                .contentShape(Rectangle())
+            }
+            .buttonStyle(.plain)
+            .accessibilityHint("Shows plans, delayed settlement, BM links and the published site record")
+        }
+        .padding(.horizontal, GridTheme.horizontalPadding)
+        .padding(.top, 15)
+        .padding(.bottom, 5)
+        .background(.ultraThinMaterial.opacity(0.9))
+        .overlay(alignment: .top) { Hairline() }
+    }
+
+    private var evidenceLabel: String {
+        let hasPlan = asset.operatingEvidence?.participantSubmittedPlan != nil
+        let hasSettled = asset.operatingEvidence?.latestSettledMetered != nil
+        if hasPlan && hasSettled { return "Plan + settled" }
+        if hasPlan { return "Participant plan" }
+        if hasSettled { return "Delayed settled" }
+        if asset.linkedBMUnitCount > 0 { return "BM link" }
+        return "Site record"
+    }
+
+    private func siteFact(_ value: String, label: String) -> some View {
+        VStack(alignment: .leading, spacing: 3) {
+            Text(value)
+                .font(.subheadline.weight(.semibold))
+                .foregroundStyle(GridTheme.textPrimary)
+                .lineLimit(1)
+                .minimumScaleFactor(0.8)
+            Text(label)
+                .font(.caption2)
+                .foregroundStyle(GridTheme.textTertiary)
+        }
+        .frame(maxWidth: .infinity, alignment: .leading)
+        .accessibilityElement(children: .combine)
     }
 }
 

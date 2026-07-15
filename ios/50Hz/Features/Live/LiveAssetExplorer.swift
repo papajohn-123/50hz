@@ -116,9 +116,22 @@ struct GeneratorExplorerSheet: View {
     let title: String
     let assets: [LiveMapAsset]
     let assetClient: any GridAssetProviding
+    let onSelect: ((LiveMapAsset) -> Void)?
 
     @Environment(\.dismiss) private var dismiss
     @State private var query = ""
+
+    init(
+        title: String,
+        assets: [LiveMapAsset],
+        assetClient: any GridAssetProviding,
+        onSelect: ((LiveMapAsset) -> Void)? = nil
+    ) {
+        self.title = title
+        self.assets = assets
+        self.assetClient = assetClient
+        self.onSelect = onSelect
+    }
 
     var body: some View {
         NavigationStack {
@@ -128,16 +141,28 @@ struct GeneratorExplorerSheet: View {
                         .listRowBackground(Color.clear)
                 } else {
                     ForEach(filteredAssets) { asset in
-                        NavigationLink {
-                            LiveAssetInspector(
-                                asset: asset,
-                                assetClient: assetClient,
-                                embedsNavigationStack: false
-                            )
-                        } label: {
-                            assetRow(asset)
+                        if let onSelect {
+                            Button {
+                                onSelect(asset)
+                                dismiss()
+                            } label: {
+                                assetRow(asset)
+                            }
+                            .buttonStyle(.plain)
+                            .listRowBackground(GridTheme.surface)
+                            .accessibilityHint("Returns to the map and focuses this site")
+                        } else {
+                            NavigationLink {
+                                LiveAssetInspector(
+                                    asset: asset,
+                                    assetClient: assetClient,
+                                    embedsNavigationStack: false
+                                )
+                            } label: {
+                                assetRow(asset)
+                            }
+                            .listRowBackground(GridTheme.surface)
                         }
-                        .listRowBackground(GridTheme.surface)
                     }
                 }
 
@@ -215,6 +240,10 @@ struct LiveAssetInspector: View {
     @State private var detail: GridAssetDetailResponse?
     @State private var isLoading = false
     @State private var detailError: String?
+    @State private var isMoreEvidenceExpanded = false
+    @State private var isBMUnitsExpanded = false
+    @State private var isReferenceExpanded = false
+    @State private var isLimitationsExpanded = false
 
     init(
         asset: LiveMapAsset,
@@ -251,15 +280,35 @@ struct LiveAssetInspector: View {
         ScrollView {
             VStack(alignment: .leading, spacing: 22) {
                 header
-                referenceSection
+                siteOverview
                 operatingEvidenceSection
 
                 if let detail, !detail.bmUnits.isEmpty {
-                    bmUnitSection(detail.bmUnits)
+                    DisclosureGroup(isExpanded: $isBMUnitsExpanded) {
+                        bmUnitSection(detail.bmUnits)
+                            .padding(.top, 8)
+                    } label: {
+                        disclosureLabel("Linked BM units", trailing: detail.bmUnits.count.formatted())
+                    }
+                    .tint(GridTheme.textTertiary)
                 }
 
+                DisclosureGroup(isExpanded: $isReferenceExpanded) {
+                    referenceSection
+                        .padding(.top, 8)
+                } label: {
+                    disclosureLabel("Site record & source", trailing: presentedAsset.lifecycle.rawValue.uppercased())
+                }
+                .tint(GridTheme.textTertiary)
+
                 if let detail, !detail.limitations.isEmpty {
-                    limitationsSection(detail.limitations)
+                    DisclosureGroup(isExpanded: $isLimitationsExpanded) {
+                        limitationsSection(detail.limitations)
+                            .padding(.top, 8)
+                    } label: {
+                        disclosureLabel("Limitations", trailing: detail.limitations.count.formatted())
+                    }
+                    .tint(GridTheme.textTertiary)
                 }
 
                 if isLoading {
@@ -301,10 +350,23 @@ struct LiveAssetInspector: View {
             Text([presentedAsset.technology, presentedAsset.operatorName].compactMap { $0 }.joined(separator: " · "))
                 .font(.subheadline)
                 .foregroundStyle(GridTheme.textSecondary)
-            HStack(spacing: 8) {
-                evidenceBadge("REFERENCE", color: GridTheme.liveCyan)
-                evidenceBadge("NO LIVE UNIT METER", color: GridTheme.staleAmber)
-            }
+            Label("Published site · no live unit meter", systemImage: "circle.dotted")
+                .font(.caption.weight(.medium))
+                .foregroundStyle(GridTheme.textTertiary)
+        }
+    }
+
+    private var siteOverview: some View {
+        HStack(spacing: 0) {
+            overviewFact(
+                presentedAsset.capacityMW.map { "\($0.formatted(.number.precision(.fractionLength(0)))) MW" } ?? "—",
+                label: "Registered capacity"
+            )
+            Rectangle()
+                .fill(GridTheme.hairline)
+                .frame(width: 1, height: 34)
+                .padding(.horizontal, 16)
+            overviewFact(presentedAsset.region ?? presentedAsset.country ?? "—", label: "Region")
         }
     }
 
@@ -346,7 +408,7 @@ struct LiveAssetInspector: View {
 
         VStack(alignment: .leading, spacing: 12) {
             SectionLabel("Operating evidence", trailing: "ELEXON")
-            Text("Plans are participant submissions. Settled metered energy is delayed. Neither is a live generator meter.")
+            Text("Participant plan and delayed settlement—not live output.")
                 .font(.caption)
                 .foregroundStyle(GridTheme.textTertiary)
                 .fixedSize(horizontal: false, vertical: true)
@@ -358,7 +420,7 @@ struct LiveAssetInspector: View {
                     .font(.subheadline)
                     .foregroundStyle(GridTheme.textSecondary)
             } else {
-                ForEach(Array(plan.prefix(6).enumerated()), id: \.offset) { _, evidence in
+                ForEach(Array(plan.prefix(1).enumerated()), id: \.offset) { _, evidence in
                     evidenceCard(
                         label: "PARTICIPANT PLAN",
                         value: AssetEvidencePresentation.signedMeasurement(
@@ -371,7 +433,7 @@ struct LiveAssetInspector: View {
                         color: GridTheme.forecastViolet
                     )
                 }
-                ForEach(Array(settled.prefix(6).enumerated()), id: \.offset) { _, evidence in
+                ForEach(Array(settled.prefix(2).enumerated()), id: \.offset) { _, evidence in
                     evidenceCard(
                         label: "SETTLED METERED",
                         value: AssetEvidencePresentation.signedMeasurement(
@@ -384,13 +446,54 @@ struct LiveAssetInspector: View {
                         color: GridTheme.liveCyan
                     )
                 }
+
+                let remainingPlan = Array(plan.dropFirst(1))
+                let remainingSettled = Array(settled.dropFirst(2))
+                if !remainingPlan.isEmpty || !remainingSettled.isEmpty {
+                    DisclosureGroup(isExpanded: $isMoreEvidenceExpanded) {
+                        VStack(alignment: .leading, spacing: 10) {
+                            ForEach(Array(remainingPlan.enumerated()), id: \.offset) { _, evidence in
+                                evidenceCard(
+                                    label: "PARTICIPANT PLAN",
+                                    value: AssetEvidencePresentation.signedMeasurement(
+                                        evidence.levelMW,
+                                        unit: "MW",
+                                        direction: evidence.direction
+                                    ),
+                                    timing: "At \(evidence.at.formatted(.dateTime.day().month().hour().minute())) · SP \(evidence.settlementPeriod)",
+                                    caveat: evidence.caveat,
+                                    color: GridTheme.forecastViolet
+                                )
+                            }
+                            ForEach(Array(remainingSettled.enumerated()), id: \.offset) { _, evidence in
+                                evidenceCard(
+                                    label: "SETTLED METERED",
+                                    value: AssetEvidencePresentation.signedMeasurement(
+                                        evidence.averageMW,
+                                        unit: "MW average",
+                                        direction: evidence.direction
+                                    ),
+                                    timing: "\(AssetEvidencePresentation.signedMeasurement(evidence.energyMWh, unit: "MWh", direction: evidence.direction)) settled energy · \(evidence.intervalStart.formatted(.dateTime.day().month().hour().minute()))–\(evidence.intervalEnd.formatted(.dateTime.hour().minute())) · SP \(evidence.settlementPeriod)",
+                                    caveat: evidence.caveat,
+                                    color: GridTheme.liveCyan
+                                )
+                            }
+                        }
+                        .padding(.top, 8)
+                    } label: {
+                        Text("More intervals · \(remainingPlan.count + remainingSettled.count)")
+                            .font(.caption.weight(.semibold))
+                            .foregroundStyle(GridTheme.textSecondary)
+                            .frame(maxWidth: .infinity, minHeight: 44, alignment: .leading)
+                    }
+                    .tint(GridTheme.textTertiary)
+                }
             }
         }
     }
 
     private func bmUnitSection(_ units: [GridBMUnitSummary]) -> some View {
         VStack(alignment: .leading, spacing: 10) {
-            SectionLabel("Linked BM units", trailing: units.count.formatted())
             ForEach(units) { unit in
                 VStack(alignment: .leading, spacing: 4) {
                     Text(unit.name ?? unit.nationalGridBMUnit)
@@ -411,7 +514,6 @@ struct LiveAssetInspector: View {
 
     private func limitationsSection(_ limitations: [String]) -> some View {
         VStack(alignment: .leading, spacing: 8) {
-            SectionLabel("Limitations", trailing: "READ THIS")
             ForEach(limitations, id: \.self) { limitation in
                 Label(limitation, systemImage: "info.circle")
                     .font(.caption)
@@ -448,14 +550,33 @@ struct LiveAssetInspector: View {
         .overlay(RoundedRectangle(cornerRadius: 14, style: .continuous).stroke(color.opacity(0.18), lineWidth: 1))
     }
 
-    private func evidenceBadge(_ label: String, color: Color) -> some View {
-        Text(label)
-            .font(.system(size: 8, weight: .semibold, design: .monospaced))
-            .tracking(0.5)
-            .foregroundStyle(color)
-            .padding(.horizontal, 7)
-            .padding(.vertical, 4)
-            .background(color.opacity(0.10), in: Capsule())
+    private func overviewFact(_ value: String, label: String) -> some View {
+        VStack(alignment: .leading, spacing: 4) {
+            Text(value)
+                .font(.title3.weight(.medium))
+                .foregroundStyle(GridTheme.textPrimary)
+                .lineLimit(1)
+                .minimumScaleFactor(0.75)
+            Text(label)
+                .font(.caption2)
+                .foregroundStyle(GridTheme.textTertiary)
+        }
+        .frame(maxWidth: .infinity, alignment: .leading)
+        .accessibilityElement(children: .combine)
+    }
+
+    private func disclosureLabel(_ title: String, trailing: String) -> some View {
+        HStack(spacing: 10) {
+            Text(title)
+                .font(.subheadline.weight(.medium))
+                .foregroundStyle(GridTheme.textPrimary)
+            Spacer(minLength: 8)
+            Text(trailing)
+                .font(.caption2.monospacedDigit())
+                .foregroundStyle(GridTheme.textTertiary)
+        }
+        .frame(maxWidth: .infinity, minHeight: 48, alignment: .leading)
+        .overlay(alignment: .bottom) { Hairline() }
     }
 
     private func inspectorRow(_ label: String, _ value: String) -> some View {

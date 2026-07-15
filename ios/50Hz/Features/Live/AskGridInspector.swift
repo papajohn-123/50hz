@@ -2,6 +2,7 @@ import SwiftUI
 
 struct AskGridInspector: View {
     let snapshot: GridSnapshot
+    let initialQuestion: String?
     @EnvironmentObject private var model: AppModel
     @Environment(\.dismiss) private var dismiss
     @AppStorage("ask.hasAcknowledgedProcessing") private var hasAcknowledgedProcessing = false
@@ -11,6 +12,12 @@ struct AskGridInspector: View {
     @State private var isAsking = false
     @State private var errorMessage: String?
     @State private var askTask: Task<Void, Never>?
+
+    init(snapshot: GridSnapshot, initialQuestion: String? = nil) {
+        self.snapshot = snapshot
+        self.initialQuestion = initialQuestion
+        _question = State(initialValue: initialQuestion ?? "")
+    }
 
     var body: some View {
         NavigationStack {
@@ -220,11 +227,13 @@ struct AskGridInspector: View {
 
     private var suggestionTexts: [String] {
         let supplied = answer?.suggestedQuestions.filter { !$0.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty } ?? []
-        return Array((supplied.isEmpty ? [
+        let defaults = supplied.isEmpty ? [
             "Are we importing or exporting?",
             "Why is the leading source ahead?",
             "Is this unusually clean?"
-        ] : supplied).prefix(3))
+        ] : supplied
+        let contextual = initialQuestion.map { [$0] } ?? []
+        return Array((contextual + defaults.filter { $0 != initialQuestion }).prefix(3))
     }
 
     private var composer: some View {
