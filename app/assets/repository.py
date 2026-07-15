@@ -258,28 +258,53 @@ def _latest_settled_statement(
         national_grid_bm_units=national_grid_bm_units,
         elexon_bm_units=elexon_bm_units,
     )
-    ranked = (
+    latest_revision = (
         select(
             B1610SettledEnergyRevision.id.label("row_id"),
+            B1610SettledEnergyRevision.asset_id.label("asset_id"),
+            B1610SettledEnergyRevision.interval_end.label("interval_end"),
             func.row_number()
             .over(
-                partition_by=B1610SettledEnergyRevision.asset_id,
+                partition_by=(
+                    B1610SettledEnergyRevision.source_id,
+                    B1610SettledEnergyRevision.asset_id,
+                    B1610SettledEnergyRevision.settlement_date,
+                    B1610SettledEnergyRevision.settlement_period,
+                ),
                 order_by=(
-                    B1610SettledEnergyRevision.interval_end.desc(),
                     B1610SettledEnergyRevision.revision.desc(),
                     B1610SettledEnergyRevision.retrieved_at.desc(),
                     B1610SettledEnergyRevision.id.desc(),
                 ),
             )
-            .label("rank"),
+            .label("revision_rank"),
         )
         .where(scope)
         .subquery()
     )
+    ranked_intervals = (
+        select(
+            latest_revision.c.row_id,
+            func.row_number()
+            .over(
+                partition_by=latest_revision.c.asset_id,
+                order_by=(
+                    latest_revision.c.interval_end.desc(),
+                    latest_revision.c.row_id.desc(),
+                ),
+            )
+            .label("interval_rank"),
+        )
+        .where(latest_revision.c.revision_rank == 1)
+        .subquery()
+    )
     return (
         select(B1610SettledEnergyRevision)
-        .join(ranked, ranked.c.row_id == B1610SettledEnergyRevision.id)
-        .where(ranked.c.rank <= settled_per_unit)
+        .join(
+            ranked_intervals,
+            ranked_intervals.c.row_id == B1610SettledEnergyRevision.id,
+        )
+        .where(ranked_intervals.c.interval_rank <= settled_per_unit)
         .order_by(
             B1610SettledEnergyRevision.asset_id,
             B1610SettledEnergyRevision.interval_end.desc(),

@@ -44,5 +44,8 @@ def test_settled_query_accepts_asset_national_or_elexon_ids_and_is_bounded() -> 
     assert "national_grid_bm_unit" in compiled
     assert "elexon_bm_unit" in compiled
     assert " OR " in compiled
-    assert "rank <= 12" in compiled
+    assert "interval_rank <= 12" in compiled
+    assert "revision_rank = 1" in compiled
     assert "revision DESC" in compiled
+    assert "settlement_date" in compiled
+    assert "settlement_period" in compiled
