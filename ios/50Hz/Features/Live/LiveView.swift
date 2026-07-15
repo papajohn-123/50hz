@@ -100,7 +100,10 @@ struct LiveView: View {
             .presentationDragIndicator(.visible)
             .presentationBackground(GridTheme.background)
         }
-        .task { await loadAssetMap() }
+        .task(id: model.timelineModeLabel) {
+            guard model.timelineModeLabel == "LIVE" else { return }
+            await loadAssetMap()
+        }
     }
 
     private func loadedContent(snapshot: GridSnapshot, model: AppModel) -> some View {
@@ -258,6 +261,7 @@ struct LiveView: View {
 
     @MainActor
     private func loadAssetMap(force: Bool = false) async {
+        guard model.timelineModeLabel == "LIVE" else { return }
         guard force || assetMapResponse == nil else { return }
         guard !isAssetMapLoading else { return }
         isAssetMapLoading = true
@@ -265,7 +269,14 @@ struct LiveView: View {
         defer { isAssetMapLoading = false }
 
         do {
+            if force {
+                await assetClient.invalidateMapCache()
+            }
             assetMapResponse = try await assetClient.mapAssets()
+        } catch is CancellationError {
+            return
+        } catch GridAPIError.cancelled {
+            return
         } catch {
             assetMapError = "Generator locations could not be refreshed. The national grid view remains available."
         }

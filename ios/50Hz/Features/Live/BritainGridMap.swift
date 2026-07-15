@@ -70,24 +70,98 @@ enum LiveAssetClustering {
         let y: Int
     }
 
+    struct Index: Equatable, Sendable {
+        fileprivate let clustersByBand: [Int: [LiveMapAssetCluster]]
+
+        init(assets: [LiveMapAsset] = []) {
+            guard !assets.isEmpty else {
+                clustersByBand = [:]
+                return
+            }
+            clustersByBand = Dictionary(uniqueKeysWithValues: [
+                (1, LiveAssetClustering.makeClusters(assets: assets, band: 1)),
+                (2, LiveAssetClustering.makeClusters(assets: assets, band: 2)),
+                (3, LiveAssetClustering.makeClusters(assets: assets, band: 3)),
+                (4, LiveAssetClustering.makeClusters(assets: assets, band: 4))
+            ])
+        }
+    }
+
+    struct ViewportSelection: Equatable, Sendable {
+        let clusters: [LiveMapAssetCluster]
+        let requestedBand: Int
+        let renderedBand: Int
+
+        var isCoarsened: Bool { renderedBand < requestedBand }
+    }
+
     static func clusters(
         assets: [LiveMapAsset],
         zoomScale: CGFloat
     ) -> [LiveMapAssetCluster] {
-        let configuration: (band: Int, longitudeStep: Double, latitudeStep: Double)
+        makeClusters(assets: assets, band: band(for: zoomScale))
+    }
+
+    static func visibleClusters(
+        in index: Index,
+        zoomScale: CGFloat,
+        offset: CGSize,
+        viewportSize: CGSize,
+        maximumMarkerCount: Int = 180
+    ) -> ViewportSelection {
+        let requestedBand = band(for: zoomScale)
+        let safeMaximum = max(maximumMarkerCount, 1)
+
+        for candidateBand in stride(from: requestedBand, through: 1, by: -1) {
+            let visible = (index.clustersByBand[candidateBand] ?? []).filter { cluster in
+                let point = LiveAssetMapProjection.position(
+                    latitude: cluster.latitude,
+                    longitude: cluster.longitude,
+                    viewportSize: viewportSize
+                )
+                return LiveAssetMapProjection.isVisible(
+                    point,
+                    viewportSize: viewportSize,
+                    zoomScale: zoomScale,
+                    offset: offset
+                )
+            }
+            if visible.count <= safeMaximum || candidateBand == 1 {
+                return ViewportSelection(
+                    clusters: visible,
+                    requestedBand: requestedBand,
+                    renderedBand: candidateBand
+                )
+            }
+        }
+
+        return ViewportSelection(clusters: [], requestedBand: requestedBand, renderedBand: 1)
+    }
+
+    private static func band(for zoomScale: CGFloat) -> Int {
         switch zoomScale {
-        case ..<1.5: configuration = (1, 1.4, 1.0)
-        case ..<2.75: configuration = (2, 0.72, 0.52)
-        case ..<4.75: configuration = (3, 0.36, 0.26)
-        default: configuration = (4, 0.16, 0.12)
+        case ..<1.5: 1
+        case ..<2.75: 2
+        case ..<4.75: 3
+        default: 4
+        }
+    }
+
+    private static func makeClusters(assets: [LiveMapAsset], band: Int) -> [LiveMapAssetCluster] {
+        let cellSize: (longitude: Double, latitude: Double)
+        switch band {
+        case 1: cellSize = (1.4, 1.0)
+        case 2: cellSize = (0.72, 0.52)
+        case 3: cellSize = (0.36, 0.26)
+        default: cellSize = (0.16, 0.12)
         }
 
         var groups: [Cell: [LiveMapAsset]] = [:]
         for asset in assets where asset.hasAuthoritativeCoordinate {
             let cell = Cell(
-                zoomBand: configuration.band,
-                x: Int(floor((asset.longitude + 9.5) / configuration.longitudeStep)),
-                y: Int(floor((asset.latitude - 49.5) / configuration.latitudeStep))
+                zoomBand: band,
+                x: Int(floor((asset.longitude + 9.5) / cellSize.longitude)),
+                y: Int(floor((asset.latitude - 49.5) / cellSize.latitude))
             )
             groups[cell, default: []].append(asset)
         }
@@ -105,32 +179,106 @@ enum LiveAssetClustering {
     }
 }
 
+enum LiveAssetMapProjection {
+    static func mapRect(in viewportSize: CGSize) -> CGRect {
+        CGRect(
+            x: viewportSize.width * 0.14,
+            y: 8,
+            width: viewportSize.width * 0.72,
+            height: max(viewportSize.height - 18, 0)
+        )
+    }
+
+    static func position(
+        latitude: Double,
+        longitude: Double,
+        viewportSize: CGSize
+    ) -> CGPoint {
+        let rect = mapRect(in: viewportSize)
+        let longitudeRatio = (longitude + 9.5) / 12.5
+        let latitudeRatio = (latitude - 49.5) / 11.5
+        let normalized = CGPoint(
+            x: 0.20 + CGFloat(longitudeRatio) * 0.68,
+            y: 0.96 - CGFloat(latitudeRatio) * 0.93
+        )
+        return CGPoint(
+            x: rect.minX + normalized.x * rect.width,
+            y: rect.minY + normalized.y * rect.height
+        )
+    }
+
+    static func screenPosition(
+        _ point: CGPoint,
+        viewportSize: CGSize,
+        zoomScale: CGFloat,
+        offset: CGSize
+    ) -> CGPoint {
+        CGPoint(
+            x: ((point.x - viewportSize.width / 2) * zoomScale) + viewportSize.width / 2 + offset.width,
+            y: ((point.y - viewportSize.height / 2) * zoomScale) + viewportSize.height / 2 + offset.height
+        )
+    }
+
+    static func isVisible(
+        _ point: CGPoint,
+        viewportSize: CGSize,
+        zoomScale: CGFloat,
+        offset: CGSize,
+        padding: CGFloat = 36
+    ) -> Bool {
+        let screenPoint = screenPosition(
+            point,
+            viewportSize: viewportSize,
+            zoomScale: zoomScale,
+            offset: offset
+        )
+        return CGRect(origin: .zero, size: viewportSize)
+            .insetBy(dx: -padding, dy: -padding)
+            .contains(screenPoint)
+    }
+
+    static func centeredOffset(
+        for point: CGPoint,
+        viewportSize: CGSize,
+        zoomScale: CGFloat
+    ) -> CGSize {
+        CGSize(
+            width: -(point.x - viewportSize.width / 2) * zoomScale,
+            height: -(point.y - viewportSize.height / 2) * zoomScale
+        )
+    }
+}
+
 private struct LiveAssetOverlay: View {
     let assets: [LiveMapAsset]
     let zoomScale: CGFloat
+    let offset: CGSize
     let showLabels: Bool
     let onAssetTap: ((LiveMapAsset) -> Void)?
-    let onClusterTap: (LiveMapAssetCluster) -> Void
+    let onClusterTap: (LiveMapAssetCluster, CGPoint, CGSize) -> Void
+
+    @State private var clusterIndex = LiveAssetClustering.Index()
 
     var body: some View {
         GeometryReader { proxy in
-            let mapRect = CGRect(
-                x: proxy.size.width * 0.14,
-                y: 8,
-                width: proxy.size.width * 0.72,
-                height: proxy.size.height - 18
-            )
-            let clusters = LiveAssetClustering.clusters(
-                assets: assets,
-                zoomScale: zoomScale
+            let selection = LiveAssetClustering.visibleClusters(
+                in: clusterIndex,
+                zoomScale: zoomScale,
+                offset: offset,
+                viewportSize: proxy.size
             )
 
-            ForEach(clusters) { cluster in
+            ForEach(selection.clusters) { cluster in
+                let point = LiveAssetMapProjection.position(
+                    latitude: cluster.latitude,
+                    longitude: cluster.longitude,
+                    viewportSize: proxy.size
+                )
                 Button {
                     if let asset = cluster.singleAsset {
                         onAssetTap?(asset)
                     } else {
-                        onClusterTap(cluster)
+                        onClusterTap(cluster, point, proxy.size)
                     }
                 } label: {
                     marker(for: cluster)
@@ -151,15 +299,35 @@ private struct LiveAssetOverlay: View {
                 .buttonStyle(.plain)
                 .disabled(onAssetTap == nil && cluster.singleAsset != nil)
                 .scaleEffect(1 / max(zoomScale, 1))
-                .position(position(for: cluster, in: mapRect))
+                .position(point)
                 .accessibilityLabel(accessibilityLabel(cluster))
                 .accessibilityHint(
                     cluster.singleAsset == nil
-                        ? "Zooms towards this group of source-located sites"
+                        ? (zoomScale < 7.75
+                           ? "Recenters and zooms towards this group of source-located sites"
+                           : "Opens a list of the source-located sites in this group")
                         : "Opens the source-backed generator inspector"
                 )
             }
         }
+        .task(id: assetCacheKey) {
+            guard !assets.isEmpty else {
+                clusterIndex = LiveAssetClustering.Index()
+                return
+            }
+            let sourceAssets = assets
+            let rebuilt = await Task.detached(priority: .userInitiated) {
+                LiveAssetClustering.Index(assets: sourceAssets)
+            }.value
+            guard !Task.isCancelled else { return }
+            clusterIndex = rebuilt
+        }
+    }
+
+    private var assetCacheKey: String {
+        let first = assets.first
+        let last = assets.last
+        return "\(assets.count):\(first?.id ?? "-"):\(last?.id ?? "-"):\(first?.observedAt.timeIntervalSinceReferenceDate ?? 0)"
     }
 
     @ViewBuilder
@@ -186,19 +354,6 @@ private struct LiveAssetOverlay: View {
                 .overlay(Circle().stroke(GridTheme.textPrimary.opacity(0.75), lineWidth: 1))
                 .shadow(color: accent.opacity(0.38), radius: 5)
         }
-    }
-
-    private func position(for cluster: LiveMapAssetCluster, in rect: CGRect) -> CGPoint {
-        let longitudeRatio = (cluster.longitude + 9.5) / 12.5
-        let latitudeRatio = (cluster.latitude - 49.5) / 11.5
-        let normalized = CGPoint(
-            x: 0.20 + CGFloat(longitudeRatio) * 0.68,
-            y: 0.96 - CGFloat(latitudeRatio) * 0.93
-        )
-        return CGPoint(
-            x: rect.minX + normalized.x * rect.width,
-            y: rect.minY + normalized.y * rect.height
-        )
     }
 
     private func accessibilityLabel(_ cluster: LiveMapAssetCluster) -> String {
@@ -235,6 +390,7 @@ struct BritainGridMap: View {
     @State private var newDataGlow = 0.0
     @State private var committedScale: CGFloat = 1
     @State private var committedOffset: CGSize = .zero
+    @State private var viewportSize = CGSize(width: 390, height: 340)
     @GestureState private var gestureScale: CGFloat = 1
     @GestureState private var gestureOffset: CGSize = .zero
 
@@ -266,6 +422,7 @@ struct BritainGridMap: View {
                 LiveAssetOverlay(
                     assets: authoritativeAssets,
                     zoomScale: effectiveScale,
+                    offset: effectiveOffset,
                     showLabels: effectiveScale >= 5.5,
                     onAssetTap: onAssetTap,
                     onClusterTap: handleClusterTap
@@ -333,6 +490,13 @@ struct BritainGridMap: View {
                 endRadius: 210
             )
         )
+        .background {
+            GeometryReader { proxy in
+                Color.clear
+                    .onAppear { viewportSize = proxy.size }
+                    .onChange(of: proxy.size) { _, newSize in viewportSize = newSize }
+            }
+        }
         .contentShape(Rectangle())
         .accessibilityElement(children: authoritativeAssets.isEmpty ? .combine : .contain)
         .accessibilityLabel("Schematic national view of Great Britain's electricity system")
@@ -382,7 +546,7 @@ struct BritainGridMap: View {
                     committedScale = 1
                     committedOffset = .zero
                 } else {
-                    committedOffset = bounded(committedOffset, for: nextScale)
+                    committedOffset = bounded(committedOffset, for: nextScale, viewportSize: viewportSize)
                 }
             }
     }
@@ -400,25 +564,40 @@ struct BritainGridMap: View {
                         width: committedOffset.width + value.translation.width,
                         height: committedOffset.height + value.translation.height
                     ),
-                    for: committedScale
+                    for: committedScale,
+                    viewportSize: viewportSize
                 )
             }
     }
 
-    private func bounded(_ offset: CGSize, for scale: CGFloat) -> CGSize {
-        let horizontalLimit = 110 * (scale - 1)
-        let verticalLimit = 135 * (scale - 1)
+    private func bounded(_ offset: CGSize, for scale: CGFloat, viewportSize: CGSize) -> CGSize {
+        let horizontalLimit = max(viewportSize.width * (scale - 1) / 2, 0)
+        let verticalLimit = max(viewportSize.height * (scale - 1) / 2, 0)
         return CGSize(
             width: min(max(offset.width, -horizontalLimit), horizontalLimit),
             height: min(max(offset.height, -verticalLimit), verticalLimit)
         )
     }
 
-    private func handleClusterTap(_ cluster: LiveMapAssetCluster) {
+    private func handleClusterTap(
+        _ cluster: LiveMapAssetCluster,
+        point: CGPoint,
+        viewportSize: CGSize
+    ) {
         if effectiveScale < 7.75 {
+            let targetScale = min(max(effectiveScale * 1.8, 2), 8)
+            let centeredOffset = LiveAssetMapProjection.centeredOffset(
+                for: point,
+                viewportSize: viewportSize,
+                zoomScale: targetScale
+            )
             withAnimation(reduceMotion ? nil : .snappy(duration: 0.28)) {
-                committedScale = min(max(effectiveScale * 1.8, 2), 8)
-                committedOffset = bounded(committedOffset, for: committedScale)
+                committedScale = targetScale
+                committedOffset = bounded(
+                    centeredOffset,
+                    for: targetScale,
+                    viewportSize: viewportSize
+                )
             }
         } else {
             onClusterInspect?(cluster)

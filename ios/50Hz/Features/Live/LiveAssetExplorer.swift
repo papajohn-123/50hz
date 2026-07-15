@@ -39,11 +39,25 @@ struct LiveAssetLayerStatus: View {
                         .frame(minHeight: 44)
                         .buttonStyle(.plain)
                 }
-            } else {
-                Text(scopeCopy)
-                    .font(.caption)
-                    .foregroundStyle(GridTheme.textTertiary)
+            }
+
+            Text(scopeCopy)
+                .font(.caption)
+                .foregroundStyle(GridTheme.textTertiary)
+                .fixedSize(horizontal: false, vertical: true)
+
+            if let response {
+                sourceDeliverySummary(response)
+
+                if response.isTruncated {
+                    Label(
+                        "Map response limit reached: showing \(response.returnedCount.formatted()) of \(response.totalCount.formatted()) matching sites. Browse and map results are not the complete matching set.",
+                        systemImage: "exclamationmark.triangle.fill"
+                    )
+                    .font(.caption2)
+                    .foregroundStyle(GridTheme.staleAmber)
                     .fixedSize(horizontal: false, vertical: true)
+                }
             }
         }
     }
@@ -51,7 +65,7 @@ struct LiveAssetLayerStatus: View {
     private var trailingLabel: String {
         guard isLiveMode else { return "LIVE LAYER" }
         guard let response else { return isLoading ? "LOADING" : "NOT LOADED" }
-        return "\(response.validLocatedAssets.count.formatted()) LOCATED"
+        return response.sourceStatus.state.uppercased()
     }
 
     private var scopeCopy: String {
@@ -59,9 +73,42 @@ struct LiveAssetLayerStatus: View {
             return "Generator locations are a present-day reference layer and are hidden from replay and forecast frames."
         }
         guard let response else {
-            return "Loading the DESNZ renewable and storage site register. Elexon unit records are linked only where the evidence is strong."
+            return isLoading
+                ? "Loading the DESNZ renewable and storage site register. Elexon unit records are linked only where the evidence is strong."
+                : "The source-located site layer has not been loaded for this live view."
         }
         return response.boundary + ". " + response.disclaimer
+    }
+
+    private func sourceDeliverySummary(_ response: GridAssetMapResponse) -> some View {
+        VStack(alignment: .leading, spacing: 4) {
+            HStack(spacing: 6) {
+                Circle()
+                    .fill(sourceStateColor(response.sourceStatus.state))
+                    .frame(width: 6, height: 6)
+                    .accessibilityHidden(true)
+                Text("Source state: \(response.sourceStatus.state)")
+            }
+            Text("Last successful delivery: \(lastSuccessLabel(response.sourceStatus.lastSuccessfulAt))")
+            Text("Response: \(response.returnedCount.formatted()) returned of \(response.totalCount.formatted()) matching · \(response.validLocatedAssets.count.formatted()) usable map points")
+            Text("Source register: \(response.sourceStatus.locatedAssetCount.formatted()) located sites · \(response.sourceStatus.assetReferenceCount.formatted()) Elexon asset references")
+        }
+        .font(.caption2.monospacedDigit())
+        .foregroundStyle(GridTheme.textSecondary)
+        .accessibilityElement(children: .combine)
+    }
+
+    private func lastSuccessLabel(_ date: Date?) -> String {
+        guard let date else { return "not reported" }
+        return date.formatted(.dateTime.day().month(.abbreviated).year().hour().minute())
+    }
+
+    private func sourceStateColor(_ state: String) -> Color {
+        switch state.lowercased() {
+        case "current", "healthy", "available": GridTheme.liveCyan
+        case "delayed", "stale", "degraded": GridTheme.staleAmber
+        default: GridTheme.textTertiary
+        }
     }
 }
 
@@ -82,7 +129,11 @@ struct GeneratorExplorerSheet: View {
                 } else {
                     ForEach(filteredAssets) { asset in
                         NavigationLink {
-                            LiveAssetInspector(asset: asset, assetClient: assetClient)
+                            LiveAssetInspector(
+                                asset: asset,
+                                assetClient: assetClient,
+                                embedsNavigationStack: false
+                            )
                         } label: {
                             assetRow(asset)
                         }
@@ -158,70 +209,96 @@ struct GeneratorExplorerSheet: View {
 struct LiveAssetInspector: View {
     let asset: LiveMapAsset
     let assetClient: any GridAssetProviding
+    let embedsNavigationStack: Bool
 
     @Environment(\.dismiss) private var dismiss
     @State private var detail: GridAssetDetailResponse?
     @State private var isLoading = false
     @State private var detailError: String?
 
+    init(
+        asset: LiveMapAsset,
+        assetClient: any GridAssetProviding,
+        embedsNavigationStack: Bool = true
+    ) {
+        self.asset = asset
+        self.assetClient = assetClient
+        self.embedsNavigationStack = embedsNavigationStack
+    }
+
+    @ViewBuilder
     var body: some View {
-        NavigationStack {
-            ScrollView {
-                VStack(alignment: .leading, spacing: 22) {
-                    header
-                    referenceSection
-                    operatingEvidenceSection
-
-                    if let detail, !detail.bmUnits.isEmpty {
-                        bmUnitSection(detail.bmUnits)
-                    }
-
-                    if let detail, !detail.limitations.isEmpty {
-                        limitationsSection(detail.limitations)
-                    }
-
-                    if isLoading {
-                        HStack(spacing: 10) {
-                            ProgressView().tint(GridTheme.liveCyan)
-                            Text("Loading linked Elexon evidence…")
-                                .font(.caption)
-                                .foregroundStyle(GridTheme.textSecondary)
+        Group {
+            if embedsNavigationStack {
+                NavigationStack {
+                    inspectorContent
+                        .toolbar {
+                            ToolbarItem(placement: .topBarTrailing) {
+                                Button("Done") { dismiss() }
+                                    .foregroundStyle(GridTheme.liveCyan)
+                            }
                         }
-                    } else if let detailError {
-                        VStack(alignment: .leading, spacing: 6) {
-                            Text(detailError)
-                                .font(.caption)
-                                .foregroundStyle(GridTheme.staleAmber)
-                            Button("Retry evidence", action: loadDetail)
-                                .font(.caption.weight(.semibold))
-                                .foregroundStyle(GridTheme.liveCyan)
-                                .frame(minHeight: 44)
-                        }
-                    }
                 }
-                .padding(GridTheme.horizontalPadding)
-            }
-            .scrollIndicators(.hidden)
-            .background(GridTheme.background)
-            .navigationTitle("Energy site")
-            .navigationBarTitleDisplayMode(.inline)
-            .toolbar {
-                ToolbarItem(placement: .topBarTrailing) {
-                    Button("Done") { dismiss() }
-                        .foregroundStyle(GridTheme.liveCyan)
-                }
+            } else {
+                inspectorContent
             }
         }
         .preferredColorScheme(.dark)
         .task(id: asset.id) { await fetchDetail() }
     }
 
+    private var inspectorContent: some View {
+        ScrollView {
+            VStack(alignment: .leading, spacing: 22) {
+                header
+                referenceSection
+                operatingEvidenceSection
+
+                if let detail, !detail.bmUnits.isEmpty {
+                    bmUnitSection(detail.bmUnits)
+                }
+
+                if let detail, !detail.limitations.isEmpty {
+                    limitationsSection(detail.limitations)
+                }
+
+                if isLoading {
+                    HStack(spacing: 10) {
+                        ProgressView().tint(GridTheme.liveCyan)
+                        Text("Loading linked Elexon evidence…")
+                            .font(.caption)
+                            .foregroundStyle(GridTheme.textSecondary)
+                    }
+                } else if let detailError {
+                    VStack(alignment: .leading, spacing: 6) {
+                        Text(detailError)
+                            .font(.caption)
+                            .foregroundStyle(GridTheme.staleAmber)
+                        Button("Retry evidence", action: loadDetail)
+                            .font(.caption.weight(.semibold))
+                            .foregroundStyle(GridTheme.liveCyan)
+                            .frame(minHeight: 44)
+                    }
+                }
+            }
+            .padding(GridTheme.horizontalPadding)
+        }
+        .scrollIndicators(.hidden)
+        .background(GridTheme.background)
+        .navigationTitle("Energy site")
+        .navigationBarTitleDisplayMode(.inline)
+    }
+
+    private var presentedAsset: LiveMapAsset {
+        detail.map { LiveMapAsset(item: $0.asset) } ?? asset
+    }
+
     private var header: some View {
         VStack(alignment: .leading, spacing: 7) {
-            Text(asset.name)
+            Text(presentedAsset.name)
                 .font(.title2.weight(.medium))
                 .foregroundStyle(GridTheme.textPrimary)
-            Text([asset.technology, asset.operatorName].compactMap { $0 }.joined(separator: " · "))
+            Text([presentedAsset.technology, presentedAsset.operatorName].compactMap { $0 }.joined(separator: " · "))
                 .font(.subheadline)
                 .foregroundStyle(GridTheme.textSecondary)
             HStack(spacing: 8) {
@@ -233,19 +310,19 @@ struct LiveAssetInspector: View {
 
     private var referenceSection: some View {
         VStack(alignment: .leading, spacing: 0) {
-            SectionLabel("Published site record", trailing: asset.lifecycle.rawValue.uppercased())
+            SectionLabel("Published site record", trailing: presentedAsset.lifecycle.rawValue.uppercased())
                 .padding(.bottom, 6)
             inspectorRow(
                 "Capacity",
-                asset.capacityMW.map { "\($0.formatted(.number.precision(.fractionLength(0)))) MW" } ?? "Not reported"
+                presentedAsset.capacityMW.map { "\($0.formatted(.number.precision(.fractionLength(0)))) MW" } ?? "Not reported"
             )
-            inspectorRow("Region", [asset.region, asset.country].compactMap { $0 }.joined(separator: ", ").nilIfEmpty ?? "Not reported")
-            inspectorRow("Coordinate", "\(asset.latitude.formatted(.number.precision(.fractionLength(3)))), \(asset.longitude.formatted(.number.precision(.fractionLength(3))))")
-            inspectorRow("Precision", asset.coordinatePrecision ?? "Source point")
-            inspectorRow("Retrieved", asset.observedAt.formatted(.dateTime.day().month().year().hour().minute()))
-            inspectorRow("Source", asset.coordinateSource?.publisher ?? asset.sourceID)
+            inspectorRow("Region", [presentedAsset.region, presentedAsset.country].compactMap { $0 }.joined(separator: ", ").nilIfEmpty ?? "Not reported")
+            inspectorRow("Coordinate", "\(presentedAsset.latitude.formatted(.number.precision(.fractionLength(3)))), \(presentedAsset.longitude.formatted(.number.precision(.fractionLength(3))))")
+            inspectorRow("Precision", presentedAsset.coordinatePrecision ?? "Source point")
+            inspectorRow("Retrieved", presentedAsset.observedAt.formatted(.dateTime.day().month().year().hour().minute()))
+            inspectorRow("Source", presentedAsset.coordinateSource?.publisher ?? presentedAsset.sourceID)
 
-            if let source = asset.coordinateSource {
+            if let source = presentedAsset.coordinateSource {
                 Link(destination: source.canonicalURL) {
                     Label("Open the official dataset", systemImage: "arrow.up.right.square")
                         .font(.caption.weight(.semibold))
@@ -264,8 +341,8 @@ struct LiveAssetInspector: View {
 
     @ViewBuilder
     private var operatingEvidenceSection: some View {
-        let plan = detail?.plan ?? asset.operatingEvidence?.participantSubmittedPlan.map { [$0] } ?? []
-        let settled = detail?.settledMetered ?? asset.operatingEvidence?.latestSettledMetered.map { [$0] } ?? []
+        let plan = detail?.plan ?? presentedAsset.operatingEvidence?.participantSubmittedPlan.map { [$0] } ?? []
+        let settled = detail?.settledMetered ?? presentedAsset.operatingEvidence?.latestSettledMetered.map { [$0] } ?? []
 
         VStack(alignment: .leading, spacing: 12) {
             SectionLabel("Operating evidence", trailing: "ELEXON")
@@ -275,7 +352,7 @@ struct LiveAssetInspector: View {
                 .fixedSize(horizontal: false, vertical: true)
 
             if plan.isEmpty && settled.isEmpty {
-                Text(asset.linkedBMUnitCount == 0
+                Text(presentedAsset.linkedBMUnitCount == 0
                      ? "No BM unit has been conservatively linked to this site."
                      : "Linked BM units do not currently have a usable plan or settled interval in this response.")
                     .font(.subheadline)
@@ -284,7 +361,11 @@ struct LiveAssetInspector: View {
                 ForEach(Array(plan.prefix(6).enumerated()), id: \.offset) { _, evidence in
                     evidenceCard(
                         label: "PARTICIPANT PLAN",
-                        value: "\(evidence.levelMW.formatted(.number.precision(.fractionLength(0)))) MW",
+                        value: AssetEvidencePresentation.signedMeasurement(
+                            evidence.levelMW,
+                            unit: "MW",
+                            direction: evidence.direction
+                        ),
                         timing: "At \(evidence.at.formatted(.dateTime.day().month().hour().minute())) · SP \(evidence.settlementPeriod)",
                         caveat: evidence.caveat,
                         color: GridTheme.forecastViolet
@@ -293,8 +374,12 @@ struct LiveAssetInspector: View {
                 ForEach(Array(settled.prefix(6).enumerated()), id: \.offset) { _, evidence in
                     evidenceCard(
                         label: "SETTLED METERED",
-                        value: "\(evidence.averageMW.formatted(.number.precision(.fractionLength(0)))) MW average",
-                        timing: "\(evidence.intervalStart.formatted(.dateTime.day().month().hour().minute()))–\(evidence.intervalEnd.formatted(.dateTime.hour().minute())) · SP \(evidence.settlementPeriod)",
+                        value: AssetEvidencePresentation.signedMeasurement(
+                            evidence.averageMW,
+                            unit: "MW average",
+                            direction: evidence.direction
+                        ),
+                        timing: "\(AssetEvidencePresentation.signedMeasurement(evidence.energyMWh, unit: "MWh", direction: evidence.direction)) settled energy · \(evidence.intervalStart.formatted(.dateTime.day().month().hour().minute()))–\(evidence.intervalEnd.formatted(.dateTime.hour().minute())) · SP \(evidence.settlementPeriod)",
                         caveat: evidence.caveat,
                         color: GridTheme.liveCyan
                     )
@@ -400,8 +485,38 @@ struct LiveAssetInspector: View {
         defer { isLoading = false }
         do {
             detail = try await assetClient.assetDetail(id: asset.id)
+        } catch is CancellationError {
+            return
+        } catch GridAPIError.cancelled {
+            return
         } catch {
             detailError = "The site record is available, but linked Elexon evidence could not be refreshed."
+        }
+    }
+}
+
+enum AssetEvidencePresentation {
+    static func signedMeasurement(_ value: Double, unit: String, direction: String) -> String {
+        let normalizedValue = abs(value) < 0.000_001 ? 0 : value
+        let sign: String
+        if normalizedValue > 0 {
+            sign = "+"
+        } else if normalizedValue < 0 {
+            sign = "−"
+        } else {
+            sign = ""
+        }
+        let magnitude = abs(normalizedValue).formatted(.number.precision(.fractionLength(0)))
+        return "\(sign)\(magnitude) \(unit) · \(directionLabel(direction))"
+    }
+
+    private static func directionLabel(_ direction: String) -> String {
+        switch direction.trimmingCharacters(in: .whitespacesAndNewlines).lowercased() {
+        case "export", "exporting", "generation", "generating": "export"
+        case "import", "importing", "demand", "consuming": "import"
+        case "idle", "zero", "none": "idle"
+        case "": "direction not reported"
+        default: direction.lowercased()
         }
     }
 }

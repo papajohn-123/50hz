@@ -59,6 +59,30 @@ final class GridAssetAPIClientTests: XCTestCase {
         }
     }
 
+    func testMapResponseIsCachedUntilExplicitInvalidation() async throws {
+        var requestCount = 0
+        AssetURLProtocolStub.handler = { request in
+            requestCount += 1
+            return (
+                HTTPURLResponse(url: request.url!, statusCode: 200, httpVersion: nil, headerFields: nil)!,
+                Data(Self.mapJSON.utf8)
+            )
+        }
+        let client = HTTPGridAssetClient(
+            baseURL: URL(string: "https://example.test")!,
+            session: session(),
+            mapCacheTTL: 300
+        )
+
+        _ = try await client.mapAssets()
+        _ = try await client.mapAssets()
+        XCTAssertEqual(requestCount, 1)
+
+        await client.invalidateMapCache()
+        _ = try await client.mapAssets()
+        XCTAssertEqual(requestCount, 2)
+    }
+
     private func session() -> URLSession {
         let configuration = URLSessionConfiguration.ephemeral
         configuration.protocolClasses = [AssetURLProtocolStub.self]

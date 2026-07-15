@@ -156,6 +156,105 @@ final class LiveTruthPresentationTests: XCTestCase {
         XCTAssertTrue(local.allSatisfy { $0.singleAsset != nil })
     }
 
+    func testAssetViewportCullsOffscreenMarkersAndCoarsensDenseAreas() {
+        let center = LiveMapAsset(
+            id: "center",
+            name: "Center site",
+            fuel: .wind,
+            latitude: 55.15,
+            longitude: -4.0,
+            capacityMW: 20,
+            sourceID: "desnz.repd",
+            observedAt: now
+        )
+        let farAway = LiveMapAsset(
+            id: "far-away",
+            name: "Far site",
+            fuel: .solar,
+            latitude: 50.0,
+            longitude: 2.5,
+            capacityMW: 20,
+            sourceID: "desnz.repd",
+            observedAt: now
+        )
+        let viewport = CGSize(width: 390, height: 340)
+        let sparseSelection = LiveAssetClustering.visibleClusters(
+            in: LiveAssetClustering.Index(assets: [center, farAway]),
+            zoomScale: 8,
+            offset: .zero,
+            viewportSize: viewport
+        )
+
+        XCTAssertTrue(sparseSelection.clusters.flatMap(\.assets).contains(center))
+        XCTAssertFalse(sparseSelection.clusters.flatMap(\.assets).contains(farAway))
+
+        var denseAssets: [LiveMapAsset] = []
+        for latitudeIndex in 0..<17 {
+            for longitudeIndex in 0..<19 {
+                denseAssets.append(
+                    LiveMapAsset(
+                        id: "dense-\(latitudeIndex)-\(longitudeIndex)",
+                        name: "Dense site",
+                        fuel: .wind,
+                        latitude: 54.11 + Double(latitudeIndex) * 0.13,
+                        longitude: -5.53 + Double(longitudeIndex) * 0.17,
+                        capacityMW: 1,
+                        sourceID: "desnz.repd",
+                        observedAt: now
+                    )
+                )
+            }
+        }
+        let denseSelection = LiveAssetClustering.visibleClusters(
+            in: LiveAssetClustering.Index(assets: denseAssets),
+            zoomScale: 8,
+            offset: .zero,
+            viewportSize: viewport,
+            maximumMarkerCount: 20
+        )
+
+        XCTAssertTrue(denseSelection.isCoarsened)
+        XCTAssertLessThanOrEqual(denseSelection.clusters.count, 20)
+    }
+
+    func testClusterRecenteringPlacesTappedCoordinateAtViewportCenter() {
+        let viewport = CGSize(width: 390, height: 340)
+        let point = LiveAssetMapProjection.position(
+            latitude: 52.5,
+            longitude: -1.5,
+            viewportSize: viewport
+        )
+        let offset = LiveAssetMapProjection.centeredOffset(
+            for: point,
+            viewportSize: viewport,
+            zoomScale: 4
+        )
+        let screenPosition = LiveAssetMapProjection.screenPosition(
+            point,
+            viewportSize: viewport,
+            zoomScale: 4,
+            offset: offset
+        )
+
+        XCTAssertEqual(screenPosition.x, viewport.width / 2, accuracy: 0.001)
+        XCTAssertEqual(screenPosition.y, viewport.height / 2, accuracy: 0.001)
+    }
+
+    func testAssetEvidenceLabelsExposeSignAndDirection() {
+        XCTAssertEqual(
+            AssetEvidencePresentation.signedMeasurement(125, unit: "MW", direction: "export"),
+            "+125 MW · export"
+        )
+        XCTAssertEqual(
+            AssetEvidencePresentation.signedMeasurement(-80, unit: "MW average", direction: "import"),
+            "−80 MW average · import"
+        )
+        XCTAssertEqual(
+            AssetEvidencePresentation.signedMeasurement(0, unit: "MW", direction: "idle"),
+            "0 MW · idle"
+        )
+    }
+
     private func makeSnapshot() -> GridSnapshot {
         let sources = [
             source(id: "freq", name: "Elexon Insights", dataset: "FREQ", age: 10),
