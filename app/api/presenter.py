@@ -15,7 +15,11 @@ from app.api.models import (
     MobileFreshness,
     SourceReference,
 )
-from app.api.status import present_data_status, present_supply_accounting
+from app.api.status import (
+    present_data_status,
+    present_freshness_summary,
+    present_supply_accounting,
+)
 from app.persistence.reads import (
     CarbonRead,
     CurrentGridRead,
@@ -205,6 +209,7 @@ def present_current(
     if demand_source not in source_ids or carbon_source not in source_ids:
         raise GridDataUnavailableError("Required source metadata is missing")
 
+    data_status = present_data_status(read)
     return GridSnapshotResponse(
         timestamp=effective_at,
         retrieved_at=retrieved_at,
@@ -248,7 +253,11 @@ def present_current(
         ],
         active_event=active_event,
         sources=sources,
-        data_status=present_data_status(read),
+        data_status=data_status,
+        freshness_summary=present_freshness_summary(
+            data_status,
+            critical=freshness is MobileFreshness.CRITICAL,
+        ),
         supply=present_supply_accounting(read),
     )
 

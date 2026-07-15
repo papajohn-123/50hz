@@ -159,6 +159,9 @@ def test_current_route_matches_native_acronym_keys() -> None:
     assert all("deliveryState" in status for status in payload["dataStatus"])
     assert all("factState" in status for status in payload["dataStatus"])
     assert all("evaluatedAt" in status for status in payload["dataStatus"])
+    assert payload["freshnessSummary"]["state"] == "mixed"
+    assert payload["freshnessSummary"]["representsSingleInstant"] is False
+    assert payload["freshnessSummary"]["requiredFamilyCount"] == 3
     assert payload["supply"]["isComplete"] is False
     assert payload["supply"]["storageChargingMW"] is None
     assert payload["supply"]["grossExportsMW"] == 500
@@ -175,6 +178,8 @@ def test_current_route_includes_highest_priority_reported_event() -> None:
     event = response.json()["activeEvent"]
     assert event["title"] == "System Warning"
     assert event["evidenceClass"] == "reported"
+    assert event["eventKind"] == "system_warning"
+    assert event["consumerImpact"] == "not_a_local_power_cut"
     assert response.json()["freshness"] == "live"
 
 

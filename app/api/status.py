@@ -10,6 +10,8 @@ from app.api.models import (
     DataFamilyStatus,
     DeliveryState,
     FactState,
+    FreshnessSummary,
+    FreshnessSummaryState,
     SupplyAccounting,
 )
 from app.metrics import CURRENT_FAMILY_POLICIES, MetricFamily, MetricFreshnessPolicy
@@ -38,6 +40,87 @@ def present_data_status(read: CurrentGridRead) -> list[DataFamilyStatus]:
         )
         for policy in CURRENT_FAMILY_POLICIES
     ]
+
+
+def present_freshness_summary(
+    statuses: Iterable[DataFamilyStatus],
+    *,
+    critical: bool = False,
+) -> FreshnessSummary:
+    """Summarize required families while retaining their independent clocks."""
+
+    required = tuple(status for status in statuses if status.required_for_snapshot)
+    if not required:
+        raise ValueError("Freshness summary requires at least one required family")
+
+    counts = {
+        "current": 0,
+        "delayed": 0,
+        "stale": 0,
+        "unavailable": 0,
+    }
+    for status in required:
+        counts[_combined_family_state(status)] += 1
+
+    observed_times = tuple(
+        status.observed_at for status in required if status.observed_at is not None
+    )
+    oldest = min(observed_times) if observed_times else None
+    newest = max(observed_times) if observed_times else None
+    spread = int((newest - oldest).total_seconds()) if oldest and newest else None
+    mixed_cadences = len({status.expected_cadence_seconds for status in required}) > 1
+
+    if critical:
+        state = FreshnessSummaryState.CRITICAL
+        label = "Critical reported event"
+        detail = (
+            "A publisher has reported a critical event. Reading times remain "
+            "independent and are shown by data family."
+        )
+    elif counts["unavailable"]:
+        state = FreshnessSummaryState.UNAVAILABLE
+        label = "Core reading unavailable"
+        detail = "At least one required data family has no usable current reading."
+    elif counts["stale"]:
+        state = FreshnessSummaryState.STALE
+        label = "Some core readings are stale"
+        detail = "At least one required reading is beyond its source-specific stale threshold."
+    elif counts["delayed"]:
+        state = FreshnessSummaryState.DELAYED
+        label = "Some core readings are delayed"
+        detail = (
+            "The source facts or their delivery are behind the expected timing "
+            "for at least one required data family."
+        )
+    elif mixed_cadences or (spread or 0) > 0:
+        state = FreshnessSummaryState.MIXED
+        label = "Current readings, mixed update times"
+        detail = (
+            "Generation, demand and carbon update on independent source cadences; "
+            "this response is not a single synchronized measurement."
+        )
+    else:
+        state = FreshnessSummaryState.CURRENT
+        label = "Core readings current"
+        detail = (
+            "All required families are within their source-specific current "
+            "thresholds, but remain independently measured facts."
+        )
+
+    return FreshnessSummary(
+        state=state,
+        label=label,
+        detail=detail,
+        evaluated_at=required[0].evaluated_at,
+        required_family_count=len(required),
+        current_family_count=counts["current"],
+        delayed_family_count=counts["delayed"],
+        stale_family_count=counts["stale"],
+        unavailable_family_count=counts["unavailable"],
+        oldest_required_observed_at=oldest,
+        newest_required_observed_at=newest,
+        observation_spread_seconds=spread,
+    )
 
 
 def present_supply_accounting(read: CurrentGridRead) -> SupplyAccounting:
@@ -153,6 +236,25 @@ def _delivery_state(
     if age_seconds < policy.delivery_stale_seconds:
         return DeliveryState.DELAYED
     return DeliveryState.STALE
+
+
+def _combined_family_state(status: DataFamilyStatus) -> str:
+    if (
+        status.delivery_state is DeliveryState.UNAVAILABLE
+        or status.fact_state is FactState.UNAVAILABLE
+    ):
+        return "unavailable"
+    if (
+        status.delivery_state is DeliveryState.STALE
+        or status.fact_state is FactState.STALE
+    ):
+        return "stale"
+    if (
+        status.delivery_state is DeliveryState.DELAYED
+        or status.fact_state is FactState.DELAYED
+    ):
+        return "delayed"
+    return "current"
 
 
 def _fact_state(policy: MetricFreshnessPolicy, age_seconds: int) -> FactState:

@@ -37,6 +37,17 @@ class MobileFreshness(StrEnum):
     CRITICAL = "critical"
 
 
+class FreshnessSummaryState(StrEnum):
+    """Truthful aggregate state for independently timed source families."""
+
+    CURRENT = "current"
+    MIXED = "mixed"
+    DELAYED = "delayed"
+    STALE = "stale"
+    UNAVAILABLE = "unavailable"
+    CRITICAL = "critical"
+
+
 class DeliveryState(StrEnum):
     """Health of 50Hz receiving data from a source, based on retrieval age."""
 
@@ -95,6 +106,11 @@ class ConditionHeadline(MobileModel):
     interpretation: str
 
 
+class GridEventKind(StrEnum):
+    GENERATION_UNAVAILABILITY = "generation_unavailability"
+    SYSTEM_WARNING = "system_warning"
+
+
 class GridEvent(MobileModel):
     id: str
     title: str
@@ -104,6 +120,82 @@ class GridEvent(MobileModel):
     started_at: AwareDatetime
     source_ids: list[str] = Field(alias="sourceIDs")
     is_authoritatively_reported: bool
+
+    # Additive v0.2 fields keep older mobile clients compatible while making
+    # the source-reported fact inspectable without parsing prose.
+    event_kind: GridEventKind | None = None
+    status: str | None = None
+    ended_at: AwareDatetime | None = None
+    updated_at: AwareDatetime | None = None
+    source_published_at: AwareDatetime | None = None
+    asset_id: str | None = Field(default=None, alias="assetID")
+    asset_name: str | None = None
+    fuel_type: str | None = None
+    normal_capacity_mw: float | None = Field(
+        default=None,
+        alias="normalCapacityMW",
+        ge=0,
+    )
+    unavailable_mw: float | None = Field(
+        default=None,
+        alias="unavailableMW",
+        ge=0,
+    )
+    planned: bool | None = None
+    reported_cause: str | None = None
+    location_status: Literal["not_provided"] = "not_provided"
+    scope: Literal["national_grid_context"] = "national_grid_context"
+    consumer_impact: Literal[
+        "not_a_local_power_cut",
+    ] = "not_a_local_power_cut"
+
+
+class FreshnessSummary(MobileModel):
+    """Aggregate explanation without pretending the response is one instant."""
+
+    state: FreshnessSummaryState
+    label: str
+    detail: str
+    evaluated_at: AwareDatetime
+    required_family_count: int = Field(ge=1)
+    current_family_count: int = Field(ge=0)
+    delayed_family_count: int = Field(ge=0)
+    stale_family_count: int = Field(ge=0)
+    unavailable_family_count: int = Field(ge=0)
+    oldest_required_observed_at: AwareDatetime | None = None
+    newest_required_observed_at: AwareDatetime | None = None
+    observation_spread_seconds: int | None = Field(default=None, ge=0)
+    represents_single_instant: Literal[False] = False
+
+    @model_validator(mode="after")
+    def family_counts_and_times_are_consistent(self) -> Self:
+        classified = (
+            self.current_family_count
+            + self.delayed_family_count
+            + self.stale_family_count
+            + self.unavailable_family_count
+        )
+        if classified != self.required_family_count:
+            raise ValueError("Freshness family counts must cover every required family")
+        if (self.oldest_required_observed_at is None) != (
+            self.newest_required_observed_at is None
+        ):
+            raise ValueError("Freshness observation bounds must be supplied together")
+        if self.oldest_required_observed_at is None:
+            if self.observation_spread_seconds is not None:
+                raise ValueError("Freshness spread requires observation bounds")
+        else:
+            if self.newest_required_observed_at < self.oldest_required_observed_at:
+                raise ValueError("Freshness observation bounds must be ordered")
+            expected_spread = int(
+                (
+                    self.newest_required_observed_at
+                    - self.oldest_required_observed_at
+                ).total_seconds()
+            )
+            if self.observation_spread_seconds != expected_spread:
+                raise ValueError("Freshness spread must match observation bounds")
+        return self
 
 
 class EventHistoryChangedField(StrEnum):
@@ -337,6 +429,7 @@ class GridSnapshotResponse(MobileModel):
     active_event: GridEvent | None = None
     sources: list[SourceReference]
     data_status: list[DataFamilyStatus] = Field(default_factory=list)
+    freshness_summary: FreshnessSummary | None = None
     supply: SupplyAccounting | None = None
 
     @model_validator(mode="after")

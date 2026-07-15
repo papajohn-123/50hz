@@ -69,6 +69,12 @@ def test_present_current_aggregates_fuels_and_preserves_import_sign() -> None:
     assert snapshot.interconnectors[0].megawatts == 700
     assert snapshot.interconnectors[0].country_code == "FR"
     assert snapshot.freshness is MobileFreshness.LIVE
+    assert snapshot.freshness_summary is not None
+    assert snapshot.freshness_summary.state.value == "mixed"
+    assert snapshot.freshness_summary.label == "Current readings, mixed update times"
+    assert snapshot.freshness_summary.required_family_count == 3
+    assert snapshot.freshness_summary.current_family_count == 3
+    assert snapshot.freshness_summary.represents_single_instant is False
     assert abs(sum(item.share for item in snapshot.generation) - 1) < 0.00001
 
     statuses = {status.family.value: status for status in snapshot.data_status}
@@ -131,6 +137,10 @@ def test_half_hour_interval_facts_remain_live_during_publication_lag() -> None:
     snapshot = present_current(read)
 
     assert snapshot.freshness is MobileFreshness.LIVE
+    assert snapshot.freshness_summary is not None
+    assert snapshot.freshness_summary.state.value == "delayed"
+    assert snapshot.freshness_summary.delayed_family_count == 2
+    assert snapshot.freshness_summary.current_family_count == 1
     statuses = {status.family.value: status for status in snapshot.data_status}
     assert statuses["demand"].fact_state.value == "delayed"
     assert statuses["carbon"].fact_state.value == "delayed"

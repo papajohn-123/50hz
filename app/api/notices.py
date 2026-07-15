@@ -15,6 +15,7 @@ from app.api.models import (
     EventHistoryResponse,
     EventHistoryRevision,
     GridEvent,
+    GridEventKind,
 )
 from app.events.identity import reported_notice_event_id as _reported_notice_event_id
 from app.events.revisions import RevisionField
@@ -55,14 +56,18 @@ def reported_notice_to_grid_event(notice: ReportedNoticeRead) -> GridEvent:
         title = _text(notice.warning_type) or "System warning"
         summary = _text(notice.warning_text) or "NESO published a system warning."
         severity = "important"
+        event_kind = GridEventKind.SYSTEM_WARNING
+        asset_name = None
+        unavailable_mw = None
     else:
-        subject = _text(notice.affected_unit) or _text(notice.asset_id) or "Generating unit"
+        asset_name = _text(notice.affected_unit)
+        subject = asset_name or _text(notice.asset_id)
         heading = _text(notice.heading)
-        title = (
-            f"{subject}: reported unavailability"
-            if _is_generic_remit_heading(heading)
-            else heading or f"{subject}: reported unavailability"
-        )
+        subject = subject or (
+            heading if heading and not _is_generic_remit_heading(heading) else None
+        ) or "Generating unit"
+        unavailable_mw = _non_negative(notice.unavailable_capacity_mw)
+        title = _remit_title(subject, unavailable_mw)
         severity = _remit_severity(notice.unavailable_capacity_mw)
         if (
             notice.unavailable_capacity_mw is not None
@@ -79,6 +84,7 @@ def reported_notice_to_grid_event(notice: ReportedNoticeRead) -> GridEvent:
             summary = f"{subject} has a reported unavailability."
         if cause := _text(notice.reported_cause):
             summary += f" Reported cause: {cause}"
+        event_kind = GridEventKind.GENERATION_UNAVAILABILITY
 
     return GridEvent(
         id=reported_notice_event_id(notice),
@@ -89,6 +95,17 @@ def reported_notice_to_grid_event(notice: ReportedNoticeRead) -> GridEvent:
         started_at=notice.event_start or notice.published_at,
         source_ids=[notice.source_id],
         is_authoritatively_reported=True,
+        event_kind=event_kind,
+        status=_text(notice.event_status),
+        ended_at=notice.event_end,
+        updated_at=notice.published_at,
+        source_published_at=notice.published_at,
+        asset_id=_text(notice.asset_id),
+        asset_name=asset_name,
+        fuel_type=_text(notice.fuel_type),
+        normal_capacity_mw=_non_negative(notice.normal_capacity_mw),
+        unavailable_mw=unavailable_mw,
+        reported_cause=_text(notice.reported_cause),
     )
 
 
@@ -208,6 +225,16 @@ def _remit_severity(unavailable_capacity_mw: float | None) -> str:
 
 def _format_megawatts(value: float) -> str:
     return f"{value:,.0f}" if float(value).is_integer() else f"{value:,.1f}"
+
+
+def _remit_title(subject: str, unavailable_mw: float | None) -> str:
+    if unavailable_mw is not None and unavailable_mw > 0:
+        return f"{subject} unavailable · {_format_megawatts(unavailable_mw)} MW"
+    return f"{subject} reported unavailable"
+
+
+def _non_negative(value: float | None) -> float | None:
+    return value if value is not None and value >= 0 else None
 
 
 def _text(value: str | None) -> str | None:

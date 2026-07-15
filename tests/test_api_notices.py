@@ -67,8 +67,22 @@ def test_remit_mapping_preserves_reported_semantics_and_source() -> None:
     assert event.is_authoritatively_reported is True
     assert event.source_ids == ["elexon.remit"]
     assert event.severity == "important"
+    assert event.title == "Example Unit 1 unavailable · 504 MW"
     assert "reported unavailability of 504 MW" in event.summary
     assert "Reported cause: Equipment repair work" in event.summary
+    assert event.event_kind is not None
+    assert event.event_kind.value == "generation_unavailability"
+    assert event.status == "Active"
+    assert event.ended_at == NOW + timedelta(hours=1)
+    assert event.asset_id == "asset-1"
+    assert event.asset_name == "Example Unit 1"
+    assert event.fuel_type == "nuclear"
+    assert event.normal_capacity_mw == 610
+    assert event.unavailable_mw == 504
+    assert event.reported_cause == "Equipment repair work"
+    assert event.location_status == "not_provided"
+    assert event.scope == "national_grid_context"
+    assert event.consumer_impact == "not_a_local_power_cut"
 
 
 def test_system_warning_sorts_ahead_of_small_unavailability() -> None:
@@ -85,6 +99,7 @@ def test_negative_capacity_field_is_not_presented_as_negative_unavailability() -
     assert event.severity == "info"
     assert "-12 MW" not in event.summary
     assert "do not state a positive unavailable amount" in event.summary
+    assert event.unavailable_mw is None
 
 
 def test_generic_remit_heading_uses_the_affected_unit_as_the_public_title() -> None:
@@ -92,7 +107,7 @@ def test_generic_remit_heading_uses_the_affected_unit_as_the_public_title() -> N
         notice(heading="REMIT Information", affected_unit="DRAXX-4")
     )
 
-    assert event.title == "DRAXX-4: reported unavailability"
+    assert event.title == "DRAXX-4 unavailable · 504 MW"
 
 
 class NoticeRepository:
