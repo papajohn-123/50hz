@@ -121,6 +121,13 @@ class AssetReference:
     eic: str | None
     location: GeoPoint | None
     provenance: Provenance
+    transmission_loss_factor: float | None = None
+    working_day_credit_assessment_import_capability_mw: float | None = None
+    non_working_day_credit_assessment_import_capability_mw: float | None = None
+    working_day_credit_assessment_export_capability_mw: float | None = None
+    non_working_day_credit_assessment_export_capability_mw: float | None = None
+    credit_qualifying_status: bool | None = None
+    demand_in_production: bool | None = None
 
     def __post_init__(self) -> None:
         object.__setattr__(self, "asset_id", _required_text(self.asset_id, "asset_id"))
@@ -133,7 +140,7 @@ class PlannedProfileSegment:
     """One participant-submitted linear Physical Notification segment."""
 
     asset_id: str
-    source_asset_id: str
+    source_asset_id: str | None
     settlement_date: date
     settlement_period: int
     start: datetime
@@ -144,11 +151,12 @@ class PlannedProfileSegment:
 
     def __post_init__(self) -> None:
         object.__setattr__(self, "asset_id", _required_text(self.asset_id, "asset_id"))
-        object.__setattr__(
-            self,
-            "source_asset_id",
-            _required_text(self.source_asset_id, "source_asset_id"),
-        )
+        if self.source_asset_id is not None:
+            object.__setattr__(
+                self,
+                "source_asset_id",
+                _required_text(self.source_asset_id, "source_asset_id"),
+            )
         object.__setattr__(self, "start", _utc(self.start, "start"))
         object.__setattr__(self, "end", _utc(self.end, "end"))
         if self.start >= self.end:
@@ -176,18 +184,19 @@ class PlannedProfileSegment:
 @dataclass(frozen=True, slots=True)
 class PlannedProfile:
     asset_id: str
-    source_asset_id: str
+    source_asset_id: str | None
     settlement_date: date
     settlement_period: int
     segments: tuple[PlannedProfileSegment, ...]
 
     def __post_init__(self) -> None:
         object.__setattr__(self, "asset_id", _required_text(self.asset_id, "asset_id"))
-        object.__setattr__(
-            self,
-            "source_asset_id",
-            _required_text(self.source_asset_id, "source_asset_id"),
-        )
+        if self.source_asset_id is not None:
+            object.__setattr__(
+                self,
+                "source_asset_id",
+                _required_text(self.source_asset_id, "source_asset_id"),
+            )
         if not self.segments:
             raise ValueError("planned profile must contain at least one segment")
         previous: PlannedProfileSegment | None = None
@@ -244,7 +253,7 @@ class PlannedOperatingLevel:
     """An interpolated reported plan.  It is explicitly not actual output."""
 
     asset_id: str
-    source_asset_id: str
+    source_asset_id: str | None
     settlement_date: date
     settlement_period: int
     at: datetime
@@ -270,8 +279,11 @@ class SettledMeteredEnergy:
     duration-normalized representation of the MWh quantity.
     """
 
+    # Canonical external key used by the shared ``assets`` table. National
+    # Grid's identifier is preferred; B1610 rows that legitimately omit it use
+    # the namespaced Elexon identifier (``elexon:<bmUnit>``) instead.
     asset_id: str
-    source_asset_id: str
+    source_asset_id: str | None
     settlement_date: date
     settlement_period: int
     interval_start: datetime
@@ -279,14 +291,27 @@ class SettledMeteredEnergy:
     energy_mwh: float
     psr_type: str | None
     provenance: Provenance
+    national_grid_bm_unit: str | None = None
 
     def __post_init__(self) -> None:
         object.__setattr__(self, "asset_id", _required_text(self.asset_id, "asset_id"))
-        object.__setattr__(
-            self,
-            "source_asset_id",
-            _required_text(self.source_asset_id, "source_asset_id"),
-        )
+        if self.source_asset_id is not None:
+            object.__setattr__(
+                self,
+                "source_asset_id",
+                _required_text(self.source_asset_id, "source_asset_id"),
+            )
+        if self.national_grid_bm_unit is not None:
+            object.__setattr__(
+                self,
+                "national_grid_bm_unit",
+                _required_text(
+                    self.national_grid_bm_unit,
+                    "national_grid_bm_unit",
+                ),
+            )
+        if self.source_asset_id is None and self.national_grid_bm_unit is None:
+            raise ValueError("metered energy requires at least one official BM-unit ID")
         object.__setattr__(
             self,
             "interval_start",

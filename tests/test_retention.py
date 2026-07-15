@@ -15,12 +15,14 @@ from pydantic import ValidationError
 import app.runtime as runtime_module
 from app.config import Settings
 from app.db.models import (
+    B1610SettledEnergyRevision,
     CarbonObservation,
     DemandObservation,
     ForecastObservation,
     FrequencyObservation,
     GenerationObservation,
     InterconnectorObservation,
+    PhysicalNotificationSegmentCurrent,
     ReportedNotice,
 )
 from app.persistence.retention import RawPayloadRetentionRepository
@@ -123,6 +125,8 @@ def test_normalized_evidence_foreign_keys_are_set_null_on_raw_deletion() -> None
         CarbonObservation,
         ForecastObservation,
         ReportedNotice,
+        PhysicalNotificationSegmentCurrent,
+        B1610SettledEnergyRevision,
     )
     for model in models:
         foreign_key = next(iter(model.__table__.c.raw_payload_id.foreign_keys))

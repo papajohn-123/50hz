@@ -51,7 +51,7 @@ def test_production_plan_has_every_continuous_job_once_and_no_postcode_job() -> 
         asyncio.run(ukpn.aclose())
 
     job_ids = {schedule.job_id for schedule in schedules}
-    assert len(schedules) == 12
+    assert len(schedules) == 15
     assert job_ids == ELEXON_JOB_IDS | CARBON_JOB_IDS | UKPN_JOB_IDS
     assert len(job_ids) == len(schedules)
     assert all("postcode" not in job_id for job_id in job_ids)
@@ -103,6 +103,9 @@ def test_source_aware_poll_and_overlap_policy() -> None:
         asyncio.run(ukpn.aclose())
 
     expected = {
+        "elexon.bm-unit-reference": (timedelta(days=1), timedelta(hours=1)),
+        "elexon.pn": (timedelta(minutes=10), timedelta(minutes=10)),
+        "elexon.b1610": (timedelta(days=1), timedelta(hours=1)),
         "elexon.fuelinst": (timedelta(minutes=2), timedelta(minutes=10)),
         "elexon.indo": (timedelta(minutes=5), timedelta(hours=1)),
         "elexon.freq": (timedelta(minutes=1), timedelta(minutes=10)),
@@ -140,12 +143,42 @@ def test_source_aware_poll_and_overlap_policy() -> None:
         assert schedules[job_id].reconcile_every is None
     for job_id in UKPN_JOB_IDS:
         assert schedules[job_id].reconcile_every is None
+    for job_id in {
+        "elexon.bm-unit-reference",
+        "elexon.pn",
+        "elexon.b1610",
+    }:
+        assert schedules[job_id].reconcile_every is None
     assert schedules["elexon.remit.unavailability"].reconcile_every == timedelta(
         hours=1
     )
     assert schedules["elexon.ndf"].reconcile_every == timedelta(hours=6)
     assert schedules["elexon.windfor"].reconcile_every == timedelta(hours=12)
     assert schedules["elexon.syswarn"].reconcile_every == timedelta(hours=6)
+
+
+def test_bm_unit_jobs_are_ordered_reference_first_and_never_poll_pn_too_fast() -> None:
+    elexon, carbon, ukpn = clients()
+    try:
+        schedules = build_production_schedules(
+            elexon_client=elexon,
+            carbon_client=carbon,
+            ukpn_client=ukpn,
+        )
+    finally:
+        asyncio.run(elexon.aclose())
+        asyncio.run(carbon.aclose())
+        asyncio.run(ukpn.aclose())
+
+    job_ids = [schedule.job_id for schedule in schedules]
+    assert job_ids[:3] == [
+        "elexon.bm-unit-reference",
+        "elexon.pn",
+        "elexon.b1610",
+    ]
+    by_id = {schedule.job_id: schedule for schedule in schedules}
+    assert by_id["elexon.pn"].cadence >= timedelta(minutes=10)
+    assert by_id["elexon.b1610"].cadence == timedelta(days=1)
 
 
 def test_carbon_forecast_wrapper_queries_forward_48_hours_but_checkpoints_tick() -> None:
@@ -205,6 +238,6 @@ def test_owned_bundle_creates_distinct_clients_and_closes_as_one_lifecycle() -> 
             assert bundle.elexon_client is not bundle.carbon_client
             assert bundle.ukpn_client is not bundle.elexon_client
             assert bundle.ukpn_client is not bundle.carbon_client
-            assert len(bundle.schedules) == 12
+            assert len(bundle.schedules) == 15
 
     asyncio.run(scenario())

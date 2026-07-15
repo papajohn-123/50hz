@@ -196,6 +196,31 @@ def test_b1610_derives_fall_back_period_50_without_local_time_ambiguity() -> Non
     assert record.average_mw == 50
 
 
+def test_b1610_preserves_elexon_only_units_with_a_namespaced_asset_key() -> None:
+    batch = parse_b1610_metered_energy(
+        [
+            {
+                "dataset": "B1610",
+                "psrType": "Generation",
+                "bmUnit": "2__AALAB000",
+                "nationalGridBmUnitId": None,
+                "settlementDate": "2026-06-10",
+                "settlementPeriod": 3,
+                "halfHourEndTime": "2026-06-10T00:30:00",
+                "quantity": -0.084,
+            }
+        ],
+        retrieved_at=datetime(2026, 6, 20, 0, 0, tzinfo=UTC),
+    )
+    record = batch.records[0]
+
+    assert batch.warnings == ()
+    assert record.asset_id == "elexon:2__AALAB000"
+    assert record.national_grid_bm_unit is None
+    assert record.source_asset_id == "2__AALAB000"
+    assert record.energy_mwh == -0.084
+
+
 @pytest.mark.parametrize(
     ("parser", "payload"),
     [

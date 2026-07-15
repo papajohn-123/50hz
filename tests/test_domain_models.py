@@ -217,6 +217,8 @@ def test_initial_metadata_contains_all_foundation_tables() -> None:
         "reported_notice_explanations",
         "distribution_incident_revisions",
         "distribution_incident_current",
+        "physical_notification_segments_current",
+        "b1610_settled_energy_revisions",
     }
 
     assert expected == set(Base.metadata.tables)

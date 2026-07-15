@@ -25,7 +25,7 @@ def test_history_materialization_schema_is_linear_revision_safe_and_indexed() ->
 
     assert migration is not None
     assert migration.down_revision == "20260712_0007"
-    assert scripts.get_current_head() == "20260715_0010"
+    assert scripts.get_current_head() == "20260715_0011"
     assert HistoryMaterializationRun.__table__.name == "history_materialization_runs"
     assert MetricDefinition.__table__.c.stable_metric_id.nullable is False
 

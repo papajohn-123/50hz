@@ -6,16 +6,23 @@ import uuid
 from collections import defaultdict
 from collections.abc import Callable, Mapping, Sequence
 from dataclasses import dataclass
-from datetime import UTC, datetime
+from datetime import UTC, date, datetime
 from enum import Enum
 from typing import Any
 from uuid import UUID
 
-from sqlalchemy import Boolean, func, literal_column, or_, select, tuple_, update
+from sqlalchemy import Boolean, delete, func, literal_column, or_, select, tuple_, update
 from sqlalchemy.dialects.postgresql import insert as pg_insert
 from sqlalchemy.ext.asyncio import AsyncSession
 
+from app.assets.models import (
+    AssetReference,
+    PlannedProfileSegment,
+    SettledMeteredEnergy,
+)
 from app.db.models import (
+    Asset,
+    B1610SettledEnergyRevision,
     CarbonObservation,
     DemandObservation,
     DistributionIncidentCurrent,
@@ -25,6 +32,7 @@ from app.db.models import (
     GenerationObservation,
     IngestionRun,
     InterconnectorObservation,
+    PhysicalNotificationSegmentCurrent,
     RawPayload,
     ReportedNotice,
     SourceMetadata,
@@ -32,15 +40,20 @@ from app.db.models import (
 from app.domain.enums import IngestionRunStatus
 from app.persistence.event_lifecycle import materialize_reported_notice_rows
 from app.persistence.records import (
+    BM_UNIT_REFERENCE_SOURCE_ID,
+    bm_unit_reference_source_metadata_values,
     job_source_metadata_values,
     map_carbon_actual_record,
     map_carbon_forecast_record,
+    map_b1610_settled_energy,
+    map_asset_reference,
     map_demand_forecast_record,
     map_demand_record,
     map_distribution_incident_record,
     map_frequency_record,
     map_generation_record,
     map_interconnector_record,
+    map_physical_notification_segment,
     map_remit_notice_record,
     map_system_warning_record,
     map_wind_forecast_record,
@@ -71,6 +84,7 @@ SessionFactory = Callable[[], AsyncSession]
 _RUN_NAMESPACE = UUID("b1f130e2-ec87-5a79-88a3-a3ed99a5321c")
 _RAW_PAYLOAD_NAMESPACE = UUID("40321ac1-3394-58d2-9cf7-33dbb7187b6c")
 _DISTRIBUTION_CURRENT_NAMESPACE = UUID("d9b24b44-6241-5089-b0f2-91f64325b921")
+_BM_UNIT_ASSET_NAMESPACE = UUID("5834312d-f415-51a7-acb7-cc5dff551b73")
 
 
 @dataclass(frozen=True, slots=True)
@@ -78,6 +92,7 @@ class _UpsertSpec:
     model: type
     conflict_columns: tuple[str, ...]
     update_columns: tuple[str, ...] = ()
+    change_columns: tuple[str, ...] = ()
     identity_columns: tuple[str, ...] = ()
     factual_columns: tuple[str, ...] = ()
 
@@ -267,6 +282,81 @@ _DISTRIBUTION_INCIDENT_SPEC = _UpsertSpec(
         "incident_category",
     ),
 )
+_ASSET_REFERENCE_SPEC = _UpsertSpec(
+    model=Asset,
+    conflict_columns=("source_id", "external_id"),
+    update_columns=(
+        "asset_type",
+        "display_name",
+        "fuel_type",
+        "region_code",
+        "counterparty",
+        "capacity_mw",
+        "latitude",
+        "longitude",
+        "map_x",
+        "map_y",
+        "active",
+        "attributes",
+    ),
+)
+_PHYSICAL_NOTIFICATION_SPEC = _UpsertSpec(
+    model=PhysicalNotificationSegmentCurrent,
+    conflict_columns=(
+        "source_id",
+        "national_grid_bm_unit",
+        "settlement_date",
+        "settlement_period",
+        "segment_start",
+        "segment_end",
+    ),
+    update_columns=(
+        "raw_payload_id",
+        "asset_id",
+        "elexon_bm_unit",
+        "level_from_mw",
+        "level_to_mw",
+        "classification",
+        "retrieved_at",
+        "attributes",
+    ),
+    # A later retrieval of the identical submitted plan is delivery metadata,
+    # not a changed plan. When a factual level does change, every update column
+    # (including its new provenance) is refreshed together.
+    change_columns=(
+        "asset_id",
+        "elexon_bm_unit",
+        "level_from_mw",
+        "level_to_mw",
+        "classification",
+    ),
+)
+_B1610_SETTLED_ENERGY_SPEC = _UpsertSpec(
+    model=B1610SettledEnergyRevision,
+    conflict_columns=(
+        "source_id",
+        "asset_id",
+        "settlement_date",
+        "settlement_period",
+        "revision",
+    ),
+    identity_columns=(
+        "source_id",
+        "asset_id",
+        "settlement_date",
+        "settlement_period",
+    ),
+    factual_columns=(
+        "national_grid_bm_unit",
+        "elexon_bm_unit",
+        "interval_start",
+        "interval_end",
+        "energy_mwh",
+        "average_mw",
+        "psr_type",
+        "classification",
+    ),
+)
 
 
 class PostgresIngestionRepository:
@@ -433,14 +523,60 @@ class PostgresIngestionRepository:
                     )
                     raw_payload_id = raw_payload_result.scalar_one()
 
+                inserted = 0
+                updated_count = 0
+                unchanged = 0
+                asset_references = tuple(
+                    record
+                    for record in result.records
+                    if isinstance(record, AssetReference)
+                )
+                if asset_references:
+                    asset_inserted, asset_updated, asset_unchanged = (
+                        await _persist_asset_reference_snapshot(
+                            session,
+                            source_id=source_id,
+                            records=asset_references,
+                        )
+                    )
+                    inserted += asset_inserted
+                    updated_count += asset_updated
+                    unchanged += asset_unchanged
+
+                dependent_records = tuple(
+                    record
+                    for record in result.records
+                    if isinstance(
+                        record,
+                        (PlannedProfileSegment, SettledMeteredEnergy),
+                    )
+                )
+                asset_ids = (
+                    await _ensure_bm_unit_assets(session, dependent_records)
+                    if dependent_records
+                    else {}
+                )
                 batches = _map_record_batches(
                     result.records,
                     source_id=source_id,
                     raw_payload_id=raw_payload_id,
+                    asset_ids=asset_ids,
                 )
-                inserted = 0
-                updated_count = 0
-                unchanged = 0
+                if _is_physical_notification_snapshot(result):
+                    pn_rows = next(
+                        (
+                            rows
+                            for spec, rows in batches
+                            if spec is _PHYSICAL_NOTIFICATION_SPEC
+                        ),
+                        [],
+                    )
+                    await _prune_physical_notification_scope(
+                        session,
+                        source_id=source_id,
+                        metadata=result.metadata,
+                        rows=pn_rows,
+                    )
                 reported_notice_rows: list[dict[str, Any]] = []
                 for spec, rows in batches:
                     if spec is _REPORTED_NOTICE_SPEC:
@@ -602,7 +738,7 @@ def _observation_upsert(spec: _UpsertSpec, rows: Sequence[dict[str, Any]]):
             getattr(spec.model, column).is_distinct_from(
                 getattr(statement.excluded, column)
             )
-            for column in spec.update_columns
+            for column in (spec.change_columns or spec.update_columns)
         )
     )
     return statement.on_conflict_do_update(
@@ -756,10 +892,34 @@ def _map_record_batches(
     *,
     source_id: str,
     raw_payload_id: UUID,
+    asset_ids: Mapping[str, UUID] | None = None,
 ) -> tuple[tuple[_UpsertSpec, list[dict[str, Any]]], ...]:
+    asset_ids = asset_ids or {}
     grouped: dict[_UpsertSpec, list[dict[str, Any]]] = defaultdict(list)
     for record in records:
-        if isinstance(record, GenerationRecord):
+        if isinstance(record, AssetReference):
+            # Reference snapshots are handled first so dependent FK rows can be
+            # resolved in the same transaction.
+            continue
+        if isinstance(record, PlannedProfileSegment):
+            grouped[_PHYSICAL_NOTIFICATION_SPEC].append(
+                map_physical_notification_segment(
+                    record,
+                    source_id=source_id,
+                    raw_payload_id=raw_payload_id,
+                    asset_id=_required_asset_id(asset_ids, record.asset_id),
+                )
+            )
+        elif isinstance(record, SettledMeteredEnergy):
+            grouped[_B1610_SETTLED_ENERGY_SPEC].append(
+                map_b1610_settled_energy(
+                    record,
+                    source_id=source_id,
+                    raw_payload_id=raw_payload_id,
+                    asset_id=_required_asset_id(asset_ids, record.asset_id),
+                )
+            )
+        elif isinstance(record, GenerationRecord):
             grouped[_GENERATION_SPEC].append(
                 map_generation_record(
                     record, source_id=source_id, raw_payload_id=raw_payload_id
@@ -841,12 +1001,17 @@ def _map_record_batches(
         _FORECAST_SPEC,
         _REPORTED_NOTICE_SPEC,
         _DISTRIBUTION_INCIDENT_SPEC,
+        _PHYSICAL_NOTIFICATION_SPEC,
+        _B1610_SETTLED_ENERGY_SPEC,
     )
     return tuple((spec, grouped[spec]) for spec in ordered_specs if grouped[spec])
 
 
 def _validate_record_types(records: Sequence[Any]) -> None:
     supported = (
+        AssetReference,
+        PlannedProfileSegment,
+        SettledMeteredEnergy,
         GenerationRecord,
         DemandRecord,
         FrequencyRecord,
@@ -878,6 +1043,278 @@ def _is_distribution_snapshot(result: AdapterResult[Any]) -> bool:
         result.source_id == "ukpn.live_faults"
         and result.dataset.upper() == "LIVE_FAULTS"
     )
+
+
+def _is_physical_notification_snapshot(result: AdapterResult[Any]) -> bool:
+    return result.source_id == "elexon.pn" and result.dataset.upper() == "PN"
+
+
+def _required_asset_id(asset_ids: Mapping[str, UUID], external_id: str) -> UUID:
+    try:
+        return asset_ids[external_id]
+    except KeyError as exc:  # pragma: no cover - guarded by placeholder creation
+        raise ValueError(f"BM-unit asset was not resolved: {external_id}") from exc
+
+
+async def _persist_asset_reference_snapshot(
+    session: AsyncSession,
+    *,
+    source_id: str,
+    records: Sequence[AssetReference],
+) -> tuple[int, int, int]:
+    if source_id != BM_UNIT_REFERENCE_SOURCE_ID:
+        raise ValueError("BM-unit references must use their canonical source ID")
+    rows, duplicate_count = _merge_asset_reference_rows(
+        [map_asset_reference(record, source_id=source_id) for record in records]
+    )
+    for row in rows:
+        row["id"] = uuid.uuid5(
+            _BM_UNIT_ASSET_NAMESPACE,
+            f"{source_id}|{row['external_id']}",
+        )
+
+    inserted = 0
+    updated_count = 0
+    unchanged = duplicate_count
+    for write_rows in _normalized_write_batches(rows):
+        result = await session.execute(
+            _observation_upsert(_ASSET_REFERENCE_SPEC, write_rows)
+        )
+        flags = list(result.scalars().all())
+        inserted += sum(1 for flag in flags if bool(flag))
+        updated_count += sum(1 for flag in flags if not bool(flag))
+        unchanged += len(write_rows) - len(flags)
+
+    external_ids = tuple(row["external_id"] for row in rows)
+    if external_ids:
+        deactivated = await session.execute(
+            update(Asset)
+            .where(
+                Asset.source_id == source_id,
+                Asset.asset_type == "bm_unit",
+                Asset.active.is_(True),
+                Asset.attributes["classification"].as_string() == "reference",
+                Asset.external_id.not_in(external_ids),
+            )
+            .values(active=False, updated_at=func.now())
+            .returning(Asset.id)
+        )
+        updated_count += len(deactivated.scalars().all())
+    return inserted, updated_count, unchanged
+
+
+def _merge_asset_reference_rows(
+    rows: Sequence[dict[str, Any]],
+) -> tuple[list[dict[str, Any]], int]:
+    """Collapse duplicate national IDs without discarding source variants."""
+
+    by_key: dict[tuple[Any, ...], dict[str, Any]] = {}
+    duplicate_count = 0
+    for candidate in rows:
+        key = tuple(
+            candidate[column]
+            for column in _ASSET_REFERENCE_SPEC.conflict_columns
+        )
+        existing = by_key.get(key)
+        if existing is None:
+            by_key[key] = candidate
+            continue
+        duplicate_count += 1
+        existing_attributes = existing["attributes"]
+        candidate_attributes = candidate["attributes"]
+        variants = list(existing_attributes.get("referenceVariants", ()))
+        if not variants:
+            variants.append(_reference_variant(existing_attributes))
+        next_variant = _reference_variant(candidate_attributes)
+        if next_variant not in variants:
+            variants.append(next_variant)
+        merged = dict(candidate)
+        merged["attributes"] = {
+            **candidate_attributes,
+            "referenceVariants": variants,
+        }
+        by_key[key] = merged
+    return list(by_key.values()), duplicate_count
+
+
+def _reference_variant(attributes: Mapping[str, Any]) -> dict[str, Any]:
+    return {
+        key: value
+        for key, value in attributes.items()
+        if key
+        not in {
+            "classification",
+            "locationStatus",
+            "provenance",
+            "referenceVariants",
+        }
+    }
+
+
+async def _ensure_bm_unit_assets(
+    session: AsyncSession,
+    records: Sequence[PlannedProfileSegment | SettledMeteredEnergy],
+) -> dict[str, UUID]:
+    """Create non-geographic placeholders when dependent data wins the race."""
+
+    await session.execute(
+        _source_metadata_upsert(bm_unit_reference_source_metadata_values())
+    )
+    by_external_id: dict[str, tuple[str | None, str | None]] = {}
+    for record in records:
+        national_grid_bm_unit = (
+            record.asset_id
+            if isinstance(record, PlannedProfileSegment)
+            else record.national_grid_bm_unit
+        )
+        by_external_id.setdefault(
+            record.asset_id,
+            (national_grid_bm_unit, record.source_asset_id),
+        )
+    placeholder_rows = [
+        {
+            "id": uuid.uuid5(
+                _BM_UNIT_ASSET_NAMESPACE,
+                f"{BM_UNIT_REFERENCE_SOURCE_ID}|{external_id}",
+            ),
+            "source_id": BM_UNIT_REFERENCE_SOURCE_ID,
+            "external_id": external_id,
+            "asset_type": "bm_unit",
+            "display_name": (
+                source_asset_id or national_grid_bm_unit or external_id
+            )[:160],
+            "fuel_type": None,
+            "region_code": None,
+            "counterparty": None,
+            "capacity_mw": None,
+            "latitude": None,
+            "longitude": None,
+            "map_x": None,
+            "map_y": None,
+            "active": True,
+            "attributes": {
+                "classification": "reference_placeholder",
+                "nationalGridBmUnit": national_grid_bm_unit,
+                "elexonBmUnit": source_asset_id,
+                "locationStatus": "not_provided_by_elexon",
+            },
+        }
+        for external_id, (
+            national_grid_bm_unit,
+            source_asset_id,
+        ) in by_external_id.items()
+    ]
+    for rows in _normalized_write_batches(placeholder_rows):
+        await session.execute(
+            pg_insert(Asset)
+            .values(list(rows))
+            .on_conflict_do_update(
+                index_elements=[Asset.source_id, Asset.external_id],
+                set_={"active": True, "updated_at": func.now()},
+            )
+        )
+    identifiers = tuple(by_external_id)
+    resolved = (
+        await session.execute(
+            select(Asset.external_id, Asset.id).where(
+                Asset.source_id == BM_UNIT_REFERENCE_SOURCE_ID,
+                Asset.external_id.in_(identifiers),
+            )
+        )
+    ).all()
+    asset_ids = {external_id: asset_id for external_id, asset_id in resolved}
+    missing = set(identifiers) - set(asset_ids)
+    if missing:
+        raise ValueError(f"failed to resolve {len(missing)} BM-unit asset(s)")
+    return asset_ids
+
+
+async def _prune_physical_notification_scope(
+    session: AsyncSession,
+    *,
+    source_id: str,
+    metadata: Mapping[str, Any],
+    rows: Sequence[dict[str, Any]],
+) -> None:
+    """Remove only rows absent from the adapter-declared PN query scope."""
+
+    raw_date = metadata.get("settlementDate")
+    raw_period = metadata.get("settlementPeriod")
+    all_units = metadata.get("allUnits")
+    bm_units = metadata.get("bmUnits")
+    if not isinstance(raw_date, str):
+        raise ValueError("PN snapshot metadata is missing settlementDate")
+    try:
+        settlement_date = date.fromisoformat(raw_date)
+    except ValueError as exc:
+        raise ValueError("PN snapshot settlementDate is invalid") from exc
+    if isinstance(raw_period, bool) or not isinstance(raw_period, int):
+        raise ValueError("PN snapshot settlementPeriod is invalid")
+    if not 1 <= raw_period <= 50:
+        raise ValueError("PN snapshot settlementPeriod is invalid")
+    if not isinstance(all_units, bool) or not isinstance(bm_units, list):
+        raise ValueError("PN snapshot unit scope is invalid")
+    if not all(isinstance(unit, str) and unit.strip() for unit in bm_units):
+        raise ValueError("PN snapshot BM-unit scope is invalid")
+    if all_units and bm_units:
+        raise ValueError("all-unit PN scope cannot also list BM units")
+    if not all_units and not bm_units:
+        raise ValueError("bounded PN scope must list at least one BM unit")
+
+    for row in rows:
+        if (
+            row["settlement_date"] != settlement_date
+            or row["settlement_period"] != raw_period
+        ):
+            raise ValueError("PN row escaped declared settlement scope")
+        if not all_units and row["elexon_bm_unit"] not in bm_units:
+            raise ValueError("PN row escaped declared BM-unit scope")
+
+    # This is a current-state table, not a PN history archive. Retire older
+    # periods for exactly the same declared unit scope before replacing current
+    # membership. Both deletes and the upsert remain in the ingestion transaction.
+    stale_periods = delete(PhysicalNotificationSegmentCurrent).where(
+        PhysicalNotificationSegmentCurrent.source_id == source_id,
+        or_(
+            PhysicalNotificationSegmentCurrent.settlement_date != settlement_date,
+            PhysicalNotificationSegmentCurrent.settlement_period != raw_period,
+        ),
+    )
+    if not all_units:
+        stale_periods = stale_periods.where(
+            PhysicalNotificationSegmentCurrent.elexon_bm_unit.in_(bm_units)
+        )
+    await session.execute(stale_periods)
+
+    scope = (
+        delete(PhysicalNotificationSegmentCurrent)
+        .where(
+            PhysicalNotificationSegmentCurrent.source_id == source_id,
+            PhysicalNotificationSegmentCurrent.settlement_date == settlement_date,
+            PhysicalNotificationSegmentCurrent.settlement_period == raw_period,
+        )
+    )
+    if not all_units:
+        scope = scope.where(
+            PhysicalNotificationSegmentCurrent.elexon_bm_unit.in_(bm_units)
+        )
+    present_keys = tuple(
+        (
+            row["national_grid_bm_unit"],
+            row["segment_start"],
+            row["segment_end"],
+        )
+        for row in rows
+    )
+    if present_keys:
+        scope = scope.where(
+            tuple_(
+                PhysicalNotificationSegmentCurrent.national_grid_bm_unit,
+                PhysicalNotificationSegmentCurrent.segment_start,
+                PhysicalNotificationSegmentCurrent.segment_end,
+            ).not_in(present_keys)
+        )
+    await session.execute(scope)
 
 
 async def _refresh_distribution_incident_current(

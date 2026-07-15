@@ -35,11 +35,12 @@ def parse_bm_unit_references(
     payload: Any,
     *,
     retrieved_at: datetime,
+    endpoint: str = BM_UNIT_REFERENCE_ENDPOINT,
 ) -> ParsedBatch[AssetReference]:
     provenance = Provenance(
         source_id="elexon",
         dataset="BM_UNIT_REFERENCE",
-        endpoint=BM_UNIT_REFERENCE_ENDPOINT,
+        endpoint=endpoint,
         retrieved_at=retrieved_at,
         evidence_kind=EvidenceKind.REFERENCE,
     )
@@ -54,11 +55,12 @@ def parse_physical_notifications(
     payload: Any,
     *,
     retrieved_at: datetime,
+    endpoint: str = PHYSICAL_NOTIFICATION_ENDPOINT,
 ) -> ParsedBatch[PlannedProfileSegment]:
     provenance = Provenance(
         source_id="elexon",
         dataset="PN",
-        endpoint=PHYSICAL_NOTIFICATION_ENDPOINT,
+        endpoint=endpoint,
         retrieved_at=retrieved_at,
         evidence_kind=EvidenceKind.REPORTED_PLAN,
     )
@@ -73,11 +75,12 @@ def parse_b1610_metered_energy(
     payload: Any,
     *,
     retrieved_at: datetime,
+    endpoint: str = B1610_ENDPOINT,
 ) -> ParsedBatch[SettledMeteredEnergy]:
     provenance = Provenance(
         source_id="elexon",
         dataset="B1610",
-        endpoint=B1610_ENDPOINT,
+        endpoint=endpoint,
         retrieved_at=retrieved_at,
         evidence_kind=EvidenceKind.SETTLED_METERED,
     )
@@ -100,7 +103,7 @@ def consolidate_physical_notifications(
     """
 
     grouped: dict[
-        tuple[str, str, date, int],
+        tuple[str, str | None, date, int],
         list[PlannedProfileSegment],
     ] = defaultdict(list)
     for segment in segments:
@@ -148,7 +151,7 @@ def consolidate_physical_notifications(
             key=lambda profile: (
                 profile.settlement_date,
                 profile.settlement_period,
-                profile.source_asset_id,
+                profile.source_asset_id or "",
             ),
         )
     )
@@ -219,6 +222,25 @@ def _parse_bm_unit_reference(
         eic=_optional_text(row, "eic"),
         location=location,
         provenance=provenance,
+        transmission_loss_factor=_optional_number(row, "transmissionLossFactor"),
+        working_day_credit_assessment_import_capability_mw=_optional_number(
+            row,
+            "workingDayCreditAssessmentImportCapability",
+        ),
+        non_working_day_credit_assessment_import_capability_mw=_optional_number(
+            row,
+            "nonWorkingDayCreditAssessmentImportCapability",
+        ),
+        working_day_credit_assessment_export_capability_mw=_optional_number(
+            row,
+            "workingDayCreditAssessmentExportCapability",
+        ),
+        non_working_day_credit_assessment_export_capability_mw=_optional_number(
+            row,
+            "nonWorkingDayCreditAssessmentExportCapability",
+        ),
+        credit_qualifying_status=_optional_bool(row, "creditQualifyingStatus"),
+        demand_in_production=_optional_bool(row, "demandInProductionFlag"),
     )
 
 
@@ -237,7 +259,7 @@ def _parse_physical_notification(
         asset_id=_text(
             _required(row, "nationalGridBmUnit", "nationalGridBmUnitId")
         ),
-        source_asset_id=_text(_required(row, "bmUnit", "elexonBmUnit")),
+        source_asset_id=_optional_text(row, "bmUnit", "elexonBmUnit"),
         settlement_date=settlement_date,
         settlement_period=settlement_period,
         start=_datetime(_required(row, "timeFrom"), "timeFrom"),
@@ -271,11 +293,21 @@ def _parse_b1610(
     )
     if reported_end != period.end_utc:
         raise ValueError("halfHourEndTime does not match settlement date/period")
+    national_grid_bm_unit = _optional_text(
+        row,
+        "nationalGridBmUnitId",
+        "nationalGridBmUnit",
+    )
+    elexon_bm_unit = _optional_text(row, "bmUnit", "elexonBmUnit")
+    if national_grid_bm_unit is None and elexon_bm_unit is None:
+        raise KeyError("missing nationalGridBmUnitId/nationalGridBmUnit and bmUnit")
+    canonical_asset_id = national_grid_bm_unit
+    if canonical_asset_id is None:
+        assert elexon_bm_unit is not None  # guarded above
+        canonical_asset_id = f"elexon:{elexon_bm_unit}"
     return SettledMeteredEnergy(
-        asset_id=_text(
-            _required(row, "nationalGridBmUnitId", "nationalGridBmUnit")
-        ),
-        source_asset_id=_text(_required(row, "bmUnit", "elexonBmUnit")),
+        asset_id=canonical_asset_id,
+        source_asset_id=elexon_bm_unit,
         settlement_date=settlement_date,
         settlement_period=settlement_period,
         interval_start=period.start_utc,
@@ -283,6 +315,7 @@ def _parse_b1610(
         energy_mwh=_number(_required(row, "quantity"), "quantity"),
         psr_type=_optional_text(row, "psrType"),
         provenance=provenance,
+        national_grid_bm_unit=national_grid_bm_unit,
     )
 
 

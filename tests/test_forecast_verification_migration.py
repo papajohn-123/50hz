@@ -25,7 +25,7 @@ def test_forecast_verification_schema_is_linear_append_only_and_indexed() -> Non
 
     assert migration is not None
     assert migration.down_revision == "20260712_0008"
-    assert scripts.get_current_head() == "20260715_0010"
+    assert scripts.get_current_head() == "20260715_0011"
     assert ForecastVerificationPair.__table__.name == "forecast_verification_pairs"
     assert ForecastVerificationResult.__table__.name == "forecast_verification_results"
     assert ForecastVerificationRun.__table__.name == "forecast_verification_runs"

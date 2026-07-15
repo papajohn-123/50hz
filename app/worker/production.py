@@ -11,6 +11,11 @@ from dataclasses import dataclass, replace
 from datetime import UTC, datetime, timedelta
 from typing import Any
 
+from app.assets.adapters import (
+    B1610DelayedHistoryAdapter,
+    BMUnitReferenceAdapter,
+    PhysicalNotificationAdapter,
+)
 from app.sources.client import (
     DEFAULT_ELEXON_BASE_URL,
     DEFAULT_NESO_CARBON_BASE_URL,
@@ -39,6 +44,9 @@ from app.worker.scheduler import PollSchedule
 ELEXON_JOB_IDS = frozenset(
     {
         "elexon.fuelinst",
+        "elexon.bm-unit-reference",
+        "elexon.pn",
+        "elexon.b1610",
         "elexon.indo",
         "elexon.freq",
         "elexon.interconnectors",
@@ -114,6 +122,45 @@ def build_production_schedules(
     )
 
     schedules = (
+        # The complete reference catalogue is small and changes slowly. It runs
+        # first so most PN/B1610 rows resolve directly; persistence also creates
+        # non-geographic placeholders if a later job wins a startup race.
+        PollSchedule(
+            job_id="elexon.bm-unit-reference",
+            adapter=BMUnitReferenceAdapter(elexon_client),
+            cadence=timedelta(days=1),
+            overlap=timedelta(hours=1),
+            initial_lookback=timedelta(days=1),
+            max_incremental_lookback=timedelta(days=7),
+            reconcile_every=None,
+            reconcile_lookback=timedelta(days=1),
+        ),
+        # PN is a participant-submitted plan, queried for one current settlement
+        # period at a conservative ten-minute cadence. It is never presented as
+        # metered output.
+        PollSchedule(
+            job_id="elexon.pn",
+            adapter=PhysicalNotificationAdapter(elexon_client),
+            cadence=timedelta(minutes=10),
+            overlap=timedelta(minutes=10),
+            initial_lookback=timedelta(minutes=30),
+            max_incremental_lookback=timedelta(hours=2),
+            reconcile_every=None,
+            reconcile_lookback=timedelta(hours=1),
+        ),
+        # B1610 is delayed settlement data. The adapter chooses bounded days at
+        # least five days behind operation and revisits an older day for source
+        # corrections; this scheduler never asks it for a live window.
+        PollSchedule(
+            job_id="elexon.b1610",
+            adapter=B1610DelayedHistoryAdapter(elexon_client),
+            cadence=timedelta(days=1),
+            overlap=timedelta(hours=1),
+            initial_lookback=timedelta(days=1),
+            max_incremental_lookback=timedelta(days=7),
+            reconcile_every=None,
+            reconcile_lookback=timedelta(days=1),
+        ),
         # FUELINST is published every five minutes.  A two-minute poll limits
         # detection latency to two minutes without approaching source rate limits.
         PollSchedule(

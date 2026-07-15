@@ -240,6 +240,161 @@ class Asset(TimestampMixin, Base):
     )
 
 
+class PhysicalNotificationSegmentCurrent(TimestampMixin, Base):
+    """Latest participant-submitted PN segment for a BM unit and period.
+
+    This table is current-state only. A successful bounded PN query atomically
+    replaces membership for the queried BM-unit/settlement-period scope.
+    """
+
+    __tablename__ = "physical_notification_segments_current"
+
+    id: Mapped[uuid.UUID] = mapped_column(Uuid, primary_key=True, default=uuid.uuid4)
+    source_id: Mapped[str] = mapped_column(
+        ForeignKey("source_metadata.id", ondelete="RESTRICT"), nullable=False
+    )
+    raw_payload_id: Mapped[uuid.UUID | None] = mapped_column(
+        ForeignKey("raw_payloads.id", ondelete="SET NULL")
+    )
+    asset_id: Mapped[uuid.UUID] = mapped_column(
+        ForeignKey("assets.id", ondelete="RESTRICT"), nullable=False
+    )
+    national_grid_bm_unit: Mapped[str] = mapped_column(String(120), nullable=False)
+    elexon_bm_unit: Mapped[str | None] = mapped_column(String(120))
+    settlement_date: Mapped[date] = mapped_column(Date, nullable=False)
+    settlement_period: Mapped[int] = mapped_column(SmallInteger, nullable=False)
+    segment_start: Mapped[datetime] = mapped_column(
+        DateTime(timezone=True), nullable=False
+    )
+    segment_end: Mapped[datetime] = mapped_column(DateTime(timezone=True), nullable=False)
+    level_from_mw: Mapped[float] = mapped_column(Float, nullable=False)
+    level_to_mw: Mapped[float] = mapped_column(Float, nullable=False)
+    classification: Mapped[str] = mapped_column(
+        String(32),
+        nullable=False,
+        default="reported_plan",
+        server_default="reported_plan",
+    )
+    retrieved_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), nullable=False)
+    attributes: Mapped[dict[str, Any]] = mapped_column(
+        JSON_DOCUMENT, nullable=False, default=dict, server_default=text("'{}'")
+    )
+
+    __table_args__ = (
+        UniqueConstraint(
+            "source_id",
+            "national_grid_bm_unit",
+            "settlement_date",
+            "settlement_period",
+            "segment_start",
+            "segment_end",
+            name="uq_pn_current_segment",
+        ),
+        CheckConstraint(
+            "settlement_period BETWEEN 1 AND 50",
+            name="valid_pn_current_settlement_period",
+        ),
+        CheckConstraint(
+            "segment_end > segment_start",
+            name="valid_pn_current_segment_window",
+        ),
+        CheckConstraint(
+            "classification = 'reported_plan'",
+            name="pn_current_reported_plan_only",
+        ),
+        Index(
+            "ix_pn_current_period_unit",
+            "settlement_date",
+            "settlement_period",
+            "national_grid_bm_unit",
+        ),
+        Index("ix_pn_current_asset_start", "asset_id", "segment_start"),
+    )
+
+
+class B1610SettledEnergyRevision(Base):
+    """Immutable revision of delayed half-hourly settled metered energy."""
+
+    __tablename__ = "b1610_settled_energy_revisions"
+
+    id: Mapped[uuid.UUID] = mapped_column(Uuid, primary_key=True, default=uuid.uuid4)
+    source_id: Mapped[str] = mapped_column(
+        ForeignKey("source_metadata.id", ondelete="RESTRICT"), nullable=False
+    )
+    raw_payload_id: Mapped[uuid.UUID | None] = mapped_column(
+        ForeignKey("raw_payloads.id", ondelete="SET NULL")
+    )
+    asset_id: Mapped[uuid.UUID] = mapped_column(
+        ForeignKey("assets.id", ondelete="RESTRICT"), nullable=False
+    )
+    national_grid_bm_unit: Mapped[str | None] = mapped_column(String(120))
+    elexon_bm_unit: Mapped[str | None] = mapped_column(String(120))
+    settlement_date: Mapped[date] = mapped_column(Date, nullable=False)
+    settlement_period: Mapped[int] = mapped_column(SmallInteger, nullable=False)
+    interval_start: Mapped[datetime] = mapped_column(
+        DateTime(timezone=True), nullable=False
+    )
+    interval_end: Mapped[datetime] = mapped_column(DateTime(timezone=True), nullable=False)
+    energy_mwh: Mapped[float] = mapped_column(Float, nullable=False)
+    average_mw: Mapped[float] = mapped_column(Float, nullable=False)
+    psr_type: Mapped[str | None] = mapped_column(String(120))
+    classification: Mapped[str] = mapped_column(
+        String(32),
+        nullable=False,
+        default="settled_metered",
+        server_default="settled_metered",
+    )
+    retrieved_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), nullable=False)
+    revision: Mapped[int] = mapped_column(
+        Integer, nullable=False, default=0, server_default="0"
+    )
+    attributes: Mapped[dict[str, Any]] = mapped_column(
+        JSON_DOCUMENT, nullable=False, default=dict, server_default=text("'{}'")
+    )
+    created_at: Mapped[datetime] = mapped_column(
+        DateTime(timezone=True), nullable=False, server_default=func.now()
+    )
+
+    __table_args__ = (
+        UniqueConstraint(
+            "source_id",
+            "asset_id",
+            "settlement_date",
+            "settlement_period",
+            "revision",
+            name="uq_b1610_energy_revision",
+        ),
+        CheckConstraint(
+            "national_grid_bm_unit IS NOT NULL OR elexon_bm_unit IS NOT NULL",
+            name="b1610_has_official_unit_id",
+        ),
+        CheckConstraint(
+            "revision >= 0", name="nonnegative_b1610_energy_revision"
+        ),
+        CheckConstraint(
+            "settlement_period BETWEEN 1 AND 50",
+            name="valid_b1610_settlement_period",
+        ),
+        CheckConstraint(
+            "interval_end > interval_start",
+            name="valid_b1610_interval_window",
+        ),
+        CheckConstraint(
+            "classification = 'settled_metered'",
+            name="b1610_settled_metered_only",
+        ),
+        Index(
+            "ix_b1610_latest_unit_period",
+            "national_grid_bm_unit",
+            "elexon_bm_unit",
+            "settlement_date",
+            "settlement_period",
+            "revision",
+        ),
+        Index("ix_b1610_asset_interval", "asset_id", "interval_start"),
+    )
+
+
 class GenerationObservation(ObservationMixin, Base):
     __tablename__ = "generation_observations"
 

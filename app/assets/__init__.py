@@ -1,5 +1,10 @@
 """Contracts for individually addressable electricity-system assets."""
 
+from app.assets.adapters import (
+    B1610DelayedHistoryAdapter,
+    BMUnitReferenceAdapter,
+    PhysicalNotificationAdapter,
+)
 from app.assets.elexon import (
     B1610_ENDPOINT,
     BM_UNIT_REFERENCE_ENDPOINT,
@@ -27,7 +32,9 @@ __all__ = [
     "AssetReference",
     "AssetSchemaError",
     "B1610_ENDPOINT",
+    "B1610DelayedHistoryAdapter",
     "BM_UNIT_REFERENCE_ENDPOINT",
+    "BMUnitReferenceAdapter",
     "EvidenceKind",
     "GeoPoint",
     "PHYSICAL_NOTIFICATION_ENDPOINT",
@@ -35,6 +42,7 @@ __all__ = [
     "PlannedOperatingLevel",
     "PlannedProfile",
     "PlannedProfileSegment",
+    "PhysicalNotificationAdapter",
     "PowerDirection",
     "Provenance",
     "SettledMeteredEnergy",

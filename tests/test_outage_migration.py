@@ -17,7 +17,7 @@ def test_distribution_incident_schema_is_linear_revisioned_and_privacy_reduced()
 
     assert migration is not None
     assert migration.down_revision == "20260712_0009"
-    assert scripts.get_current_head() == "20260715_0010"
+    assert scripts.get_current_head() == "20260715_0011"
     assert DistributionIncidentRevision.__table__.name == (
         "distribution_incident_revisions"
     )

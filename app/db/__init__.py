@@ -1,6 +1,7 @@
 from app.db.base import Base
 from app.db.models import (
     Asset,
+    B1610SettledEnergyRevision,
     CarbonObservation,
     ComparisonBaseline,
     DemandObservation,
@@ -23,6 +24,7 @@ from app.db.models import (
     MetricAggregate,
     MetricDefinition,
     ObservationCoverageDaily,
+    PhysicalNotificationSegmentCurrent,
     PredictionResolutionRevision,
     RawPayload,
     ReportedNotice,
@@ -41,6 +43,7 @@ from app.db.session import (
 
 __all__ = [
     "Asset",
+    "B1610SettledEnergyRevision",
     "Base",
     "CarbonObservation",
     "ComparisonBaseline",
@@ -65,6 +68,7 @@ __all__ = [
     "MetricAggregate",
     "MetricDefinition",
     "ObservationCoverageDaily",
+    "PhysicalNotificationSegmentCurrent",
     "PredictionResolutionRevision",
     "RawPayload",
     "ReportedNotice",

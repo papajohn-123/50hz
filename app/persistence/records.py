@@ -9,6 +9,12 @@ from typing import Any
 from urllib.parse import urlsplit
 from uuid import UUID
 
+from app.assets.models import (
+    AssetReference,
+    EvidenceKind,
+    PlannedProfileSegment,
+    SettledMeteredEnergy,
+)
 from app.domain.enums import FactQuality
 from app.sources.types import (
     CarbonIntensityRecord,
@@ -71,10 +77,13 @@ SOURCE_PROFILES: dict[str, SourceProfile] = {
 # a new user-facing publisher merely because it has a source_metadata row.
 PUBLIC_SOURCE_PROVIDERS = tuple(sorted(SOURCE_PROFILES))
 PUBLIC_SOURCE_IDS = (
+    "elexon.b1610",
+    "elexon.bm-unit-reference",
     "elexon.freq",
     "elexon.fuelinst",
     "elexon.indo",
     "elexon.ndf",
+    "elexon.pn",
     "elexon.remit",
     "elexon.syswarn",
     "elexon.windfor",
@@ -85,6 +94,8 @@ PUBLIC_SOURCE_IDS = (
 
 
 DATASET_CADENCE_SECONDS: dict[tuple[str, str], int] = {
+    ("elexon", "B1610"): 86_400,
+    ("elexon", "BM_UNIT_REFERENCE"): 86_400,
     ("elexon", "FREQ"): 60,
     # FUELINST observations are five-minute facts. The worker polls every two
     # minutes for low pickup latency, but freshness must follow publication
@@ -95,6 +106,7 @@ DATASET_CADENCE_SECONDS: dict[tuple[str, str], int] = {
     # polling interval is not the data's actual cadence.
     ("elexon", "INDO"): 1800,
     ("elexon", "NDF"): 1800,
+    ("elexon", "PN"): 600,
     ("elexon", "WINDFOR"): 1800,
     ("elexon", "REMIT"): 300,
     ("elexon", "SYSWARN"): 300,
@@ -117,6 +129,12 @@ INTERCONNECTOR_COUNTERPARTIES: dict[str, str] = {
     "INTNSL": "Norway",
     "INTVKL": "Denmark",
 }
+
+
+BM_UNIT_REFERENCE_SOURCE_ID = "elexon.bm-unit-reference"
+BM_UNIT_REFERENCE_REQUEST_URL = (
+    "https://data.elexon.co.uk/bmrs/api/v1/reference/bmunits/all"
+)
 
 
 def canonical_source_id(provider: str, dataset: str) -> str:
@@ -193,6 +211,148 @@ def job_source_metadata_values(job_id: str) -> dict[str, Any]:
         values["display_name"] = f"50Hz worker — {dataset.upper()}"
         values["active"] = False
     return values
+
+
+def bm_unit_reference_source_metadata_values() -> dict[str, Any]:
+    """Stable FK metadata used by both authoritative and placeholder BM assets."""
+
+    return source_metadata_values(
+        provider="elexon.bm-unit-reference",
+        dataset="BM_UNIT_REFERENCE",
+        request_url=BM_UNIT_REFERENCE_REQUEST_URL,
+    )
+
+
+def map_asset_reference(record: AssetReference, *, source_id: str) -> dict[str, Any]:
+    if record.provenance.evidence_kind is not EvidenceKind.REFERENCE:
+        raise ValueError("BM-unit asset rows require reference evidence")
+    if record.generation_capacity_mw is not None and record.generation_capacity_mw < 0:
+        raise ValueError("generation capacity cannot be negative")
+    display_name = record.display_name or record.source_asset_id or record.asset_id
+    return {
+        "source_id": source_id,
+        "external_id": record.asset_id,
+        "asset_type": "bm_unit",
+        "display_name": display_name[:160],
+        "fuel_type": record.fuel_type.lower() if record.fuel_type else None,
+        "region_code": record.gsp_group_id,
+        "counterparty": (
+            record.lead_party_name[:120] if record.lead_party_name else None
+        ),
+        "capacity_mw": record.generation_capacity_mw,
+        # Elexon's BM-unit reference catalogue has no authoritative point
+        # coordinates. GSP groups and names must never be converted into pins.
+        "latitude": None,
+        "longitude": None,
+        "map_x": None,
+        "map_y": None,
+        "active": True,
+        "attributes": {
+            "classification": EvidenceKind.REFERENCE.value,
+            "nationalGridBmUnit": record.asset_id,
+            "elexonBmUnit": record.source_asset_id,
+            "bmUnitName": record.display_name,
+            "fuelType": record.fuel_type,
+            "leadPartyName": record.lead_party_name,
+            "leadPartyId": record.lead_party_id,
+            "bmUnitType": record.asset_type,
+            "productionOrConsumptionFlag": record.production_or_consumption,
+            "fpnFlag": record.submits_physical_notifications,
+            "generationCapacityMW": record.generation_capacity_mw,
+            "demandCapacityMW": record.demand_capacity_mw,
+            "transmissionLossFactor": record.transmission_loss_factor,
+            "workingDayCreditAssessmentImportCapabilityMW": (
+                record.working_day_credit_assessment_import_capability_mw
+            ),
+            "nonWorkingDayCreditAssessmentImportCapabilityMW": (
+                record.non_working_day_credit_assessment_import_capability_mw
+            ),
+            "workingDayCreditAssessmentExportCapabilityMW": (
+                record.working_day_credit_assessment_export_capability_mw
+            ),
+            "nonWorkingDayCreditAssessmentExportCapabilityMW": (
+                record.non_working_day_credit_assessment_export_capability_mw
+            ),
+            "creditQualifyingStatus": record.credit_qualifying_status,
+            "demandInProductionFlag": record.demand_in_production,
+            "gspGroupId": record.gsp_group_id,
+            "gspGroupName": record.gsp_group_name,
+            "interconnectorId": record.interconnector_id,
+            "eic": record.eic,
+            "locationStatus": "not_provided_by_elexon",
+            "provenance": _asset_provenance(record),
+        },
+    }
+
+
+def map_physical_notification_segment(
+    record: PlannedProfileSegment,
+    *,
+    source_id: str,
+    raw_payload_id: UUID,
+    asset_id: UUID,
+) -> dict[str, Any]:
+    if record.provenance.evidence_kind is not EvidenceKind.REPORTED_PLAN:
+        raise ValueError("PN segments must remain reported plans")
+    return {
+        "source_id": source_id,
+        "raw_payload_id": raw_payload_id,
+        "asset_id": asset_id,
+        "national_grid_bm_unit": record.asset_id,
+        "elexon_bm_unit": record.source_asset_id,
+        "settlement_date": record.settlement_date,
+        "settlement_period": record.settlement_period,
+        "segment_start": record.start,
+        "segment_end": record.end,
+        "level_from_mw": float(record.level_from_mw),
+        "level_to_mw": float(record.level_to_mw),
+        "classification": EvidenceKind.REPORTED_PLAN.value,
+        "retrieved_at": record.provenance.retrieved_at,
+        "attributes": {
+            "semantics": "participant_submitted_planned_profile",
+            "isActualOutput": False,
+            "signConvention": "positive_export_negative_import",
+            "provenance": _asset_provenance(record),
+        },
+    }
+
+
+def map_b1610_settled_energy(
+    record: SettledMeteredEnergy,
+    *,
+    source_id: str,
+    raw_payload_id: UUID,
+    asset_id: UUID,
+) -> dict[str, Any]:
+    if record.provenance.evidence_kind is not EvidenceKind.SETTLED_METERED:
+        raise ValueError("B1610 rows must remain settled-metered evidence")
+    return {
+        "source_id": source_id,
+        "raw_payload_id": raw_payload_id,
+        "asset_id": asset_id,
+        "national_grid_bm_unit": record.national_grid_bm_unit,
+        "elexon_bm_unit": record.source_asset_id,
+        "settlement_date": record.settlement_date,
+        "settlement_period": record.settlement_period,
+        "interval_start": record.interval_start,
+        "interval_end": record.interval_end,
+        "energy_mwh": float(record.energy_mwh),
+        "average_mw": float(record.average_mw),
+        "psr_type": record.psr_type,
+        "classification": EvidenceKind.SETTLED_METERED.value,
+        "retrieved_at": record.provenance.retrieved_at,
+        "revision": 0,
+        "attributes": {
+            "semantics": "delayed_settled_half_hour_energy",
+            "assetExternalID": record.asset_id,
+            "nationalGridBmUnit": record.national_grid_bm_unit,
+            "elexonBmUnit": record.source_asset_id,
+            "isInstantaneousPower": False,
+            "averageMWMethod": "energy_mwh_divided_by_0.5_hours",
+            "signConvention": "positive_export_negative_import",
+            "provenance": _asset_provenance(record),
+        },
+    }
 
 
 def map_generation_record(
@@ -614,6 +774,24 @@ def _carbon_attributes(record: CarbonIntensityRecord) -> dict[str, Any]:
         "regionName": record.region_name,
         "dnoRegion": record.dno_region,
         "postcode": record.postcode,
+    }
+
+
+def _asset_provenance(
+    record: AssetReference | PlannedProfileSegment | SettledMeteredEnergy,
+) -> dict[str, Any]:
+    provenance = record.provenance
+    return {
+        "sourceId": provenance.source_id,
+        "dataset": provenance.dataset,
+        "endpoint": provenance.endpoint,
+        "retrievedAt": provenance.retrieved_at.isoformat(),
+        "publishedAt": (
+            provenance.published_at.isoformat()
+            if provenance.published_at is not None
+            else None
+        ),
+        "evidenceKind": provenance.evidence_kind.value,
     }
 
 

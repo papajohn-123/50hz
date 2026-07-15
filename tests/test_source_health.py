@@ -314,6 +314,9 @@ def test_public_source_queries_exclude_internal_operational_providers() -> None:
         assert "history-backfill-v1" not in statement
         assert "elexon.interconnectors" not in statement
         assert "neso.carbon-national-forecast" not in statement
+        assert "elexon.bm-unit-reference" in statement
+        assert "elexon.pn" in statement
+        assert "elexon.b1610" in statement
 
 
 class FakeHealthRepository:
