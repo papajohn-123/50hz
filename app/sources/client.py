@@ -50,6 +50,16 @@ class JSONResponse:
     content_type: str | None
 
 
+@dataclass(frozen=True, slots=True)
+class BytesResponse:
+    raw_body: bytes
+    checksum_sha256: str
+    retrieved_at: datetime
+    request_url: str
+    content_type: str | None
+    etag: str | None
+
+
 class AsyncJSONClient:
     """HTTPX wrapper with bounded timeouts and conservative retries.
 
@@ -166,6 +176,85 @@ class AsyncJSONClient:
                 retrieved_at=retrieved_at.astimezone(UTC),
                 request_url=str(response.request.url),
                 content_type=response.headers.get("content-type"),
+            )
+
+        assert last_transport_error is not None
+        raise SourceUnavailableError(
+            f"source unavailable after {self._retry_policy.max_attempts} attempts"
+        ) from last_transport_error
+
+    async def get_bytes(
+        self,
+        path: str,
+        *,
+        params: Mapping[
+            str,
+            str | int | float | bool | None | Sequence[str | int | float | bool],
+        ]
+        | None = None,
+        headers: Mapping[str, str] | None = None,
+        max_bytes: int | None = None,
+    ) -> BytesResponse:
+        """Fetch a bounded non-JSON publication with the same retry policy.
+
+        This exists for official reference files such as DESNZ's quarterly CSV;
+        operational grid feeds should continue to use :meth:`get_json`.
+        """
+
+        if max_bytes is not None and max_bytes <= 0:
+            raise ValueError("max_bytes must be positive when provided")
+        last_transport_error: Exception | None = None
+
+        for attempt in range(1, self._retry_policy.max_attempts + 1):
+            try:
+                response = await self._client.get(path, params=params, headers=headers)
+            except httpx.RequestError as exc:
+                last_transport_error = exc
+                if attempt == self._retry_policy.max_attempts:
+                    break
+                await self._sleep(self._retry_policy.backoff(attempt))
+                continue
+
+            if response.status_code in self._retry_policy.retry_statuses:
+                if attempt < self._retry_policy.max_attempts:
+                    retry_delay = _retry_after_seconds(response, now=self._clock())
+                    await self._sleep(
+                        min(
+                            retry_delay
+                            if retry_delay is not None
+                            else self._retry_policy.backoff(attempt),
+                            self._retry_policy.max_delay_seconds,
+                        )
+                    )
+                    continue
+
+            if response.is_error:
+                preview = response.text[:500].replace("\n", " ")
+                raise SourceHTTPStatusError(
+                    response.status_code,
+                    str(response.request.url),
+                    preview,
+                )
+
+            body = response.content
+            if not body:
+                raise SourcePayloadError(
+                    f"source returned an empty body for {response.request.url}"
+                )
+            if max_bytes is not None and len(body) > max_bytes:
+                raise SourcePayloadError(
+                    f"source body exceeds {max_bytes} bytes for {response.request.url}"
+                )
+            retrieved_at = self._clock()
+            if retrieved_at.tzinfo is None or retrieved_at.utcoffset() is None:
+                raise ValueError("client clock must return a timezone-aware datetime")
+            return BytesResponse(
+                raw_body=body,
+                checksum_sha256=hashlib.sha256(body).hexdigest(),
+                retrieved_at=retrieved_at.astimezone(UTC),
+                request_url=str(response.request.url),
+                content_type=response.headers.get("content-type"),
+                etag=response.headers.get("etag"),
             )
 
         assert last_transport_error is not None

@@ -89,3 +89,63 @@ def test_client_rejects_scalar_json() -> None:
 
     asyncio.run(scenario())
 
+
+def test_client_fetches_bounded_reference_bytes_with_retry_and_provenance() -> None:
+    attempts = 0
+    requests: list[httpx.Request] = []
+
+    def handler(request: httpx.Request) -> httpx.Response:
+        nonlocal attempts
+        attempts += 1
+        requests.append(request)
+        if attempts == 1:
+            return httpx.Response(503, request=request)
+        return httpx.Response(
+            200,
+            content=b"Ref ID,Site Name\n1,Test\n",
+            headers={"Content-Type": "text/csv", "ETag": '"repd-v1"'},
+            request=request,
+        )
+
+    async def scenario():
+        client = AsyncJSONClient(
+            base_url="https://public.example.test/",
+            transport=httpx.MockTransport(handler),
+            retry_policy=RetryPolicy(max_attempts=2, base_delay_seconds=0),
+            clock=lambda: NOW,
+        )
+        try:
+            return await client.get_bytes(
+                "reference.csv",
+                headers={"Accept": "text/csv"},
+                max_bytes=1_000,
+            )
+        finally:
+            await client.aclose()
+
+    result = asyncio.run(scenario())
+
+    assert attempts == 2
+    assert requests[-1].headers["accept"] == "text/csv"
+    assert result.raw_body.startswith(b"Ref ID")
+    assert result.content_type == "text/csv"
+    assert result.etag == '"repd-v1"'
+    assert result.retrieved_at == NOW
+    assert len(result.checksum_sha256) == 64
+
+
+def test_client_rejects_oversized_reference_body() -> None:
+    async def scenario() -> None:
+        client = AsyncJSONClient(
+            transport=httpx.MockTransport(
+                lambda request: httpx.Response(200, content=b"too large", request=request)
+            ),
+            retry_policy=RetryPolicy(max_attempts=1),
+        )
+        try:
+            with pytest.raises(SourcePayloadError, match="exceeds 4 bytes"):
+                await client.get_bytes("reference.csv", max_bytes=4)
+        finally:
+            await client.aclose()
+
+    asyncio.run(scenario())
