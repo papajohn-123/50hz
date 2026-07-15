@@ -25,6 +25,8 @@ final class LocalWindowsContractTests: XCTestCase {
         XCTAssertEqual(response.plan.comparison?.status, .compatible)
         XCTAssertEqual(response.plan.comparison?.startNowMinusRecommendedGCO2KWh, 57.67)
         XCTAssertEqual(response.plan.comparison?.isMeaningful, true)
+        XCTAssertEqual(LocalPlannerCopy.nationalScope, "GB national forecast · not regional or postcode-level")
+        XCTAssertTrue(LocalPlannerCopy.support.contains("GB national forecast"))
     }
 
     func testLegacyCacheContractSuppliesDocumentedDefaultsAndNullableFields() throws {

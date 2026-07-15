@@ -22,6 +22,7 @@ struct MineView: View {
     @StateObject private var forecastReview: ForecastVerificationViewModel
     @State private var draftPostcode = ""
     @State private var postcodeInputError: String?
+    @State private var isEditingPostcode = false
     @State private var usesCustomPlanningBounds = false
     @State private var planningBounds = LocalPlanningBoundsPolicy.defaults()
     @FocusState private var postcodeFocused: Bool
@@ -120,9 +121,9 @@ struct MineView: View {
         ScrollView {
             VStack(alignment: .leading, spacing: 27) {
                 header
+                regionalContext
                 postcodeControl
                 flexibleUsePlanner
-                regionalContext
                 methodology
             }
             .padding(.horizontal, GridTheme.horizontalPadding)
@@ -134,6 +135,7 @@ struct MineView: View {
         .gridPageBackground()
         .onAppear {
             draftPostcode = PostcodePrivacy.outwardCode(from: postcode)
+            isEditingPostcode = postcode.isEmpty
         }
         .onChange(of: usesCustomPlanningBounds) { _, isEnabled in
             if isEnabled {
@@ -195,32 +197,59 @@ struct MineView: View {
 
     private var postcodeControl: some View {
         VStack(alignment: .leading, spacing: 10) {
-            SectionLabel("Your postcode")
-            ViewThatFits(in: .horizontal) {
-                HStack(spacing: 9) {
-                    postcodeField
-                    postcodeButton
+            if !postcode.isEmpty, !isEditingPostcode {
+                SectionLabel("Saved region")
+                HStack(spacing: 12) {
+                    VStack(alignment: .leading, spacing: 2) {
+                        Text(PostcodePrivacy.outwardCode(from: postcode))
+                            .font(.title3.weight(.medium))
+                            .fontDesign(.monospaced)
+                            .foregroundStyle(GridTheme.textPrimary)
+                        Text("Outward code · stored on this device")
+                            .font(.caption2)
+                            .foregroundStyle(GridTheme.textTertiary)
+                    }
+                    Spacer(minLength: 8)
+                    Button("Change") {
+                        draftPostcode = PostcodePrivacy.outwardCode(from: postcode)
+                        isEditingPostcode = true
+                        postcodeInputError = nil
+                    }
+                    .font(.caption.weight(.semibold))
+                    .foregroundStyle(GridTheme.liveCyan)
+                    .frame(minWidth: 56, minHeight: 44)
+                    .accessibilityHint("Shows the postcode editor")
                 }
-                VStack(alignment: .leading, spacing: 9) {
-                    postcodeField
-                    postcodeButton
+                .overlay(alignment: .bottom) { Hairline() }
+            } else {
+                SectionLabel("Choose your region")
+                ViewThatFits(in: .horizontal) {
+                    HStack(spacing: 9) {
+                        postcodeField
+                        postcodeButton
+                    }
+                    VStack(alignment: .leading, spacing: 9) {
+                        postcodeField
+                        postcodeButton
+                    }
+                }
+                if PostcodePrivacy.outwardCode(from: postcode) != PostcodePrivacy.defaultOutwardCode {
+                    Button {
+                        postcode = PostcodePrivacy.defaultOutwardCode
+                        draftPostcode = PostcodePrivacy.defaultOutwardCode
+                        postcodeInputError = nil
+                        postcodeFocused = false
+                        isEditingPostcode = false
+                    } label: {
+                        Label("Use Central London", systemImage: "location.fill")
+                            .font(.caption.weight(.semibold))
+                            .foregroundStyle(GridTheme.liveCyan)
+                            .frame(minHeight: 44)
+                    }
+                    .buttonStyle(.plain)
                 }
             }
-            if PostcodePrivacy.outwardCode(from: postcode) != PostcodePrivacy.defaultOutwardCode {
-                Button {
-                    postcode = PostcodePrivacy.defaultOutwardCode
-                    draftPostcode = PostcodePrivacy.defaultOutwardCode
-                    postcodeInputError = nil
-                    postcodeFocused = false
-                } label: {
-                    Label("Use Central London", systemImage: "location.fill")
-                        .font(.caption.weight(.semibold))
-                        .foregroundStyle(GridTheme.liveCyan)
-                        .frame(minHeight: 44)
-                }
-                .buttonStyle(.plain)
-            }
-            Text("Stored on this device. Only the outward code is sent. Location permission is not used; the planner itself uses a GB national forecast.")
+            Text("Only the outward code is sent. Location permission is not used.")
                 .font(.caption2)
                 .foregroundStyle(GridTheme.textTertiary)
             if let postcodeInputError {
@@ -269,11 +298,18 @@ struct MineView: View {
         draftPostcode = outward
         postcodeInputError = nil
         postcodeFocused = false
+        isEditingPostcode = false
     }
 
     private var flexibleUsePlanner: some View {
         VStack(alignment: .leading, spacing: 15) {
-            SectionLabel("Plan flexible use", trailing: LocalPlannerCopy.durationLabel(minutes: selectedDurationMinutes))
+            Hairline()
+            SectionLabel("Plan with the GB forecast", trailing: LocalPlannerCopy.durationLabel(minutes: selectedDurationMinutes))
+            Text("National forecast · separate from the regional reading above")
+                .font(.caption2.weight(.semibold))
+                .fontDesign(.monospaced)
+                .tracking(0.4)
+                .foregroundStyle(GridTheme.forecastViolet)
             activityPicker
             if selectedActivity == .custom {
                 customDurationControl
@@ -953,14 +989,14 @@ struct MineView: View {
         Text(Int(context.carbonIntensity.rounded()).formatted())
             .font(.system(.largeTitle, design: .rounded, weight: .light))
             .tracking(-1.2)
-            .foregroundStyle(GridTheme.liveCyan)
+            .foregroundStyle(GridTheme.forecastViolet)
             .monospacedDigit()
     }
 
     private func comparison(_ context: RegionalGridContext) -> some View {
         VStack(alignment: .leading, spacing: 13) {
             SectionLabel("Against Britain")
-            comparisonBar(label: context.name, value: context.carbonIntensity, maximum: comparisonMaximum(context), color: GridTheme.liveCyan)
+            comparisonBar(label: context.name, value: context.carbonIntensity, maximum: comparisonMaximum(context), color: GridTheme.forecastViolet)
             comparisonBar(label: "Great Britain", value: nationalCarbon, maximum: comparisonMaximum(context), color: GridTheme.textSecondary)
             Text(comparisonCopy(context))
                 .font(.caption)

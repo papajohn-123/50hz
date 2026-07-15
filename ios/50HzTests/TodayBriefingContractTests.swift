@@ -20,6 +20,9 @@ final class TodayBriefingContractTests: XCTestCase {
         XCTAssertEqual(briefing.now.values[1].factClass, .estimated)
         XCTAssertEqual(briefing.changes.map(\.stableID), ["change-demand", "change-carbon", "change-frequency", "legacy-extra"])
         XCTAssertEqual(TodayBriefingPresentation.displayedChanges(briefing).map(\.stableID), ["change-demand", "change-carbon", "change-frequency"])
+        XCTAssertEqual(TodayBriefingPresentation.leadChange(briefing)?.stableID, "change-demand")
+        XCTAssertEqual(TodayBriefingPresentation.supportingChanges(briefing).map(\.stableID), ["change-carbon", "change-frequency"])
+        XCTAssertEqual(TodayBriefingPresentation.evidenceScope(briefing), "COMPLETE · OBSERVED + FORECAST")
         XCTAssertEqual(TodayBriefingPresentation.displayedNextMoments(briefing).count, 3)
         XCTAssertEqual(briefing.reportedEvents.totalCount, 5)
         XCTAssertEqual(TodayBriefingPresentation.displayedEvents(briefing).map(\.stableID), ["evt-critical", "evt-upcoming", "evt-material"])
@@ -39,12 +42,14 @@ final class TodayBriefingContractTests: XCTestCase {
         XCTAssertEqual(partial.nextMoments, [])
         XCTAssertNil(partial.bestWindow)
         XCTAssertTrue(partial.coverage.missingFamilies.contains("forecast.carbon"))
+        XCTAssertEqual(TodayBriefingPresentation.evidenceScope(partial), "PARTIAL · GAPS SHOWN")
 
         XCTAssertEqual(offline.coverage.status, .offline)
         XCTAssertEqual(offline.now.values.first?.metricID, "frequency")
         XCTAssertEqual(offline.reportedEvents.totalCount, 1)
         XCTAssertEqual(offline.reportedEvents.items.first?.evidenceClass, "reported")
         XCTAssertEqual(offline.sourceStatuses.first?.state, .unavailable)
+        XCTAssertEqual(TodayBriefingPresentation.evidenceScope(offline), "SOURCES OFFLINE")
     }
 
     func testLegacyDefaultsAndNullableFieldsRemainDecodable() throws {
@@ -109,6 +114,30 @@ final class TodayBriefingContractTests: XCTestCase {
             GridCacheKey.todayBriefing(localDate: "2026-07-12").rawValue,
             "briefing-2026-07-12"
         )
+    }
+
+    func testTodayHorizonUsesTwelveHoursEitherSideAndKeepsFactClassesDistinct() {
+        let boundary = Date(timeIntervalSince1970: 2_000_000)
+        let timeline = GridTimeline(
+            sourceResolutionSeconds: 1_800,
+            materialGapSeconds: 3_600,
+            nowBoundary: boundary,
+            samples: [
+                horizonSample(at: boundary.addingTimeInterval(-13 * 3_600), carbon: 90, factClass: .observed),
+                horizonSample(at: boundary.addingTimeInterval(-12 * 3_600), carbon: 100, factClass: .observed),
+                horizonSample(at: boundary.addingTimeInterval(-1_800), carbon: 125, factClass: .observed),
+                horizonSample(at: boundary.addingTimeInterval(1_800), carbon: 140, factClass: .forecast),
+                horizonSample(at: boundary.addingTimeInterval(12 * 3_600), carbon: 160, factClass: .forecast),
+                horizonSample(at: boundary.addingTimeInterval(13 * 3_600), carbon: 180, factClass: .forecast)
+            ]
+        )
+
+        let samples = TodayHorizonPresentation.samples(in: timeline)
+
+        XCTAssertEqual(samples.count, 4)
+        XCTAssertEqual(samples.map(\.factClass), [.observed, .observed, .forecast, .forecast])
+        XCTAssertEqual(TodayHorizonPresentation.scopeLabel(for: samples), "24H · OBSERVED + FORECAST")
+        XCTAssertEqual(TodayHorizonPresentation.rangeLabel(for: samples), "100–160 gCO₂/kWh")
     }
 
     func testCrossDayLondonLabelsAndCopyRemainTruthful() throws {
@@ -241,6 +270,21 @@ final class TodayBriefingContractTests: XCTestCase {
     private func temporaryDirectory() -> URL {
         URL(fileURLWithPath: NSTemporaryDirectory(), isDirectory: true)
             .appendingPathComponent("50HzBriefingTests-\(UUID().uuidString)", isDirectory: true)
+    }
+
+    private func horizonSample(
+        at date: Date,
+        carbon: Double,
+        factClass: FactClass
+    ) -> GridTimelineSample {
+        GridTimelineSample(
+            timestamp: date,
+            factClass: factClass,
+            demandMW: 30_000,
+            carbonIntensity: carbon,
+            frequencyHz: nil,
+            generation: []
+        )
     }
 
 }

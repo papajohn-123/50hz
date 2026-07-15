@@ -460,6 +460,30 @@ final class NotebookPersistenceTests: XCTestCase {
         )
     }
 
+    func testKnownEvidenceMissionCompletesFromVisitAndKeepsRewardPrivate() throws {
+        let mission = try makeMission(kind: "inspect_interconnector")
+        let store = MissionProgressStore(defaults: defaults)
+        let instant = Date(timeIntervalSince1970: 3)
+
+        XCTAssertTrue(MissionCompletionPolicy.completesOnEvidenceVisit(mission.kind))
+        XCTAssertTrue(store.recordEvidenceVisit(mission, date: "2026-07-11", at: instant))
+        XCTAssertFalse(store.recordEvidenceVisit(mission, date: "2026-07-11", at: instant.addingTimeInterval(1)))
+
+        let record = store.record(missionID: mission.missionID, date: "2026-07-11")
+        XCTAssertEqual(record?.visitedAt, instant)
+        XCTAssertEqual(record?.completedAt, instant)
+        XCTAssertNotNil(record?.learnedNote)
+    }
+
+    func testUnknownMissionNeverClaimsCompletionFromVisit() throws {
+        let mission = try makeMission(kind: "future_mission")
+        let store = MissionProgressStore(defaults: defaults)
+
+        XCTAssertFalse(MissionCompletionPolicy.completesOnEvidenceVisit(mission.kind))
+        XCTAssertFalse(store.recordEvidenceVisit(mission, date: "2026-07-11"))
+        XCTAssertFalse(store.record(missionID: mission.missionID, date: "2026-07-11")?.isCompleted == true)
+    }
+
     func testMissionNavigationUsesRealProductContextsAndUnknownKindHasNoFakeChevron() throws {
         XCTAssertEqual(try target(kind: "find_clean_window"), .local)
         XCTAssertEqual(try target(kind: "identify_largest_source"), .live)

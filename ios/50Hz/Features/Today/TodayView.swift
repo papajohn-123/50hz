@@ -49,8 +49,12 @@ struct TodayView: View {
                     coverageNotice(briefing)
                 }
 
-                nowSection(briefing)
+                leadStory(briefing)
                 bestWindowSection(briefing)
+                if let timeline = model.timeline {
+                    TodayHorizonCurve(timeline: timeline)
+                }
+                nowSection(briefing)
                 changesSection(briefing)
                 nextSection(briefing)
                 eventsSection(briefing)
@@ -84,9 +88,6 @@ struct TodayView: View {
                     briefingDate(briefing)
                 }
             }
-            Text(briefing.headline)
-                .font(.subheadline)
-                .foregroundStyle(GridTheme.textSecondary)
             Text("\(TodayBriefingPresentation.systemScope) · as of \(TodayBriefingPresentation.timeLabel(briefing.asOf, relativeTo: briefing.displayPeriod.localDate))")
                 .font(.caption2)
                 .foregroundStyle(GridTheme.textTertiary)
@@ -122,9 +123,12 @@ struct TodayView: View {
             }
         }
         .frame(maxWidth: .infinity, alignment: .leading)
-        .padding(14)
-        .background(GridTheme.staleAmber.opacity(0.07), in: RoundedRectangle(cornerRadius: 12))
-        .overlay(RoundedRectangle(cornerRadius: 12).stroke(GridTheme.staleAmber.opacity(0.18), lineWidth: 1))
+        .padding(.leading, 13)
+        .overlay(alignment: .leading) {
+            Rectangle()
+                .fill(GridTheme.staleAmber)
+                .frame(width: 2)
+        }
         .accessibilityElement(children: .combine)
     }
 
@@ -139,17 +143,64 @@ struct TodayView: View {
         }
     }
 
+    @ViewBuilder
+    private func leadStory(_ briefing: TodayBriefing) -> some View {
+        VStack(alignment: .leading, spacing: 12) {
+            SectionLabel("The grid today", trailing: TodayBriefingPresentation.evidenceScope(briefing))
+            Text(briefing.headline)
+                .font(.system(.title2, design: .rounded, weight: .medium))
+                .tracking(-0.45)
+                .foregroundStyle(GridTheme.textPrimary)
+                .fixedSize(horizontal: false, vertical: true)
+
+            if let change = TodayBriefingPresentation.leadChange(briefing) {
+                Button {
+                    if let time = change.observedAt { openMoment(time) }
+                } label: {
+                    VStack(alignment: .leading, spacing: 7) {
+                        ViewThatFits(in: .horizontal) {
+                            HStack(alignment: .firstTextBaseline, spacing: 8) {
+                                classificationLabel("STRONGEST CHANGE · OBSERVED", color: GridTheme.liveCyan)
+                                Spacer(minLength: 8)
+                                timeLabel(TodayBriefingPresentation.timeLabel(change.observedAt, relativeTo: briefing.displayPeriod.localDate))
+                            }
+                            VStack(alignment: .leading, spacing: 3) {
+                                classificationLabel("STRONGEST CHANGE · OBSERVED", color: GridTheme.liveCyan)
+                                timeLabel(TodayBriefingPresentation.timeLabel(change.observedAt, relativeTo: briefing.displayPeriod.localDate))
+                            }
+                        }
+                        Text(change.text)
+                            .font(.subheadline)
+                            .foregroundStyle(GridTheme.textSecondary)
+                            .fixedSize(horizontal: false, vertical: true)
+                    }
+                    .frame(maxWidth: .infinity, minHeight: 44, alignment: .leading)
+                    .contentShape(Rectangle())
+                }
+                .buttonStyle(.plain)
+                .disabled(change.observedAt == nil)
+                .accessibilityHint(change.observedAt == nil ? "" : "Opens this observation on Live")
+            } else {
+                Text(briefing.now.text)
+                    .font(.subheadline)
+                    .foregroundStyle(GridTheme.textSecondary)
+                    .fixedSize(horizontal: false, vertical: true)
+            }
+        }
+        .accessibilityElement(children: .contain)
+    }
+
     private func nowSection(_ briefing: TodayBriefing) -> some View {
         VStack(alignment: .leading, spacing: 14) {
-            SectionLabel("Now", trailing: briefing.now.status.rawValue.uppercased())
+            SectionLabel("Current readings", trailing: briefing.now.status.rawValue.uppercased())
             Text("\(TodayBriefingPresentation.systemScope.uppercased()) · \(TodayBriefingPresentation.timeLabel(briefing.now.asOf ?? briefing.asOf, relativeTo: briefing.displayPeriod.localDate))")
                 .font(.caption2.weight(.semibold))
                 .fontDesign(.monospaced)
                 .tracking(0.5)
                 .foregroundStyle(GridTheme.liveCyan)
             Text(briefing.now.text)
-                .font(.system(.title3, design: .rounded, weight: .medium))
-                .foregroundStyle(GridTheme.textPrimary)
+                .font(.subheadline)
+                .foregroundStyle(GridTheme.textSecondary)
                 .fixedSize(horizontal: false, vertical: true)
 
             if !briefing.now.values.isEmpty {
@@ -256,9 +307,12 @@ struct TodayView: View {
                     }
                     .buttonStyle(.plain)
                 }
-                .padding(16)
-                .background(GridTheme.forecastViolet.opacity(0.075), in: RoundedRectangle(cornerRadius: GridTheme.cornerRadius))
-                .overlay(RoundedRectangle(cornerRadius: GridTheme.cornerRadius).stroke(GridTheme.forecastViolet.opacity(0.2), lineWidth: 1))
+                .padding(.leading, 14)
+                .overlay(alignment: .leading) {
+                    Rectangle()
+                        .fill(GridTheme.forecastViolet)
+                        .frame(width: 2)
+                }
             } else {
                 TodayEmptySection(
                     message: "No complete future GB national forecast window is included in this briefing."
@@ -281,12 +335,14 @@ struct TodayView: View {
     }
 
     private func changesSection(_ briefing: TodayBriefing) -> some View {
-        let changes = TodayBriefingPresentation.displayedChanges(briefing)
+        let changes = TodayBriefingPresentation.supportingChanges(briefing)
         return VStack(alignment: .leading, spacing: 0) {
-            SectionLabel("What changed", trailing: changes.isEmpty ? "NONE" : "OBSERVED · \(changes.count)")
+            SectionLabel("Other changes", trailing: changes.isEmpty ? "NONE" : "OBSERVED · \(changes.count)")
                 .padding(.bottom, 8)
             if changes.isEmpty {
-                TodayEmptySection(message: "No material observed changes qualified for this briefing.")
+                TodayEmptySection(message: TodayBriefingPresentation.leadChange(briefing) == nil
+                    ? "No material observed changes qualified for this briefing."
+                    : "No other material observed changes qualified.")
             } else {
                 ForEach(changes) { change in
                     momentRow(

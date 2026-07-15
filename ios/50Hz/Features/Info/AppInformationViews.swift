@@ -25,6 +25,25 @@ enum WelcomePresentationPolicy {
     }
 }
 
+enum WelcomeDataPresentation {
+    static func latestSource(in snapshot: GridSnapshot?) -> SourceReference? {
+        snapshot?.sources.max { $0.retrievedAt < $1.retrievedAt }
+    }
+
+    static func deliveryLabel(_ source: SourceReference) -> String {
+        let seconds = max(0, Int(source.retrievedAt.timeIntervalSince(source.observedAt).rounded()))
+        if seconds < 60 { return "received \(seconds)s after observation" }
+        let minutes = max(1, Int((Double(seconds) / 60).rounded()))
+        return "received \(minutes) min after observation"
+    }
+
+    static func timeLabel(_ date: Date) -> String {
+        date.formatted(
+            Date.FormatStyle(date: .omitted, time: .standard, timeZone: LondonDay.timeZone)
+        )
+    }
+}
+
 enum AppVersionText {
     static func make(version: String?, build: String?) -> String {
         let version = version?.trimmingCharacters(in: .whitespacesAndNewlines)
@@ -63,6 +82,7 @@ struct GlobalInfoButton: View {
 }
 
 struct WelcomeSheet: View {
+    @EnvironmentObject private var model: AppModel
     let onComplete: () -> Void
 
     var body: some View {
@@ -99,10 +119,9 @@ struct WelcomeSheet: View {
                         .lineSpacing(4)
                 }
 
-                ViewThatFits(in: .horizontal) {
-                    HStack(spacing: 18) { legend }
-                    VStack(alignment: .leading, spacing: 9) { legend }
-                }
+                liveSourceUpdate
+
+                evidenceKey
 
                 Hairline()
 
@@ -145,11 +164,108 @@ struct WelcomeSheet: View {
     }
 
     @ViewBuilder
-    private var legend: some View {
-        Label("Observed", systemImage: "circle.fill")
-            .foregroundStyle(GridTheme.liveCyan)
-        Label("Forecast", systemImage: "circle.lefthalf.filled")
-            .foregroundStyle(GridTheme.forecastViolet)
+    private var liveSourceUpdate: some View {
+        VStack(alignment: .leading, spacing: 11) {
+            SectionLabel("A real source update", trailing: model.snapshot?.freshness.rawValue.uppercased() ?? "CONNECTING")
+            if let source = WelcomeDataPresentation.latestSource(in: model.snapshot) {
+                Text(source.name)
+                    .font(.headline)
+                    .foregroundStyle(GridTheme.textPrimary)
+                Text(source.dataset)
+                    .font(.caption2.weight(.semibold))
+                    .fontDesign(.monospaced)
+                    .foregroundStyle(GridTheme.liveCyan)
+                HStack(alignment: .center, spacing: 10) {
+                    updateMoment(
+                        label: "OBSERVED",
+                        value: WelcomeDataPresentation.timeLabel(source.observedAt),
+                        color: GridTheme.liveCyan
+                    )
+                    Rectangle()
+                        .fill(GridTheme.hairline)
+                        .frame(maxWidth: .infinity, maxHeight: 1)
+                        .accessibilityHidden(true)
+                    updateMoment(
+                        label: "RECEIVED",
+                        value: WelcomeDataPresentation.timeLabel(source.retrievedAt),
+                        color: GridTheme.textSecondary
+                    )
+                }
+                Text(WelcomeDataPresentation.deliveryLabel(source))
+                    .font(.caption2)
+                    .foregroundStyle(GridTheme.textTertiary)
+            } else {
+                HStack(spacing: 10) {
+                    ProgressView()
+                        .tint(GridTheme.liveCyan)
+                    Text("Waiting for the first verified source update…")
+                        .font(.caption)
+                        .foregroundStyle(GridTheme.textSecondary)
+                }
+                .frame(minHeight: 44)
+            }
+        }
+        .padding(.leading, 13)
+        .overlay(alignment: .leading) {
+            Rectangle()
+                .fill(GridTheme.liveCyan)
+                .frame(width: 2)
+        }
+        .accessibilityElement(children: .contain)
+    }
+
+    private var evidenceKey: some View {
+        VStack(alignment: .leading, spacing: 11) {
+            SectionLabel("Read time honestly")
+            HStack(spacing: 18) {
+                evidenceClass(
+                    label: "OBSERVED",
+                    detail: "Past and now",
+                    symbol: "circle.fill",
+                    color: GridTheme.liveCyan
+                )
+                evidenceClass(
+                    label: "FORECAST",
+                    detail: "What may come next",
+                    symbol: "circle.lefthalf.filled",
+                    color: GridTheme.forecastViolet
+                )
+            }
+        }
+    }
+
+    private func updateMoment(label: String, value: String, color: Color) -> some View {
+        VStack(alignment: .leading, spacing: 3) {
+            Text(label)
+                .font(.system(size: 9, weight: .semibold, design: .monospaced))
+                .tracking(0.6)
+                .foregroundStyle(color)
+            Text(value)
+                .font(.caption)
+                .fontDesign(.monospaced)
+                .foregroundStyle(GridTheme.textSecondary)
+                .lineLimit(1)
+        }
+    }
+
+    private func evidenceClass(label: String, detail: String, symbol: String, color: Color) -> some View {
+        HStack(alignment: .top, spacing: 8) {
+            Image(systemName: symbol)
+                .font(.caption2)
+                .foregroundStyle(color)
+                .padding(.top, 2)
+            VStack(alignment: .leading, spacing: 2) {
+                Text(label)
+                    .font(.caption2.weight(.semibold))
+                    .fontDesign(.monospaced)
+                    .foregroundStyle(color)
+                Text(detail)
+                    .font(.caption2)
+                    .foregroundStyle(GridTheme.textTertiary)
+            }
+        }
+        .frame(maxWidth: .infinity, alignment: .leading)
+        .accessibilityElement(children: .combine)
     }
 
     private func welcomeFact(symbol: String, title: String, detail: String, color: Color) -> some View {

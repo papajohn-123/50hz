@@ -127,6 +127,31 @@ struct MissionProgressStore {
         )
     }
 
+    /// Records the evidence interaction itself as the completion signal for
+    /// missions whose published contract is satisfied by inspecting a linked
+    /// context. This remains a private on-device acknowledgement; it does not
+    /// claim that the user reached a particular conclusion.
+    @discardableResult
+    func recordEvidenceVisit(_ mission: GameMission, date: String, at instant: Date = Date()) -> Bool {
+        guard LondonDay.isValidLocalDateKey(date), mission.available else { return false }
+        let existing = record(missionID: mission.missionID, date: date)
+        let shouldComplete = MissionCompletionPolicy.completesOnEvidenceVisit(mission.kind)
+        let didComplete = shouldComplete && existing?.isCompleted != true
+        upsert(
+            MissionProgress(
+                missionID: mission.missionID,
+                date: date,
+                kind: mission.kind,
+                visitedAt: existing?.visitedAt ?? instant,
+                completedAt: shouldComplete ? (existing?.completedAt ?? instant) : existing?.completedAt,
+                learnedNote: shouldComplete
+                    ? (existing?.learnedNote ?? Self.learnedNote(for: mission.kind))
+                    : existing?.learnedNote
+            )
+        )
+        return didComplete
+    }
+
     @discardableResult
     func markCompleted(_ mission: GameMission, date: String, at instant: Date = Date()) -> Bool {
         guard let existing = record(missionID: mission.missionID, date: date),
@@ -165,6 +190,17 @@ struct MissionProgressStore {
         retained = Array(retained.sorted { $0.visitedAt < $1.visitedAt }.suffix(365))
         guard let data = try? JSONEncoder().encode(retained) else { return }
         defaults.set(data, forKey: Self.storageKey)
+    }
+}
+
+enum MissionCompletionPolicy {
+    static func completesOnEvidenceVisit(_ kind: GameMissionKind) -> Bool {
+        switch kind {
+        case .findCleanWindow, .identifyLargestSource, .inspectInterconnector, .openEventEvidence:
+            true
+        case .other:
+            false
+        }
     }
 }
 

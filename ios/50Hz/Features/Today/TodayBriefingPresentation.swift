@@ -38,6 +38,33 @@ enum TodayBriefingPresentation {
         Array(briefing.changes.prefix(3))
     }
 
+    /// The server supplies changes in ranked order. Keep the strongest one as
+    /// the briefing's lead rather than giving every change equal visual weight.
+    static func leadChange(_ briefing: TodayBriefing) -> TodayObservedChange? {
+        displayedChanges(briefing).first
+    }
+
+    static func supportingChanges(_ briefing: TodayBriefing) -> [TodayObservedChange] {
+        Array(displayedChanges(briefing).dropFirst())
+    }
+
+    static func evidenceScope(_ briefing: TodayBriefing) -> String {
+        switch briefing.coverage.status {
+        case .complete:
+            return "COMPLETE · OBSERVED + FORECAST"
+        case .observedOnly:
+            return "OBSERVED ONLY"
+        case .partial:
+            return "PARTIAL · GAPS SHOWN"
+        case .offline:
+            return "SOURCES OFFLINE"
+        case .empty:
+            return "NO QUALIFYING ITEMS"
+        case .unknown:
+            return "COVERAGE UNCONFIRMED"
+        }
+    }
+
     static func displayedNextMoments(_ briefing: TodayBriefing) -> [TodayFutureMoment] {
         Array(briefing.nextMoments.prefix(3))
     }

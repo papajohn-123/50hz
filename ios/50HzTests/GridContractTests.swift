@@ -8,6 +8,48 @@ final class GridContractTests: XCTestCase {
         XCTAssertEqual(AppVersionText.make(version: "1.0", build: "7"), "Version 1.0 (7)")
     }
 
+    func testWelcomeUsesTheLatestRealSourceAndExplainsDeliveryTime() {
+        let older = SourceReference(
+            id: "older",
+            name: "Elexon",
+            dataset: "INDO",
+            observedAt: Date(timeIntervalSince1970: 1_000),
+            retrievedAt: Date(timeIntervalSince1970: 1_010),
+            cadenceSeconds: 60
+        )
+        let latest = SourceReference(
+            id: "latest",
+            name: "Elexon",
+            dataset: "FREQ",
+            observedAt: Date(timeIntervalSince1970: 2_000),
+            retrievedAt: Date(timeIntervalSince1970: 2_042),
+            cadenceSeconds: 60
+        )
+        let snapshot = GridSnapshot(
+            timestamp: latest.observedAt,
+            retrievedAt: latest.retrievedAt,
+            freshness: .live,
+            freshnessAgeSeconds: 42,
+            headline: ConditionHeadline(
+                cleanliness: "Typical",
+                balance: "Balanced",
+                energyPosition: "Importing",
+                interpretation: "A verified snapshot."
+            ),
+            frequency: nil,
+            demand: GridMetric(value: 30_000, unit: "MW", factClass: .observed, sourceID: "latest"),
+            carbonIntensity: GridMetric(value: 120, unit: "gCO2/kWh", factClass: .estimated, sourceID: "carbon"),
+            generation: [],
+            interconnectors: [],
+            activeEvent: nil,
+            sources: [latest, older]
+        )
+
+        XCTAssertEqual(WelcomeDataPresentation.latestSource(in: snapshot)?.id, "latest")
+        XCTAssertEqual(WelcomeDataPresentation.deliveryLabel(latest), "received 42s after observation")
+        XCTAssertNil(WelcomeDataPresentation.latestSource(in: nil))
+    }
+
     func testCarbonIntensityWordingUsesComparativeBands() {
         XCTAssertEqual(CarbonIntensityWording.label(for: 99.9), "Lower carbon")
         XCTAssertEqual(CarbonIntensityWording.label(for: 100), "Typical carbon")

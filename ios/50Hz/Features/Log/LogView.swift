@@ -110,7 +110,7 @@ struct LogView: View {
                     streakBadge
                 }
             }
-            Text("Make a call, inspect the evidence, then keep what you learned.")
+            Text("Make a call. Visit the evidence. See the result. Keep the takeaway.")
                 .font(.subheadline)
                 .foregroundStyle(GridTheme.textSecondary)
         }
@@ -534,19 +534,19 @@ struct LogView: View {
     private var missionSection: some View {
         VStack(alignment: .leading, spacing: 4) {
             SectionLabel(
-                "Missions",
-                trailing: currentGame.map { "\(completedMissionCount)/\(min($0.missions.count, 3)) LOCAL" } ?? "UNAVAILABLE"
+                "Evidence",
+                trailing: currentGame.map { "\(completedMissionCount)/\(min($0.missions.count, 3)) VISITED" } ?? "UNAVAILABLE"
             )
             .padding(.bottom, 6)
 
             if let missions = currentGame?.missions.prefix(3), !missions.isEmpty {
                 ForEach(Array(missions)) { mission in missionRow(mission) }
-                Text("Open the linked context first. ‘Mark done’ is a local, unverified notebook checkmark.")
+                Text("Opening a linked context records an evidence visit and its deterministic takeaway on this device.")
                     .font(.caption2)
                     .foregroundStyle(GridTheme.textTertiary)
                     .padding(.top, 7)
             } else {
-                Text("Up to three date-matched missions will appear when the daily plan is available.")
+                Text("Up to three date-matched evidence prompts appear when the daily plan is available.")
                     .font(.caption)
                     .foregroundStyle(GridTheme.textSecondary)
                     .padding(.vertical, 9)
@@ -565,33 +565,36 @@ struct LogView: View {
                 }
                 .buttonStyle(.plain)
                 .accessibilityLabel("\(mission.title). \(target.label)")
-                .accessibilityHint("Opens the evidence context; completion is recorded separately after you return")
+                .accessibilityHint("Opens the evidence context and records a private evidence visit")
             } else {
                 missionLabel(mission, progress: progress, target: nil)
                     .accessibilityElement(children: .combine)
             }
 
-            if let progress, !progress.isCompleted, mission.available {
+            if let progress,
+               !progress.isCompleted,
+               mission.available,
+               !MissionCompletionPolicy.completesOnEvidenceVisit(mission.kind) {
                 Button {
                     guard missionStore.markCompleted(mission, date: currentGame?.date ?? todayKey) else { return }
                     registerParticipation()
                     updateWithFeedback { missionProgress = missionStore.progress() }
                 } label: {
-                    Label("Mark done", systemImage: "checkmark.circle")
+                    Label("Record takeaway", systemImage: "checkmark.circle")
                         .font(.caption.weight(.semibold))
                         .foregroundStyle(GridTheme.liveCyan)
                         .frame(maxWidth: .infinity, minHeight: 44, alignment: .leading)
                         .padding(.leading, 38)
                 }
                 .buttonStyle(.plain)
-                .accessibilityHint("Records an unverified completion only on this device")
+                .accessibilityHint("Stores this takeaway only on this device")
             } else if progress?.isCompleted == true {
-                Label("Done · local and unverified", systemImage: "checkmark.circle.fill")
+                Label("Evidence visited · private", systemImage: "checkmark.circle.fill")
                     .font(.caption2.weight(.medium))
                     .foregroundStyle(GridTheme.liveCyan)
                     .frame(minHeight: 44, alignment: .leading)
                     .padding(.leading, 38)
-                    .accessibilityLabel("Done, local and unverified")
+                    .accessibilityLabel("Evidence visited, stored privately")
             }
             Hairline()
         }
@@ -648,7 +651,7 @@ struct LogView: View {
     @ViewBuilder
     private var resultSection: some View {
         VStack(alignment: .leading, spacing: 12) {
-            SectionLabel("Newest saved result", trailing: "LOCAL COMPARISON")
+            SectionLabel("Latest published result", trailing: "COMPARED ON DEVICE")
             if let saved = resultPrediction {
                 if let resolution = matchingResolution(for: saved),
                    let result = LocalPredictionResult.derive(saved: saved, resolution: resolution) {
@@ -734,12 +737,12 @@ struct LogView: View {
                 .font(.caption2)
                 .foregroundStyle(GridTheme.textTertiary)
         }
-        .padding(16)
-        .background(resultColor(result.status).opacity(0.06), in: RoundedRectangle(cornerRadius: GridTheme.cornerRadius))
-        .overlay(
-            RoundedRectangle(cornerRadius: GridTheme.cornerRadius)
-                .stroke(resultColor(result.status).opacity(0.18), lineWidth: 1)
-        )
+        .padding(.leading, 14)
+        .overlay(alignment: .leading) {
+            Rectangle()
+                .fill(resultColor(result.status))
+                .frame(width: 2)
+        }
         .accessibilityElement(children: .contain)
     }
 
@@ -770,9 +773,9 @@ struct LogView: View {
     @ViewBuilder
     private var learnedSection: some View {
         VStack(alignment: .leading, spacing: 10) {
-            SectionLabel("Learned concepts", trailing: learnedNotes.isEmpty ? "NONE YET" : "LOCAL NOTES")
+            SectionLabel("Takeaways", trailing: learnedNotes.isEmpty ? "NONE YET" : "PRIVATE NOTES")
             if learnedNotes.isEmpty {
-                Text("Complete a mission after visiting its evidence context. A short, deterministic concept note will stay here on this device.")
+                Text("Visit an evidence prompt and a short deterministic takeaway will stay on this device.")
                     .font(.caption)
                     .foregroundStyle(GridTheme.textSecondary)
             } else {
@@ -799,7 +802,7 @@ struct LogView: View {
     private var notebookNote: some View {
         VStack(alignment: .leading, spacing: 8) {
             Hairline()
-            Text("Predictions, completions, streaks and learned notes stay on this device. Results come from published grid evidence; 50Hz does not submit your choice or verify mission completion.")
+            Text("Predictions, evidence visits, streaks and takeaways stay on this device. Published grid evidence supplies results; 50Hz never submits your choice.")
                 .font(.caption2)
                 .foregroundStyle(GridTheme.textTertiary)
                 .fixedSize(horizontal: false, vertical: true)
@@ -887,8 +890,12 @@ struct LogView: View {
 
     private func openMission(_ mission: GameMission, target: MissionNavigationTarget) {
         guard let date = currentGame?.date else { return }
-        missionStore.markVisited(mission, date: date)
+        let didComplete = missionStore.recordEvidenceVisit(mission, date: date)
         missionProgress = missionStore.progress()
+        if didComplete {
+            registerParticipation()
+            feedbackTrigger += 1
+        }
 
         switch target {
         case .live:
