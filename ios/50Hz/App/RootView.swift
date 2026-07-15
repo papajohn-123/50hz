@@ -10,15 +10,11 @@ struct RootView: View {
     var body: some View {
         TabView(selection: $model.selectedTab) {
             LiveView()
-                .tabItem { Label("Live", systemImage: "waveform.path.ecg") }
+                .tabItem { Label("Grid", systemImage: "map") }
                 .tag(AppTab.live)
 
-            TodayView()
-                .tabItem { Label("Today", systemImage: "clock") }
-                .tag(AppTab.today)
-
-            MineView()
-                .tabItem { Label("Local", systemImage: "location") }
+            PlanView()
+                .tabItem { Label("Plan", systemImage: "clock.badge.checkmark") }
                 .tag(AppTab.mine)
 
             LogView()
@@ -55,8 +51,16 @@ struct RootView: View {
             .presentationBackground(GridTheme.background)
         }
         .onAppear {
+            if model.selectedTab == .today {
+                model.selectedTab = .mine
+            }
             if WelcomePresentationPolicy.shouldPresent(hasCompletedWelcome: hasCompletedWelcome) {
                 isWelcomePresented = true
+            }
+        }
+        .onChange(of: model.selectedTab) { _, selectedTab in
+            if selectedTab == .today {
+                model.selectedTab = .mine
             }
         }
     }
