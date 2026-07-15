@@ -46,6 +46,10 @@ struct LogView: View {
     @State private var missionProgress: [MissionProgress] = []
     @State private var feedbackTrigger = 0
     @State private var currentLondonDate = LondonDay.localDateKey()
+    @State private var isReminderExpanded = false
+    @State private var isMoreEvidenceExpanded = false
+    @State private var isResultEvidenceExpanded = false
+    @State private var isHistoryExpanded = false
     @StateObject private var predictionReminder = PredictionReminderCoordinator()
 
     private let predictionStore = PredictionJournalStore()
@@ -54,14 +58,13 @@ struct LogView: View {
     var body: some View {
         TimelineView(.periodic(from: .now, by: 60)) { context in
             ScrollView {
-                VStack(alignment: .leading, spacing: 28) {
+                VStack(alignment: .leading, spacing: 24) {
                     header
                     gameState
                     predictionSection
-                    missionSection
+                    nextEvidenceSection
                     resultSection
-                    learnedSection
-                    notebookNote
+                    historySection
                 }
                 .padding(.horizontal, GridTheme.horizontalPadding)
                 .padding(.top, 12)
@@ -93,26 +96,21 @@ struct LogView: View {
     }
 
     private var header: some View {
-        VStack(alignment: .leading, spacing: 8) {
-            ViewThatFits(in: .horizontal) {
-                HStack(alignment: .firstTextBaseline, spacing: 12) {
+        ViewThatFits(in: .horizontal) {
+            HStack(alignment: .firstTextBaseline, spacing: 12) {
+                headerTitle
+                Spacer(minLength: 8)
+                streakBadge
+                GlobalInfoButton()
+            }
+            VStack(alignment: .leading, spacing: 2) {
+                HStack {
                     headerTitle
                     Spacer(minLength: 8)
-                    streakBadge
                     GlobalInfoButton()
                 }
-                VStack(alignment: .leading, spacing: 4) {
-                    HStack(alignment: .center) {
-                        headerTitle
-                        Spacer(minLength: 8)
-                        GlobalInfoButton()
-                    }
-                    streakBadge
-                }
+                streakBadge
             }
-            Text("Make a call. Visit the evidence. See the result. Keep the takeaway.")
-                .font(.subheadline)
-                .foregroundStyle(GridTheme.textSecondary)
         }
     }
 
@@ -126,12 +124,12 @@ struct LogView: View {
     @ViewBuilder
     private var streakBadge: some View {
         if currentStreak == 0 {
-            Text("START TODAY")
+            Text("TODAY")
                 .font(.caption2.weight(.semibold))
                 .fontDesign(.monospaced)
                 .tracking(0.6)
                 .foregroundStyle(GridTheme.liveCyan)
-                .accessibilityLabel("Start today")
+                .accessibilityLabel("No current streak")
         } else {
             VStack(alignment: .trailing, spacing: 1) {
                 Text(currentStreak.formatted())
@@ -205,22 +203,22 @@ struct LogView: View {
                 predictionCard(prediction, now: context.date)
             }
         } else {
-            VStack(alignment: .leading, spacing: 9) {
-                SectionLabel("Prediction", trailing: "LOCAL CHOICE")
-                Text(savedPredictionForToday == nil ? "No prediction is open" : "Today’s prediction is closed")
+            VStack(alignment: .leading, spacing: 7) {
+                SectionLabel("Today’s call", trailing: savedPredictionForToday == nil ? "NO QUESTION" : "CLOSED")
+                Text(savedPredictionForToday == nil ? "No call to make today" : "Your call is saved")
                     .font(.title3.weight(.medium))
                 if let saved = savedPredictionForToday {
-                    Text("Your \(saved.choice.displayName.lowercased()) choice is still saved on this device. The published result is unavailable right now.")
-                        .font(.caption)
-                        .foregroundStyle(GridTheme.textSecondary)
-                } else {
-                    Text("A prediction appears only when the backend has a date-matched definition. 50Hz will not invent one while the feed is unavailable.")
+                    Text("\(saved.choice.displayName) · saved on this device")
                         .font(.caption)
                         .foregroundStyle(GridTheme.textSecondary)
                 }
             }
-            .padding(17)
-            .background(GridTheme.surface.opacity(0.72), in: RoundedRectangle(cornerRadius: GridTheme.cornerRadius))
+            .padding(.leading, 14)
+            .overlay(alignment: .leading) {
+                Rectangle()
+                    .fill(GridTheme.forecastViolet.opacity(0.7))
+                    .frame(width: 2)
+            }
         }
     }
 
@@ -233,13 +231,12 @@ struct LogView: View {
         )
         let locked = !canSelect
         let saved = savedPredictions.first { $0.predictionID == prediction.predictionID && $0.date == prediction.date }
-        return VStack(alignment: .leading, spacing: 15) {
+        return VStack(alignment: .leading, spacing: 14) {
             HStack(alignment: .firstTextBaseline, spacing: 10) {
-                Label("PREDICTION", systemImage: "scope")
+                Text("TODAY’S CALL")
                     .font(.caption2.weight(.semibold))
-                    .fontDesign(.monospaced)
-                    .tracking(0.7)
-                    .foregroundStyle(GridTheme.forecastViolet)
+                    .tracking(1)
+                    .foregroundStyle(GridTheme.textTertiary)
                 Spacer(minLength: 4)
                 Text(locked ? "LOCKED · \(ukTime(prediction.locksAt)) UK" : "LOCKS \(ukTime(prediction.locksAt)) UK")
                     .font(.caption2)
@@ -249,43 +246,51 @@ struct LogView: View {
             }
 
             Text(prediction.question)
-                .font(.title3.weight(.medium))
+                .font(.system(.title2, design: .rounded, weight: .medium))
+                .tracking(-0.35)
                 .fixedSize(horizontal: false, vertical: true)
 
-            VStack(spacing: 10) {
-                ForEach(prediction.choices.filter { $0 != .other }) { choice in
-                    predictionButton(choice, prediction: prediction, saved: saved, locked: locked)
+            ViewThatFits(in: .horizontal) {
+                HStack(spacing: 10) {
+                    ForEach(prediction.choices.filter { $0 != .other }) { choice in
+                        predictionButton(choice, prediction: prediction, saved: saved, locked: locked)
+                    }
+                }
+                VStack(spacing: 10) {
+                    ForEach(prediction.choices.filter { $0 != .other }) { choice in
+                        predictionButton(choice, prediction: prediction, saved: saved, locked: locked)
+                    }
                 }
             }
 
             if let saved {
-                Text("Saved on this device: \(saved.choice.displayName). Your choice is never submitted.")
+                Label("Your call: \(saved.choice.displayName)", systemImage: "checkmark.circle.fill")
                     .font(.caption2)
-                    .foregroundStyle(GridTheme.textTertiary)
+                    .foregroundStyle(GridTheme.forecastViolet)
             } else if !prediction.supportsLocalChoiceContract {
-                Text("This prediction uses a newer or unsupported rule. Choices are disabled and 50Hz will not infer how to score it.")
+                Text("This question cannot be scored by this version of 50Hz.")
                     .font(.caption2)
                     .foregroundStyle(GridTheme.staleAmber)
             } else if locked {
-                Text("Choices closed at the backend’s published lock time. No local choice was saved.")
+                Text("The call closed without a saved choice.")
                     .font(.caption2)
                     .foregroundStyle(GridTheme.textTertiary)
             }
 
             if prediction.state == .pending, now >= prediction.locksAt {
-                Text("Awaiting the evidence window through \(ukTime(prediction.evidenceTo)) UK. Pending is not a result.")
+                Text("Result after \(ukTime(prediction.evidenceTo)) UK")
                     .font(.caption)
                     .foregroundStyle(GridTheme.textSecondary)
             }
 
             predictionReminderControls(prediction, saved: saved, now: now)
         }
-        .padding(17)
-        .background(GridTheme.forecastViolet.opacity(0.07), in: RoundedRectangle(cornerRadius: GridTheme.cornerRadius))
-        .overlay(
-            RoundedRectangle(cornerRadius: GridTheme.cornerRadius)
-                .stroke(GridTheme.forecastViolet.opacity(0.20), lineWidth: 1)
-        )
+        .padding(.leading, 14)
+        .overlay(alignment: .leading) {
+            Rectangle()
+                .fill(GridTheme.forecastViolet)
+                .frame(width: 2)
+        }
     }
 
     private func predictionButton(
@@ -364,30 +369,35 @@ struct LogView: View {
 
         if lockPlan != nil || resultPlan != nil || hasStoredReminder {
             Hairline()
-            VStack(alignment: .leading, spacing: 10) {
-                Text("KEEP THIS PREDICTION")
-                    .font(.caption2.weight(.semibold))
-                    .fontDesign(.monospaced)
-                    .tracking(0.7)
-                    .foregroundStyle(GridTheme.textTertiary)
-
-                predictionReminderRow(
-                    kind: .lock,
-                    plan: lockPlan,
-                    prediction: prediction
-                )
-                predictionReminderRow(
-                    kind: .result,
-                    plan: resultPlan,
-                    prediction: prediction
-                )
-
-                Text("Reminders stay on this device. A result reminder only asks you to check; it never claims evidence has already resolved.")
-                    .font(.caption2)
-                    .foregroundStyle(GridTheme.textTertiary)
-                    .fixedSize(horizontal: false, vertical: true)
+            DisclosureGroup(isExpanded: $isReminderExpanded) {
+                VStack(alignment: .leading, spacing: 8) {
+                    predictionReminderRow(
+                        kind: .lock,
+                        plan: lockPlan,
+                        prediction: prediction
+                    )
+                    predictionReminderRow(
+                        kind: .result,
+                        plan: resultPlan,
+                        prediction: prediction
+                    )
+                }
+                .padding(.top, 8)
+            } label: {
+                Label(reminderLabel, systemImage: "bell")
+                    .font(.caption.weight(.semibold))
+                    .foregroundStyle(GridTheme.textSecondary)
+                    .frame(maxWidth: .infinity, minHeight: 44, alignment: .leading)
             }
+            .tint(GridTheme.textTertiary)
         }
+    }
+
+    private var reminderLabel: String {
+        let count = PredictionReminderKind.allCases.filter {
+            predictionReminder.scheduled[$0] != nil
+        }.count
+        return count == 0 ? "Reminders" : "Reminders · \(count) set"
     }
 
     @ViewBuilder
@@ -531,27 +541,74 @@ struct LogView: View {
         )
     }
 
-    private var missionSection: some View {
-        VStack(alignment: .leading, spacing: 4) {
-            SectionLabel(
-                "Evidence",
-                trailing: currentGame.map { "\(completedMissionCount)/\(min($0.missions.count, 3)) VISITED" } ?? "UNAVAILABLE"
-            )
-            .padding(.bottom, 6)
+    @ViewBuilder
+    private var nextEvidenceSection: some View {
+        if !evidenceMissions.isEmpty {
+            VStack(alignment: .leading, spacing: 6) {
+                SectionLabel(
+                    "Next evidence",
+                    trailing: "\(completedMissionCount)/\(evidenceMissions.count) VISITED"
+                )
 
-            if let missions = currentGame?.missions.prefix(3), !missions.isEmpty {
-                ForEach(Array(missions)) { mission in missionRow(mission) }
-                Text("Opening a linked context records an evidence visit and its deterministic takeaway on this device.")
-                    .font(.caption2)
-                    .foregroundStyle(GridTheme.textTertiary)
-                    .padding(.top, 7)
-            } else {
-                Text("Up to three date-matched evidence prompts appear when the daily plan is available.")
-                    .font(.caption)
-                    .foregroundStyle(GridTheme.textSecondary)
-                    .padding(.vertical, 9)
+                if let mission = nextEvidenceMission,
+                   let target = MissionNavigationTarget.resolve(mission, events: model.events) {
+                    primaryMissionAction(mission, target: target)
+                } else {
+                    Label(
+                        completedMissionCount == evidenceMissions.count ? "You’re caught up" : "No evidence action available",
+                        systemImage: completedMissionCount == evidenceMissions.count ? "checkmark.circle.fill" : "clock"
+                    )
+                    .font(.subheadline.weight(.medium))
+                    .foregroundStyle(completedMissionCount == evidenceMissions.count ? GridTheme.liveCyan : GridTheme.textSecondary)
+                    .frame(maxWidth: .infinity, minHeight: 52, alignment: .leading)
+                }
+
+                if !secondaryEvidenceMissions.isEmpty {
+                    DisclosureGroup(isExpanded: $isMoreEvidenceExpanded) {
+                        VStack(alignment: .leading, spacing: 0) {
+                            ForEach(secondaryEvidenceMissions) { mission in
+                                missionRow(mission)
+                            }
+                        }
+                        .padding(.top, 2)
+                    } label: {
+                        Text("More evidence · \(secondaryEvidenceMissions.count)")
+                            .font(.caption.weight(.semibold))
+                            .foregroundStyle(GridTheme.textSecondary)
+                            .frame(maxWidth: .infinity, minHeight: 44, alignment: .leading)
+                    }
+                    .tint(GridTheme.textTertiary)
+                }
             }
         }
+    }
+
+    private func primaryMissionAction(
+        _ mission: GameMission,
+        target: MissionNavigationTarget
+    ) -> some View {
+        Button { openMission(mission, target: target) } label: {
+            HStack(spacing: 13) {
+                Image(systemName: missionSymbol(mission.kind))
+                    .font(.body.weight(.medium))
+                    .foregroundStyle(GridTheme.liveCyan)
+                    .frame(width: 26)
+                Text(mission.title)
+                    .font(.title3.weight(.medium))
+                    .foregroundStyle(GridTheme.textPrimary)
+                    .fixedSize(horizontal: false, vertical: true)
+                Spacer(minLength: 8)
+                Image(systemName: "arrow.up.right")
+                    .font(.caption.weight(.semibold))
+                    .foregroundStyle(GridTheme.liveCyan)
+            }
+            .frame(maxWidth: .infinity, minHeight: 62, alignment: .leading)
+            .contentShape(Rectangle())
+            .overlay(alignment: .bottom) { Hairline() }
+        }
+        .buttonStyle(.plain)
+        .accessibilityLabel("\(mission.title). \(target.label)")
+        .accessibilityHint("Opens the evidence and records this visit on this device")
     }
 
     @ViewBuilder
@@ -650,8 +707,8 @@ struct LogView: View {
 
     @ViewBuilder
     private var resultSection: some View {
-        VStack(alignment: .leading, spacing: 12) {
-            SectionLabel("Latest published result", trailing: "COMPARED ON DEVICE")
+        VStack(alignment: .leading, spacing: 10) {
+            SectionLabel("Latest result", trailing: resultPrediction?.date)
             if let saved = resultPrediction {
                 if let resolution = matchingResolution(for: saved),
                    let result = LocalPredictionResult.derive(saved: saved, resolution: resolution) {
@@ -660,7 +717,7 @@ struct LogView: View {
                     unavailableResult(saved)
                 }
             } else {
-                Text("Save a prediction to begin a private result history. 50Hz compares it on this device only after evidence is published.")
+                Text("Make today’s call to start your history.")
                     .font(.caption)
                     .foregroundStyle(GridTheme.textSecondary)
                     .padding(.vertical, 7)
@@ -673,16 +730,16 @@ struct LogView: View {
         resolution: PredictionResolution,
         result: LocalPredictionResult
     ) -> some View {
-        VStack(alignment: .leading, spacing: 13) {
-            HStack(alignment: .firstTextBaseline, spacing: 10) {
+        VStack(alignment: .leading, spacing: 11) {
+            HStack(alignment: .center, spacing: 10) {
                 Text(resultTitle(result.status))
                     .font(.title2.weight(.semibold))
                     .foregroundStyle(resultColor(result.status))
                 Spacer(minLength: 8)
-                Text(saved.date)
-                    .font(.caption)
-                    .fontDesign(.monospaced)
-                    .foregroundStyle(GridTheme.textTertiary)
+                Image(systemName: resultSymbol(result.status))
+                    .font(.title3)
+                    .foregroundStyle(resultColor(result.status))
+                    .accessibilityHidden(true)
             }
 
             Text(resultSummary(saved: saved, resolution: resolution, status: result.status))
@@ -690,52 +747,62 @@ struct LogView: View {
                 .foregroundStyle(GridTheme.textSecondary)
                 .fixedSize(horizontal: false, vertical: true)
 
-            if resolution.isCorrection {
-                Label("Result revised from published evidence · revision \(resolution.resolutionRevision)", systemImage: "arrow.triangle.2.circlepath")
-                    .font(.caption.weight(.semibold))
-                    .foregroundStyle(GridTheme.staleAmber)
-                    .fixedSize(horizontal: false, vertical: true)
-            }
-
             if let value = resolution.observedValueMW {
-                evidenceLine(
-                    label: "Observed position",
-                    value: "\(signedMegawatts(value)) signed net interconnector flow"
-                )
-            }
-            if let observedAt = resolution.observedAt {
-                evidenceLine(label: "Observed at", value: "\(ukDateTime(observedAt)) UK")
-            }
-            evidenceLine(
-                label: "Coverage",
-                value: "\(resolution.coverage.observedConnectorCount) of \(resolution.coverage.expectedConnectorCount) connectors · \(coveragePercent(resolution.coverage.coverageFraction))"
-            )
-            evidenceLine(
-                label: "Evidence window",
-                value: "\(ukTime(resolution.evidenceFrom))–\(ukTime(resolution.evidenceTo)) UK · target \(ukTime(resolution.targetAt))"
-            )
-            evidenceLine(
-                label: "Evidence trail",
-                value: evidenceTrail(resolution)
-            )
-
-            Text(resolution.reason)
-                .font(.caption)
-                .foregroundStyle(GridTheme.textSecondary)
-                .padding(.top, 2)
-                .fixedSize(horizontal: false, vertical: true)
-
-            if let error = model.predictionResolutionErrors[saved.date],
-               model.predictionResolutionCacheDates.contains(saved.date) {
-                Label("Showing the protected saved result; refresh unavailable. \(error)", systemImage: "wifi.slash")
-                    .font(.caption2)
-                    .foregroundStyle(GridTheme.staleAmber)
-                    .fixedSize(horizontal: false, vertical: true)
+                HStack(alignment: .firstTextBaseline, spacing: 7) {
+                    Text(signedMegawatts(value))
+                        .font(.system(.title3, design: .monospaced, weight: .medium))
+                        .foregroundStyle(GridTheme.textPrimary)
+                    Text(value >= 0 ? "net import" : "net export")
+                        .font(.caption)
+                        .foregroundStyle(GridTheme.textTertiary)
+                }
             }
 
-            Text("Choice saved locally · published outcome from resolution schema \(resolution.schemaVersion)")
-                .font(.caption2)
-                .foregroundStyle(GridTheme.textTertiary)
+            Hairline()
+            DisclosureGroup(isExpanded: $isResultEvidenceExpanded) {
+                VStack(alignment: .leading, spacing: 10) {
+                    if resolution.isCorrection {
+                        Label("Revised result · revision \(resolution.resolutionRevision)", systemImage: "arrow.triangle.2.circlepath")
+                            .font(.caption.weight(.semibold))
+                            .foregroundStyle(GridTheme.staleAmber)
+                    }
+                    if let observedAt = resolution.observedAt {
+                        evidenceLine(label: "Observed", value: "\(ukDateTime(observedAt)) UK")
+                    }
+                    evidenceLine(
+                        label: "Coverage",
+                        value: "\(resolution.coverage.observedConnectorCount) of \(resolution.coverage.expectedConnectorCount) connectors · \(coveragePercent(resolution.coverage.coverageFraction))"
+                    )
+                    evidenceLine(
+                        label: "Window",
+                        value: "\(ukTime(resolution.evidenceFrom))–\(ukTime(resolution.evidenceTo)) UK · target \(ukTime(resolution.targetAt))"
+                    )
+                    evidenceLine(label: "Sources", value: evidenceTrail(resolution))
+                    Text(resolution.reason)
+                        .font(.caption)
+                        .foregroundStyle(GridTheme.textSecondary)
+                        .fixedSize(horizontal: false, vertical: true)
+
+                    if let error = model.predictionResolutionErrors[saved.date],
+                       model.predictionResolutionCacheDates.contains(saved.date) {
+                        Label("Saved result shown; refresh unavailable. \(error)", systemImage: "wifi.slash")
+                            .font(.caption2)
+                            .foregroundStyle(GridTheme.staleAmber)
+                            .fixedSize(horizontal: false, vertical: true)
+                    }
+
+                    Text("Local choice · published schema \(resolution.schemaVersion)")
+                        .font(.caption2)
+                        .foregroundStyle(GridTheme.textTertiary)
+                }
+                .padding(.top, 8)
+            } label: {
+                Text("Evidence details")
+                    .font(.caption.weight(.semibold))
+                    .foregroundStyle(GridTheme.textSecondary)
+                    .frame(maxWidth: .infinity, minHeight: 44, alignment: .leading)
+            }
+            .tint(GridTheme.textTertiary)
         }
         .padding(.leading, 14)
         .overlay(alignment: .leading) {
@@ -757,7 +824,7 @@ struct LogView: View {
                 Text(isLoading ? "Checking the published result…" : "Result unavailable")
                     .font(.subheadline.weight(.semibold))
             }
-            Text("Your \(saved.choice.displayName.lowercased()) choice for \(saved.date) remains on this device. It has not been marked correct or incorrect.")
+            Text("\(saved.choice.displayName) · \(saved.date)")
                 .font(.caption)
                 .foregroundStyle(GridTheme.textSecondary)
             if let error, !isLoading {
@@ -766,53 +833,92 @@ struct LogView: View {
                     .foregroundStyle(GridTheme.textTertiary)
             }
         }
-        .padding(15)
-        .background(GridTheme.surface.opacity(0.72), in: RoundedRectangle(cornerRadius: GridTheme.cornerRadius))
-    }
-
-    @ViewBuilder
-    private var learnedSection: some View {
-        VStack(alignment: .leading, spacing: 10) {
-            SectionLabel("Takeaways", trailing: learnedNotes.isEmpty ? "NONE YET" : "PRIVATE NOTES")
-            if learnedNotes.isEmpty {
-                Text("Visit an evidence prompt and a short deterministic takeaway will stay on this device.")
-                    .font(.caption)
-                    .foregroundStyle(GridTheme.textSecondary)
-            } else {
-                ForEach(learnedNotes) { note in
-                    HStack(alignment: .top, spacing: 12) {
-                        Image(systemName: "lightbulb.min")
-                            .foregroundStyle(GridTheme.liveCyan)
-                            .frame(width: 24)
-                        VStack(alignment: .leading, spacing: 3) {
-                            Text(note.learnedNote ?? "")
-                                .font(.subheadline)
-                                .fixedSize(horizontal: false, vertical: true)
-                            Text("Learned \(note.date) · local note")
-                                .font(.caption2)
-                                .foregroundStyle(GridTheme.textTertiary)
-                        }
-                    }
-                    .padding(.vertical, 5)
-                }
-            }
+        .padding(.leading, 14)
+        .overlay(alignment: .leading) {
+            Rectangle()
+                .fill(GridTheme.textTertiary)
+                .frame(width: 2)
         }
     }
 
-    private var notebookNote: some View {
-        VStack(alignment: .leading, spacing: 8) {
+    private var historySection: some View {
+        VStack(alignment: .leading, spacing: 0) {
             Hairline()
-            Text("Predictions, evidence visits, streaks and takeaways stay on this device. Published grid evidence supplies results; 50Hz never submits your choice.")
-                .font(.caption2)
-                .foregroundStyle(GridTheme.textTertiary)
-                .fixedSize(horizontal: false, vertical: true)
-            HStack(spacing: 14) {
-                Link("Privacy", destination: URL(string: "https://50hz-api-production.up.railway.app/privacy")!)
-                Link("Support", destination: URL(string: "https://50hz-api-production.up.railway.app/support")!)
+            DisclosureGroup(isExpanded: $isHistoryExpanded) {
+                VStack(alignment: .leading, spacing: 18) {
+                    if savedPredictions.isEmpty {
+                        Text("No saved calls yet.")
+                            .font(.caption)
+                            .foregroundStyle(GridTheme.textSecondary)
+                    } else {
+                        VStack(alignment: .leading, spacing: 0) {
+                            Text("RECENT CALLS")
+                                .font(.caption2.weight(.semibold))
+                                .tracking(0.8)
+                                .foregroundStyle(GridTheme.textTertiary)
+                                .padding(.bottom, 5)
+                            ForEach(savedPredictions.prefix(5)) { prediction in
+                                HStack(spacing: 10) {
+                                    Text(prediction.date)
+                                        .font(.caption.monospacedDigit())
+                                        .foregroundStyle(GridTheme.textTertiary)
+                                    Spacer(minLength: 8)
+                                    Text(prediction.choice.displayName)
+                                        .font(.subheadline.weight(.medium))
+                                        .foregroundStyle(GridTheme.textPrimary)
+                                }
+                                .frame(minHeight: 42)
+                                .overlay(alignment: .bottom) { Hairline() }
+                                .accessibilityElement(children: .combine)
+                            }
+                        }
+                    }
+
+                    if !learnedNotes.isEmpty {
+                        VStack(alignment: .leading, spacing: 9) {
+                            Text("TAKEAWAYS")
+                                .font(.caption2.weight(.semibold))
+                                .tracking(0.8)
+                                .foregroundStyle(GridTheme.textTertiary)
+                            ForEach(learnedNotes.prefix(3)) { note in
+                                HStack(alignment: .top, spacing: 10) {
+                                    Image(systemName: "lightbulb.min")
+                                        .foregroundStyle(GridTheme.liveCyan)
+                                        .frame(width: 20)
+                                    Text(note.learnedNote ?? "")
+                                        .font(.caption)
+                                        .foregroundStyle(GridTheme.textSecondary)
+                                        .fixedSize(horizontal: false, vertical: true)
+                                }
+                                .accessibilityElement(children: .combine)
+                            }
+                        }
+                    }
+
+                    HStack(spacing: 14) {
+                        Text("Saved on this device")
+                        Spacer(minLength: 8)
+                        Link("Privacy", destination: URL(string: "https://50hz-api-production.up.railway.app/privacy")!)
+                        Link("Support", destination: URL(string: "https://50hz-api-production.up.railway.app/support")!)
+                    }
+                    .font(.caption2)
+                    .foregroundStyle(GridTheme.textTertiary)
+                    .frame(minHeight: 44)
+                }
+                .padding(.top, 10)
+            } label: {
+                HStack(spacing: 8) {
+                    Text("History & takeaways")
+                        .font(.subheadline.weight(.medium))
+                        .foregroundStyle(GridTheme.textPrimary)
+                    Spacer(minLength: 8)
+                    Text("\(savedPredictions.count) CALLS · \(learnedNotes.count) NOTES")
+                        .font(.caption2.monospacedDigit())
+                        .foregroundStyle(GridTheme.textTertiary)
+                }
+                .frame(maxWidth: .infinity, minHeight: 52, alignment: .leading)
             }
-            .font(.caption2.weight(.medium))
-            .foregroundStyle(GridTheme.liveCyan)
-            .frame(minHeight: 44)
+            .tint(GridTheme.textTertiary)
         }
     }
 
@@ -865,6 +971,23 @@ struct LogView: View {
     private var predictionReminderSignature: String {
         guard let prediction = activePrediction else { return "none" }
         return "\(prediction.predictionID)|\(prediction.date)"
+    }
+
+    private var evidenceMissions: [GameMission] {
+        Array(currentGame?.missions.prefix(3) ?? [])
+    }
+
+    private var nextEvidenceMission: GameMission? {
+        evidenceMissions.first { mission in
+            progress(for: mission)?.isCompleted != true
+                && mission.available
+                && MissionNavigationTarget.resolve(mission, events: model.events) != nil
+        }
+    }
+
+    private var secondaryEvidenceMissions: [GameMission] {
+        guard let nextEvidenceMission else { return evidenceMissions }
+        return evidenceMissions.filter { $0.missionID != nextEvidenceMission.missionID }
     }
 
     private var completedMissionCount: Int {
@@ -1006,6 +1129,16 @@ struct LogView: View {
         }
     }
 
+    private func resultSymbol(_ status: LocalPredictionResultStatus) -> String {
+        switch status {
+        case .correct: "checkmark.circle.fill"
+        case .incorrect: "xmark.circle.fill"
+        case .void: "minus.circle"
+        case .pending: "clock"
+        case .unsupported: "questionmark.circle"
+        }
+    }
+
     private func resultSummary(
         saved: SavedPrediction,
         resolution: PredictionResolution,
@@ -1013,15 +1146,15 @@ struct LogView: View {
     ) -> String {
         switch status {
         case .correct:
-            "You chose \(saved.choice.displayName.lowercased()); the published outcome was \(resolution.outcome?.rawValue ?? "unknown"). Correctness was calculated locally."
+            "You called \(saved.choice.displayName.lowercased()). The published outcome was \(resolution.outcome?.rawValue ?? "unknown")."
         case .incorrect:
-            "You chose \(saved.choice.displayName.lowercased()); the published outcome was \(resolution.outcome?.rawValue ?? "unknown"). Correctness was calculated locally."
+            "You called \(saved.choice.displayName.lowercased()). The published outcome was \(resolution.outcome?.rawValue ?? "unknown")."
         case .void:
-            "There is no winning choice. Your \(saved.choice.displayName.lowercased()) prediction remains in the notebook without a correct or incorrect mark."
+            "No winning outcome was published for this call."
         case .pending:
-            "The evidence window has not closed. Your local choice is saved and has not been scored."
+            "The evidence window is still open."
         case .unsupported:
-            "The server returned a newer or unsupported result state. Your local choice is preserved and has not been scored."
+            "This result cannot be scored by this version of 50Hz."
         }
     }
 
