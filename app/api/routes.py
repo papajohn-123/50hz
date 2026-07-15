@@ -3,7 +3,15 @@ from typing import Annotated
 
 from fastapi import APIRouter, Depends, HTTPException, Query, status
 
-from app.api.dependencies import get_grid_read_repository, get_regional_carbon_provider
+from app.api.dependencies import (
+    get_grid_read_repository,
+    get_history_repository,
+    get_regional_carbon_provider,
+)
+from app.api.history_context import (
+    CurrentHistoryContextResponse,
+    present_current_history_context,
+)
 from app.api.briefing import present_today_briefing
 from app.api.metrics import present_metric_registry
 from app.api.local_windows import (
@@ -33,6 +41,7 @@ from app.api.presenter import (
 from app.api.regional import present_region
 from app.game.models import DailyGame
 from app.game.service import build_daily_game
+from app.history.repository import NormalizedHistoryRepository
 from app.events.identity import is_stable_event_id
 from app.persistence import GridReadRepository
 from app.regions import RegionalCarbonProvider, RegionalDataUnavailableError
@@ -45,6 +54,10 @@ Repository = Annotated[GridReadRepository, Depends(get_grid_read_repository)]
 RegionalProvider = Annotated[
     RegionalCarbonProvider,
     Depends(get_regional_carbon_provider),
+]
+HistoryRepository = Annotated[
+    NormalizedHistoryRepository,
+    Depends(get_history_repository),
 ]
 
 
@@ -157,6 +170,37 @@ async def grid_timeline(
         resolution_seconds=resolution,
     )
     return present_timeline(read, now_boundary=min(now, window_end))
+
+
+@router.get(
+    "/history/context",
+    response_model=CurrentHistoryContextResponse,
+    tags=["grid"],
+    summary="Compare current demand and carbon with compatible recent history",
+)
+async def history_context(
+    repository: Repository,
+    history_repository: HistoryRepository,
+    at: datetime | None = Query(default=None),
+) -> CurrentHistoryContextResponse:
+    now = datetime.now(UTC)
+    as_of = _aware_utc(at or now, "at")
+    if as_of > now + timedelta(minutes=5):
+        raise HTTPException(status_code=422, detail="at cannot be in the future")
+    if as_of < now - timedelta(days=94):
+        raise HTTPException(
+            status_code=422,
+            detail="history context cannot be older than 94 days",
+        )
+    try:
+        return await present_current_history_context(
+            repository,
+            history_repository,
+            # Stable within the public one-minute cache window.
+            as_of=as_of.replace(second=0, microsecond=0),
+        )
+    except ValueError as error:
+        raise HTTPException(status_code=422, detail=str(error)) from error
 
 
 @router.get("/sources", response_model=list[SourceMetadataResponse], tags=["system"])
