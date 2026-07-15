@@ -40,19 +40,84 @@ struct BritainShape: Shape {
     }
 }
 
-private struct MapNode: Identifiable {
-    let id: Int
-    let fuel: FuelKind
-    let point: CGPoint
-    let label: String
+private struct LiveAssetOverlay: View {
+    let assets: [LiveMapAsset]
+    let showLabels: Bool
+    let onAssetTap: ((LiveMapAsset) -> Void)?
+
+    var body: some View {
+        GeometryReader { proxy in
+            let mapRect = CGRect(
+                x: proxy.size.width * 0.14,
+                y: 8,
+                width: proxy.size.width * 0.72,
+                height: proxy.size.height - 18
+            )
+
+            ForEach(assets) { asset in
+                Button {
+                    onAssetTap?(asset)
+                } label: {
+                    ZStack {
+                        Circle()
+                            .fill(asset.fuel.map(GridTheme.fuel) ?? GridTheme.liveCyan)
+                            .frame(width: 8, height: 8)
+                            .shadow(
+                                color: (asset.fuel.map(GridTheme.fuel) ?? GridTheme.liveCyan).opacity(0.55),
+                                radius: 4
+                            )
+                        Circle()
+                            .stroke(GridTheme.textPrimary.opacity(0.75), lineWidth: 1)
+                            .frame(width: 13, height: 13)
+                    }
+                    .frame(width: 44, height: 44)
+                    .overlay(alignment: .leading) {
+                        if showLabels {
+                            Text(asset.name)
+                                .font(.system(size: 8, weight: .semibold, design: .monospaced))
+                                .lineLimit(1)
+                                .foregroundStyle(GridTheme.textPrimary)
+                                .padding(.horizontal, 5)
+                                .padding(.vertical, 3)
+                                .background(GridTheme.surface.opacity(0.92), in: Capsule())
+                                .offset(x: 30)
+                        }
+                    }
+                }
+                .buttonStyle(.plain)
+                .disabled(onAssetTap == nil)
+                .position(position(for: asset, in: mapRect))
+                .accessibilityLabel(assetAccessibilityLabel(asset))
+                .accessibilityHint("Opens the source-backed generator inspector")
+            }
+        }
+    }
+
+    private func position(for asset: LiveMapAsset, in rect: CGRect) -> CGPoint {
+        let longitudeRatio = (asset.longitude + 9.5) / 12.5
+        let latitudeRatio = (asset.latitude - 49.5) / 11.5
+        let normalized = CGPoint(
+            x: 0.20 + CGFloat(longitudeRatio) * 0.68,
+            y: 0.96 - CGFloat(latitudeRatio) * 0.93
+        )
+        return CGPoint(
+            x: rect.minX + normalized.x * rect.width,
+            y: rect.minY + normalized.y * rect.height
+        )
+    }
+
+    private func assetAccessibilityLabel(_ asset: LiveMapAsset) -> String {
+        let fuel = asset.fuel.map { ", \($0.displayName)" } ?? ""
+        let capacity = asset.capacityMW.map { ", \($0.formatted(.number.precision(.fractionLength(0)))) megawatts" } ?? ""
+        return "\(asset.name)\(fuel)\(capacity), source located"
+    }
 }
 
 private struct MapLink: Identifiable {
-    let id: Int
+    let id: String
     let start: CGPoint
     let end: CGPoint
     let curve: CGFloat
-    let fuel: FuelKind
     let magnitude: Double
     let reversed: Bool
 }
@@ -61,55 +126,94 @@ struct BritainGridMap: View {
     let snapshot: GridSnapshot
     let selectedFuel: FuelKind?
     let isForecast: Bool
-    let onEventTap: () -> Void
+    let assets: [LiveMapAsset]
+    let onAssetTap: ((LiveMapAsset) -> Void)?
 
     @Environment(\.accessibilityReduceMotion) private var reduceMotion
+    @State private var newDataGlow = 0.0
+    @State private var committedScale: CGFloat = 1
+    @State private var committedOffset: CGSize = .zero
+    @GestureState private var gestureScale: CGFloat = 1
+    @GestureState private var gestureOffset: CGSize = .zero
 
-    private let nodes: [MapNode] = [
-        MapNode(id: 11, fuel: .wind, point: CGPoint(x: 0.40, y: 0.20), label: "Scottish wind"),
-        MapNode(id: 12, fuel: .wind, point: CGPoint(x: 0.62, y: 0.40), label: "North Sea wind"),
-        MapNode(id: 13, fuel: .nuclear, point: CGPoint(x: 0.42, y: 0.50), label: "North-west nuclear"),
-        MapNode(id: 14, fuel: .biomass, point: CGPoint(x: 0.62, y: 0.55), label: "Yorkshire biomass"),
-        MapNode(id: 15, fuel: .hydro, point: CGPoint(x: 0.33, y: 0.65), label: "Welsh hydro"),
-        MapNode(id: 16, fuel: .gas, point: CGPoint(x: 0.58, y: 0.70), label: "Midlands gas"),
-        MapNode(id: 17, fuel: .solar, point: CGPoint(x: 0.50, y: 0.84), label: "Southern solar"),
-        MapNode(id: 18, fuel: .nuclear, point: CGPoint(x: 0.72, y: 0.77), label: "South-east nuclear")
-    ]
+    init(
+        snapshot: GridSnapshot,
+        selectedFuel: FuelKind?,
+        isForecast: Bool,
+        assets: [LiveMapAsset] = [],
+        onAssetTap: ((LiveMapAsset) -> Void)? = nil
+    ) {
+        self.snapshot = snapshot
+        self.selectedFuel = selectedFuel
+        self.isForecast = isForecast
+        self.assets = assets
+        self.onAssetTap = onAssetTap
+    }
 
     var body: some View {
-        TimelineView(.animation(minimumInterval: reduceMotion ? 1 : 1 / 30, paused: reduceMotion)) { timeline in
-            Canvas(rendersAsynchronously: true) { context, size in
-                drawScene(context: &context, size: size, date: timeline.date)
+        ZStack {
+            TimelineView(.animation(minimumInterval: reduceMotion ? 1 : 1 / 30, paused: reduceMotion)) { timeline in
+                Canvas(rendersAsynchronously: true) { context, size in
+                    drawScene(context: &context, size: size, date: timeline.date)
+                }
+            }
+
+            if !authoritativeAssets.isEmpty {
+                LiveAssetOverlay(
+                    assets: authoritativeAssets,
+                    showLabels: effectiveScale >= 1.45,
+                    onAssetTap: onAssetTap
+                )
             }
         }
+        .scaleEffect(effectiveScale)
+        .offset(effectiveOffset)
+        .gesture(zoomGesture)
+        .simultaneousGesture(panGesture)
+        .clipped()
+        .overlay(alignment: .topLeading) {
+            VStack(alignment: .leading, spacing: 4) {
+                Text(LiveTruthCopy.mapScope)
+                    .font(.system(size: 8, weight: .semibold, design: .monospaced))
+                    .tracking(0.8)
+                Text(authoritativeAssets.isEmpty ? "No asset locations" : "\(authoritativeAssets.count) source-located assets")
+                    .font(.system(size: 9, weight: .regular, design: .monospaced))
+            }
+            .foregroundStyle(GridTheme.textTertiary)
+            .padding(.top, 10)
+            .padding(.leading, 10)
+        }
         .overlay(alignment: .topTrailing) {
-            Text("ILLUSTRATIVE FLOWS")
+            Text(interconnectorPositionLabel)
                 .font(.system(size: 8, weight: .semibold, design: .monospaced))
                 .tracking(0.8)
                 .foregroundStyle(GridTheme.textTertiary)
                 .padding(.top, 10)
                 .padding(.trailing, 10)
         }
-        .overlay(alignment: .topLeading) {
-            if let event = snapshot.activeEvent {
-                Button(action: onEventTap) {
-                    HStack(spacing: 8) {
-                        Circle().fill(GridTheme.warning).frame(width: 6, height: 6)
-                        Text(event.title)
-                            .font(.caption.weight(.medium))
-                            .lineLimit(1)
-                        Image(systemName: "chevron.right")
-                            .font(.caption2)
-                    }
-                    .foregroundStyle(GridTheme.textPrimary)
-                    .padding(.horizontal, 12)
-                    .frame(minHeight: 44)
-                    .background(GridTheme.surface.opacity(0.92), in: Capsule())
-                    .overlay(Capsule().stroke(GridTheme.warning.opacity(0.35), lineWidth: 1))
-                }
-                .buttonStyle(.plain)
-                .padding(.top, 28)
+        .overlay(alignment: .bottomLeading) {
+            Text(effectiveScale > 1.01 ? "\(Double(effectiveScale).formatted(.number.precision(.fractionLength(1))))× · DRAG TO PAN" : "PINCH TO INSPECT")
+                .font(.system(size: 8, weight: .semibold, design: .monospaced))
+                .tracking(0.6)
+                .foregroundStyle(GridTheme.textTertiary)
                 .padding(.leading, 10)
+                .padding(.bottom, 10)
+                .accessibilityHidden(true)
+        }
+        .overlay(alignment: .bottomTrailing) {
+            if effectiveScale > 1.01 {
+                Button("Reset") {
+                    withAnimation(reduceMotion ? nil : .snappy(duration: 0.24)) {
+                        committedScale = 1
+                        committedOffset = .zero
+                    }
+                }
+                .font(.caption2.weight(.semibold))
+                .foregroundStyle(GridTheme.liveCyan)
+                .frame(minWidth: 44, minHeight: 44)
+                .padding(.trailing, 4)
+                .padding(.bottom, 1)
+                .accessibilityLabel("Reset map zoom")
             }
         }
         .background(
@@ -124,17 +228,99 @@ struct BritainGridMap: View {
             )
         )
         .contentShape(Rectangle())
-        .accessibilityElement(children: .combine)
-        .accessibilityLabel("Abstract map of Great Britain's electricity system")
+        .accessibilityElement(children: authoritativeAssets.isEmpty ? .combine : .contain)
+        .accessibilityLabel("Schematic national view of Great Britain's electricity system")
         .accessibilityValue(accessibilityValue)
-        .accessibilityHint("Generation nodes and interconnector paths are illustrative, not literal transmission routes.")
+        .accessibilityHint(mapDisclosure)
+        .onChange(of: snapshot.timestamp) { _, _ in
+            guard !reduceMotion else {
+                newDataGlow = 0
+                return
+            }
+            newDataGlow = 1
+            withAnimation(.easeOut(duration: 1.1)) {
+                newDataGlow = 0
+            }
+        }
+    }
+
+    private var authoritativeAssets: [LiveMapAsset] {
+        assets.filter(\.hasAuthoritativeCoordinate)
+    }
+
+    private var effectiveScale: CGFloat {
+        min(max(committedScale * gestureScale, 1), 3.5)
+    }
+
+    private var effectiveOffset: CGSize {
+        CGSize(
+            width: committedOffset.width + gestureOffset.width,
+            height: committedOffset.height + gestureOffset.height
+        )
+    }
+
+    private var mapDisclosure: String {
+        if authoritativeAssets.isEmpty { return LiveTruthCopy.mapDisclosure }
+        return "Interconnector paths remain schematic. Asset dots use publisher-backed coordinates, approximately projected onto this abstract Britain outline."
+    }
+
+    private var zoomGesture: some Gesture {
+        MagnificationGesture()
+            .updating($gestureScale) { value, state, _ in
+                state = value
+            }
+            .onEnded { value in
+                let nextScale = min(max(committedScale * value, 1), 3.5)
+                committedScale = nextScale
+                if nextScale <= 1.01 {
+                    committedScale = 1
+                    committedOffset = .zero
+                } else {
+                    committedOffset = bounded(committedOffset, for: nextScale)
+                }
+            }
+    }
+
+    private var panGesture: some Gesture {
+        DragGesture(minimumDistance: 8)
+            .updating($gestureOffset) { value, state, _ in
+                guard effectiveScale > 1.01 else { return }
+                state = value.translation
+            }
+            .onEnded { value in
+                guard committedScale > 1.01 else { return }
+                committedOffset = bounded(
+                    CGSize(
+                        width: committedOffset.width + value.translation.width,
+                        height: committedOffset.height + value.translation.height
+                    ),
+                    for: committedScale
+                )
+            }
+    }
+
+    private func bounded(_ offset: CGSize, for scale: CGFloat) -> CGSize {
+        let horizontalLimit = 110 * (scale - 1)
+        let verticalLimit = 135 * (scale - 1)
+        return CGSize(
+            width: min(max(offset.width, -horizontalLimit), horizontalLimit),
+            height: min(max(offset.height, -verticalLimit), verticalLimit)
+        )
+    }
+
+    private var interconnectorPositionLabel: String {
+        guard !snapshot.interconnectors.isEmpty else { return "FLOW UNAVAILABLE" }
+        let net = snapshot.interconnectors.reduce(0) { $0 + $1.megawatts }
+        return net >= 0 ? "NET IMPORT" : "NET EXPORT"
     }
 
     private var accessibilityValue: String {
         let leading = snapshot.generation.sorted { $0.megawatts > $1.megawatts }.prefix(3)
             .map { "\($0.fuel.displayName) \(($0.megawatts / 1_000).formatted(.number.precision(.fractionLength(1)))) gigawatts" }
             .joined(separator: ", ")
-        let generationSummary = leading.isEmpty ? "Supply mix unavailable for this frame." : "Leading supply sources: \(leading)."
+        let generationSummary = leading.isEmpty
+            ? "Transmission-visible supply is unavailable for this frame."
+            : "Leading transmission-visible supply sources: \(leading)."
         guard !snapshot.interconnectors.isEmpty else {
             return "\(generationSummary) Interconnector position unavailable for this frame."
         }
@@ -145,7 +331,7 @@ struct BritainGridMap: View {
     private func drawScene(context: inout GraphicsContext, size: CGSize, date: Date) {
         let mapRect = CGRect(x: size.width * 0.14, y: 8, width: size.width * 0.72, height: size.height - 18)
         let shape = BritainShape().path(in: mapRect)
-        let accent = isForecast ? GridTheme.forecastViolet : GridTheme.liveCyan
+        let accent = mapAccent
         let frequencyDeviation = abs((snapshot.frequency?.value ?? 50) - 50)
         let breatheAmount = min(frequencyDeviation * 5, 0.35)
         let breathe = reduceMotion ? 0 : sin(date.timeIntervalSinceReferenceDate * 1.45) * (0.03 + breatheAmount)
@@ -166,15 +352,22 @@ struct BritainGridMap: View {
         )
         context.stroke(shape, with: .color(accent.opacity(0.34)), lineWidth: 0.9)
 
+        if newDataGlow > 0 {
+            var arrivalGlow = context
+            arrivalGlow.addFilter(.blur(radius: 12))
+            arrivalGlow.stroke(shape, with: .color(accent.opacity(0.42 * newDataGlow)), lineWidth: 5)
+        }
+
         drawTopography(context: &context, in: mapRect, clippedTo: shape, accent: accent)
+        drawNationalSignal(context: &context, in: mapRect, clippedTo: shape, accent: accent, date: date)
         let links = mapLinks(in: mapRect)
         drawLinks(links, context: &context, date: date, accent: accent)
-        drawNodes(context: &context, in: mapRect, date: date)
+    }
 
-        if snapshot.freshness == .critical, let event = snapshot.activeEvent {
-            let eventPoint = project(CGPoint(x: 0.66, y: 0.52), into: mapRect)
-            drawEventPulse(context: &context, at: eventPoint, date: date, title: event.title)
-        }
+    private var mapAccent: Color {
+        if isForecast { return GridTheme.forecastViolet }
+        if let selectedFuel { return GridTheme.fuel(selectedFuel) }
+        return GridTheme.liveCyan
     }
 
     private func drawField(context: inout GraphicsContext, size: CGSize, date: Date, accent: Color) {
@@ -210,48 +403,68 @@ struct BritainGridMap: View {
         }
     }
 
-    private func mapLinks(in rect: CGRect) -> [MapLink] {
-        let london = project(CGPoint(x: 0.68, y: 0.79), into: rect)
-        var links = nodes.map { node in
-            let output = snapshot.reading(for: node.fuel)?.megawatts ?? 500
-            return MapLink(
-                id: node.id,
-                start: project(node.point, into: rect),
-                end: london,
-                curve: node.point.x < 0.5 ? -18 : 18,
-                fuel: node.fuel,
-                magnitude: output,
-                reversed: false
+    private func drawNationalSignal(
+        context: inout GraphicsContext,
+        in rect: CGRect,
+        clippedTo shape: Path,
+        accent: Color,
+        date: Date
+    ) {
+        var clipped = context
+        clipped.clip(to: shape)
+
+        // These lines are deliberately regular and coast-to-coast: they depict a
+        // national signal plane, not substations, generators or transmission routes.
+        for index in 0..<6 {
+            let y = rect.minY + rect.height * (0.18 + CGFloat(index) * 0.13)
+            var line = Path()
+            line.move(to: CGPoint(x: rect.minX, y: y))
+            line.addCurve(
+                to: CGPoint(x: rect.maxX, y: y + CGFloat(index.isMultiple(of: 2) ? 8 : -8)),
+                control1: CGPoint(x: rect.minX + rect.width * 0.34, y: y - 16),
+                control2: CGPoint(x: rect.minX + rect.width * 0.66, y: y + 16)
             )
+            clipped.stroke(line, with: .color(accent.opacity(0.085)), lineWidth: 0.7)
         }
 
-        let connectorAnchors = [
-            CGPoint(x: rect.maxX + 34, y: rect.minY + rect.height * 0.36),
-            CGPoint(x: rect.maxX + 42, y: rect.minY + rect.height * 0.67),
-            CGPoint(x: rect.maxX + 30, y: rect.minY + rect.height * 0.84),
-            CGPoint(x: rect.minX - 30, y: rect.minY + rect.height * 0.72)
-        ]
-        for (index, flow) in snapshot.interconnectors.prefix(4).enumerated() {
-            let coast = project(CGPoint(x: index == 3 ? 0.30 : 0.78, y: 0.68 + CGFloat(index % 3) * 0.07), into: rect)
-            links.append(
-                MapLink(
-                    id: 100 + index,
-                    start: connectorAnchors[index],
-                    end: coast,
-                    curve: index == 3 ? -22 : 22,
-                    fuel: .imports,
-                    magnitude: abs(flow.megawatts),
-                    reversed: flow.megawatts < 0
-                )
+        let centre = CGPoint(x: rect.midX + rect.width * 0.04, y: rect.midY + rect.height * 0.08)
+        let frequencyDeviation = min(abs((snapshot.frequency?.value ?? 50) - 50), 0.25)
+        let pulse = reduceMotion ? 0.5 : (sin(date.timeIntervalSinceReferenceDate * 1.2) + 1) / 2
+        let radius = CGFloat(15 + frequencyDeviation * 40 + pulse * 2)
+        clipped.stroke(
+            Path(ellipseIn: CGRect(x: centre.x - radius, y: centre.y - radius, width: radius * 2, height: radius * 2)),
+            with: .color(accent.opacity(0.10)),
+            lineWidth: 0.8
+        )
+    }
+
+    private func mapLinks(in rect: CGRect) -> [MapLink] {
+        snapshot.interconnectors.prefix(8).enumerated().map { index, flow in
+            let isWestern = ["IE", "NI"].contains(flow.countryCode.uppercased())
+            let lane = CGFloat(index % 4)
+            let anchor = CGPoint(
+                x: isWestern ? rect.minX - 34 : rect.maxX + 34,
+                y: rect.minY + rect.height * (0.25 + lane * 0.17)
+            )
+            let coast = project(
+                CGPoint(x: isWestern ? 0.29 : 0.77, y: 0.38 + lane * 0.13),
+                into: rect
+            )
+            return MapLink(
+                id: flow.id,
+                start: anchor,
+                end: coast,
+                curve: isWestern ? -22 : 22,
+                magnitude: abs(flow.megawatts),
+                reversed: flow.megawatts < 0
             )
         }
-        return links
     }
 
     private func drawLinks(_ links: [MapLink], context: inout GraphicsContext, date: Date, accent: Color) {
         for link in links {
-            let color = GridTheme.fuel(link.fuel)
-            let focused = selectedFuel == nil || selectedFuel == link.fuel
+            let color = GridTheme.fuel(.imports)
+            let focused = selectedFuel == nil || selectedFuel == .imports
             let control = CGPoint(
                 x: (link.start.x + link.end.x) / 2 + link.curve,
                 y: (link.start.y + link.end.y) / 2 - abs(link.curve) * 0.45
@@ -272,7 +485,8 @@ struct BritainGridMap: View {
             let count = min(max(Int(link.magnitude / 1_600), 2), 7)
             let speed = min(max(link.magnitude / 10_000, 0.08), 0.30)
             for particle in 0..<count {
-                var progress = (date.timeIntervalSinceReferenceDate * speed + Double(particle) / Double(count) + Double(link.id % 13) / 13)
+                let stableOffset = Double(abs(link.id.hashValue % 13)) / 13
+                var progress = (date.timeIntervalSinceReferenceDate * speed + Double(particle) / Double(count) + stableOffset)
                     .truncatingRemainder(dividingBy: 1)
                 if link.reversed { progress = 1 - progress }
                 let point = quadraticPoint(start: link.start, control: control, end: link.end, progress: progress)
@@ -283,31 +497,6 @@ struct BritainGridMap: View {
                 context.fill(Path(ellipseIn: CGRect(x: point.x - radius, y: point.y - radius, width: radius * 2, height: radius * 2)), with: .color(color.opacity(0.88)))
             }
         }
-    }
-
-    private func drawNodes(context: inout GraphicsContext, in rect: CGRect, date: Date) {
-        for node in nodes {
-            guard let reading = snapshot.reading(for: node.fuel) else { continue }
-            let point = project(node.point, into: rect)
-            let color = GridTheme.fuel(node.fuel)
-            let focused = selectedFuel == nil || selectedFuel == node.fuel
-            let scaled = min(max(reading.megawatts / 5_500, 0.65), 1.45)
-            let pulse = reduceMotion ? 1 : 1 + sin(date.timeIntervalSinceReferenceDate * 1.1 + Double(node.id)) * 0.08
-            let radius = CGFloat(scaled * pulse * 4.3)
-
-            var glow = context
-            glow.addFilter(.blur(radius: 7))
-            glow.fill(Path(ellipseIn: CGRect(x: point.x - radius * 2, y: point.y - radius * 2, width: radius * 4, height: radius * 4)), with: .color(color.opacity(focused ? 0.33 : 0.05)))
-            context.fill(Path(ellipseIn: CGRect(x: point.x - radius, y: point.y - radius, width: radius * 2, height: radius * 2)), with: .color(color.opacity(focused ? 0.95 : 0.18)))
-            context.stroke(Path(ellipseIn: CGRect(x: point.x - radius - 3, y: point.y - radius - 3, width: (radius + 3) * 2, height: (radius + 3) * 2)), with: .color(color.opacity(focused ? 0.24 : 0.04)), lineWidth: 0.7)
-        }
-    }
-
-    private func drawEventPulse(context: inout GraphicsContext, at point: CGPoint, date: Date, title: String) {
-        let progress = reduceMotion ? 0.7 : (date.timeIntervalSinceReferenceDate * 0.35).truncatingRemainder(dividingBy: 1)
-        let radius = CGFloat(8 + progress * 28)
-        context.stroke(Path(ellipseIn: CGRect(x: point.x - radius, y: point.y - radius, width: radius * 2, height: radius * 2)), with: .color(GridTheme.warning.opacity(0.7 * (1 - progress))), lineWidth: 1.4)
-        context.fill(Path(ellipseIn: CGRect(x: point.x - 3, y: point.y - 3, width: 6, height: 6)), with: .color(GridTheme.warning))
     }
 
     private func project(_ point: CGPoint, into rect: CGRect) -> CGPoint {

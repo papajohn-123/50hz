@@ -43,10 +43,13 @@ struct EventDetailSheet: View {
                             .foregroundStyle(GridTheme.textTertiary)
                     }
 
-                    explanationSection
-
                     VStack(alignment: .leading, spacing: 10) {
-                        SectionLabel("Evidence IDs")
+                        SectionLabel("Publisher evidence")
+                        Text(displayedEvent.isAuthoritativelyReported
+                             ? "An authoritative publisher notice, shown separately from any 50Hz interpretation."
+                             : "A reported notice retained with its supplied evidence references.")
+                            .font(.caption)
+                            .foregroundStyle(GridTheme.textSecondary)
                         ForEach(displayedEvent.sourceIDs, id: \.self) { sourceID in
                             Text(sourceID)
                                 .font(.caption)
@@ -103,6 +106,8 @@ struct EventDetailSheet: View {
                             .font(.caption2)
                             .foregroundStyle(GridTheme.staleAmber)
                     }
+
+                    explanationSection
                 }
                 .padding(GridTheme.horizontalPadding)
             }
@@ -144,7 +149,7 @@ struct EventDetailSheet: View {
     @ViewBuilder
     private var explanationSection: some View {
         VStack(alignment: .leading, spacing: 10) {
-            SectionLabel("Interpretation")
+            SectionLabel("50Hz explanation")
 
             if let response = explanation {
                 Text(response.explanation.headline)

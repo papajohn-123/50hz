@@ -88,7 +88,7 @@ struct ReportedEventsListSheet: View {
                         eventRow(event)
                     }
                     .buttonStyle(.plain)
-                    .accessibilityHint("Opens reported facts, interpretation and revision history")
+                    .accessibilityHint("Opens reported facts, publisher evidence, revision history and optional explanation")
                 }
 
                 if model.events.count > 100 {
@@ -104,18 +104,6 @@ struct ReportedEventsListSheet: View {
     private func eventRow(_ event: GridEvent) -> some View {
         HStack(alignment: .top, spacing: 12) {
             VStack(alignment: .leading, spacing: 6) {
-                HStack(alignment: .firstTextBaseline, spacing: 8) {
-                    Text("REPORTED · \(event.severity.uppercased())")
-                        .font(.caption2.weight(.semibold))
-                        .fontDesign(.monospaced)
-                        .tracking(0.4)
-                        .foregroundStyle(ReportedEventsPresentation.severityColor(event.severity))
-                    Spacer(minLength: 8)
-                    Text(event.startedAt.formatted(.dateTime.day().month(.abbreviated).hour().minute()))
-                        .font(.caption2)
-                        .fontDesign(.monospaced)
-                        .foregroundStyle(GridTheme.textTertiary)
-                }
                 Text(event.title)
                     .font(.headline)
                     .foregroundStyle(GridTheme.textPrimary)
@@ -125,6 +113,18 @@ struct ReportedEventsListSheet: View {
                     .foregroundStyle(GridTheme.textSecondary)
                     .lineLimit(3)
                     .multilineTextAlignment(.leading)
+                HStack(alignment: .firstTextBaseline, spacing: 8) {
+                    Text("REPORTED · \(event.severity.uppercased())")
+                        .font(.caption2.weight(.semibold))
+                        .fontDesign(.monospaced)
+                        .tracking(0.4)
+                        .foregroundStyle(ReportedEventsPresentation.severityColor(event.severity))
+                    Spacer(minLength: 8)
+                    Text("Starts \(event.startedAt.formatted(.dateTime.day().month(.abbreviated).hour().minute()))")
+                        .font(.caption2)
+                        .fontDesign(.monospaced)
+                        .foregroundStyle(GridTheme.textTertiary)
+                }
                 Text(event.sourceIDs.joined(separator: " · "))
                     .font(.caption2)
                     .fontDesign(.monospaced)
