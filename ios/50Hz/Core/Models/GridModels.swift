@@ -22,6 +22,49 @@ enum FreshnessState: String, Codable, Sendable, CaseIterable {
     case critical
 }
 
+enum FreshnessSummaryState: String, Codable, Hashable, Sendable {
+    case current
+    case mixed
+    case delayed
+    case stale
+    case unavailable
+    case critical
+    case unknown
+
+    init(from decoder: Decoder) throws {
+        let container = try decoder.singleValueContainer()
+        self = FreshnessSummaryState(rawValue: try container.decode(String.self)) ?? .unknown
+    }
+
+    func encode(to encoder: Encoder) throws {
+        var container = encoder.singleValueContainer()
+        try container.encode(rawValue)
+    }
+}
+
+struct FreshnessSummary: Codable, Hashable, Sendable {
+    let state: FreshnessSummaryState
+    let label: String
+    let detail: String
+    let evaluatedAt: Date
+    let requiredFamilyCount: Int
+    let currentFamilyCount: Int
+    let delayedFamilyCount: Int
+    let staleFamilyCount: Int
+    let unavailableFamilyCount: Int
+    let oldestRequiredObservedAt: Date?
+    let newestRequiredObservedAt: Date?
+    let observationSpreadSeconds: Int?
+    let representsSingleInstant: Bool
+
+    var classifiedFamilyCount: Int {
+        currentFamilyCount
+            + delayedFamilyCount
+            + staleFamilyCount
+            + unavailableFamilyCount
+    }
+}
+
 enum FuelKind: String, Codable, Sendable, CaseIterable, Identifiable {
     case wind
     case solar
@@ -341,6 +384,21 @@ struct GridEvent: Codable, Hashable, Sendable, Identifiable {
     let startedAt: Date
     let sourceIDs: [String]
     let isAuthoritativelyReported: Bool
+    var eventKind: String? = nil
+    var status: String? = nil
+    var endedAt: Date? = nil
+    var updatedAt: Date? = nil
+    var sourcePublishedAt: Date? = nil
+    var assetID: String? = nil
+    var assetName: String? = nil
+    var fuelType: String? = nil
+    var normalCapacityMW: Double? = nil
+    var unavailableMW: Double? = nil
+    var planned: Bool? = nil
+    var reportedCause: String? = nil
+    var locationStatus: String? = nil
+    var scope: String? = nil
+    var consumerImpact: String? = nil
 }
 
 struct GridSnapshot: Codable, Hashable, Sendable {
@@ -358,6 +416,7 @@ struct GridSnapshot: Codable, Hashable, Sendable {
     let sources: [SourceReference]
     var dataStatus: [DataFamilyStatus]? = nil
     var supply: SupplyAccounting? = nil
+    var freshnessSummary: FreshnessSummary? = nil
 
     var totalGenerationMW: Double {
         generation.reduce(0) { $0 + $1.megawatts }
