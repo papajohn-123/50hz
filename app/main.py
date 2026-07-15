@@ -7,6 +7,7 @@ from starlette.middleware.gzip import GZipMiddleware
 from app.api.routes import router as api_router
 from app.api.models import MobileFreshness
 from app.api.presenter import present_current
+from app.assets.api import router as asset_router
 from app.config import get_settings
 from app.db import database_session, get_session_factory
 from app.exporting.api import router as export_router
@@ -37,6 +38,7 @@ app.include_router(game_router)
 app.include_router(legal_router)
 app.include_router(source_health_router)
 app.include_router(outage_router)
+app.include_router(asset_router)
 app.add_middleware(ConditionalJSONMiddleware)
 app.add_middleware(GZipMiddleware, minimum_size=1_000)
 app.add_middleware(RateLimitMiddleware)

@@ -48,7 +48,7 @@ class AssetSourceResponse(AssetAPIModel):
     dataset: str = Field(min_length=1)
     source_record_id: str = Field(alias="sourceRecordID", min_length=1)
     retrieved_at: AwareDatetime
-    canonical_url: str = Field(min_length=1)
+    canonical_url: str = Field(alias="canonicalURL", min_length=1)
     licence: str = Field(min_length=1)
     attribution: str = Field(min_length=1)
 
