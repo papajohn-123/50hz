@@ -697,7 +697,7 @@ struct LogView: View {
         if !mission.available { return mission.unavailableReason ?? "Unavailable in this daily plan" }
         if target == nil { return "No safe destination is defined for this mission." }
         return switch mission.kind {
-        case .findCleanWindow: "Compare forecast windows in your Local view."
+        case .findCleanWindow: "Compare forecast windows in Plan."
         case .identifyLargestSource: "Inspect the current observed supply ranking."
         case .inspectInterconnector: "Inspect the signed flows shown in Live."
         case .openEventEvidence: "Read the event claim, sources and limitations."
@@ -791,7 +791,7 @@ struct LogView: View {
                             .fixedSize(horizontal: false, vertical: true)
                     }
 
-                    Text("Local choice · published schema \(resolution.schemaVersion)")
+                    Text("Plan choice · published schema \(resolution.schemaVersion)")
                         .font(.caption2)
                         .foregroundStyle(GridTheme.textTertiary)
                 }
@@ -1013,12 +1013,6 @@ struct LogView: View {
 
     private func openMission(_ mission: GameMission, target: MissionNavigationTarget) {
         guard let date = currentGame?.date else { return }
-        let didComplete = missionStore.recordEvidenceVisit(mission, date: date)
-        missionProgress = missionStore.progress()
-        if didComplete {
-            registerParticipation()
-            feedbackTrigger += 1
-        }
 
         switch target {
         case .live:
@@ -1028,21 +1022,35 @@ struct LogView: View {
             } else {
                 model.selectedFuel = nil
             }
-        case .today:
-            model.selectedTab = .today
+            recordEvidenceVisit(mission, date: date)
         case .local:
             model.selectedTab = .mine
+            recordEvidenceVisit(mission, date: date)
         case .event(let eventID):
             model.selectedTab = .live
-            model.selectedEvent = model.events.first { $0.id == eventID }
-                ?? model.snapshot?.activeEvent.flatMap { $0.id == eventID ? $0 : nil }
-            if model.selectedEvent == nil {
+            if let event = (
+                model.events.first(where: { $0.id == eventID })
+                    ?? model.snapshot?.activeEvent.flatMap { $0.id == eventID ? $0 : nil }
+            ) {
+                model.selectedEvent = event
+                recordEvidenceVisit(mission, date: date)
+            } else {
                 Task {
                     if let event = try? await model.eventDetails(id: eventID) {
                         model.selectedEvent = event
+                        recordEvidenceVisit(mission, date: date)
                     }
                 }
             }
+        }
+    }
+
+    private func recordEvidenceVisit(_ mission: GameMission, date: String) {
+        let didComplete = missionStore.recordEvidenceVisit(mission, date: date)
+        missionProgress = missionStore.progress()
+        if didComplete {
+            registerParticipation()
+            feedbackTrigger += 1
         }
     }
 

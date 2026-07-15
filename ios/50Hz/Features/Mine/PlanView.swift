@@ -31,10 +31,16 @@ struct PlanView: View {
                 header
                 recommendation
 
-                if let timeline = model.timeline {
-                    VStack(alignment: .leading, spacing: 10) {
-                        SectionLabel("Carbon through the day", trailing: "OBSERVED + FORECAST")
-                        TodayHorizonCurve(timeline: timeline)
+                if let timeline = model.displayTimeline {
+                    TodayHorizonCurve(timeline: timeline)
+
+                    if !model.isForecastTimelineUsable,
+                       model.timeline?.samples.contains(where: { $0.factClass == .forecast }) == true {
+                        Label(model.forecastUnavailableReason, systemImage: "clock.badge.exclamationmark")
+                            .font(.caption2)
+                            .foregroundStyle(GridTheme.staleAmber)
+                            .fixedSize(horizontal: false, vertical: true)
+                            .accessibilityLabel("Forecast withheld. \(model.forecastUnavailableReason)")
                     }
                 }
 
@@ -47,21 +53,18 @@ struct PlanView: View {
         }
         .scrollIndicators(.hidden)
         .gridPageBackground()
-        .task(id: PostcodePrivacy.outwardCode(from: postcode)) {
-            await model.loadRegion(postcode: postcode)
-        }
-        .task(id: request) {
-            lastPlannedActivityRawValue = selectedActivity.rawValue
-            await model.loadLocalWindows(
-                postcode: postcode,
-                durationMinutes: selectedDurationMinutes
-            )
-        }
+        .task { await loadInitialContextIfNeeded() }
         .sheet(isPresented: $isPlannerPresented) {
             NavigationStack {
                 MineView()
                     .navigationTitle("Adjust plan")
                     .navigationBarTitleDisplayMode(.inline)
+                    .toolbar {
+                        ToolbarItem(placement: .topBarTrailing) {
+                            Button("Done") { isPlannerPresented = false }
+                                .foregroundStyle(GridTheme.liveCyan)
+                        }
+                    }
             }
             .presentationDetents([.large])
             .presentationDragIndicator(.visible)
@@ -126,6 +129,26 @@ struct PlanView: View {
                         label: "Compared with now"
                     )
                 }
+
+                if model.localWindowsIsFromCache || model.localWindowsError != nil || model.isRefreshingLocalWindows {
+                    HStack(spacing: 8) {
+                        Image(systemName: model.localWindowsError == nil ? "clock.arrow.circlepath" : "wifi.exclamationmark")
+                            .foregroundStyle(model.localWindowsError == nil ? GridTheme.textTertiary : GridTheme.staleAmber)
+                            .accessibilityHidden(true)
+                        Text(planConfidenceLabel)
+                            .font(.caption2.weight(.medium))
+                            .foregroundStyle(model.localWindowsError == nil ? GridTheme.textTertiary : GridTheme.staleAmber)
+                        Spacer(minLength: 4)
+                        if model.localWindowsError != nil, !model.isRefreshingLocalWindows {
+                            Button("Retry") { refreshPlan() }
+                                .font(.caption2.weight(.semibold))
+                                .foregroundStyle(GridTheme.forecastViolet)
+                                .frame(minHeight: 44)
+                        }
+                    }
+                    .accessibilityElement(children: .combine)
+                    .accessibilityLabel(planConfidenceAccessibilityLabel)
+                }
             }
             .padding(.leading, 15)
             .overlay(alignment: .leading) {
@@ -168,11 +191,17 @@ struct PlanView: View {
         }
     }
 
-    @ViewBuilder
     private var regionalSnapshot: some View {
+        TimelineView(.periodic(from: .now, by: 60)) { context in
+            regionalSnapshot(at: context.date)
+        }
+    }
+
+    @ViewBuilder
+    private func regionalSnapshot(at now: Date) -> some View {
         if let context = model.regionalContext {
             VStack(alignment: .leading, spacing: 12) {
-                SectionLabel("Regional forecast now", trailing: context.name.uppercased())
+                SectionLabel("Regional forecast", trailing: regionalStateLabel(context, at: now))
                 HStack(alignment: .firstTextBaseline, spacing: 10) {
                     Text(context.carbonIntensity.formatted(.number.precision(.fractionLength(0))))
                         .font(.system(.title, design: .monospaced, weight: .medium))
@@ -190,11 +219,49 @@ struct PlanView: View {
                 Text(regionalComparison(delta: delta, national: context.nationalCarbonIntensity))
                     .font(.caption)
                     .foregroundStyle(GridTheme.textSecondary)
+
+                if regionalIsDelayed(context, at: now), let periodEnd = context.regionalPeriodEnd {
+                    Text("Latest available regional period ended \(periodEnd.formatted(.dateTime.hour().minute())).")
+                        .font(.caption2)
+                        .foregroundStyle(GridTheme.staleAmber)
+                }
+
+                if let error = model.regionError {
+                    HStack(spacing: 8) {
+                        Label("Saved value · refresh failed", systemImage: "wifi.exclamationmark")
+                            .font(.caption2.weight(.medium))
+                            .foregroundStyle(GridTheme.staleAmber)
+                        Spacer(minLength: 4)
+                        Button("Retry") {
+                            Task { await model.loadRegion(postcode: postcode) }
+                        }
+                        .font(.caption2.weight(.semibold))
+                        .foregroundStyle(GridTheme.liveCyan)
+                        .frame(minHeight: 44)
+                    }
+                    .accessibilityElement(children: .combine)
+                    .accessibilityLabel("Saved regional value. Refresh failed. \(error)")
+                }
             }
         } else if model.regionLoadPhase == .loading {
             ProgressView("Loading regional forecast…")
                 .font(.caption)
                 .tint(GridTheme.liveCyan)
+        } else if case .failed(let message) = model.regionLoadPhase {
+            VStack(alignment: .leading, spacing: 8) {
+                Text("Regional forecast unavailable")
+                    .font(.subheadline.weight(.semibold))
+                Text(message)
+                    .font(.caption)
+                    .foregroundStyle(GridTheme.textSecondary)
+                    .lineLimit(3)
+                Button("Retry") {
+                    Task { await model.loadRegion(postcode: postcode) }
+                }
+                .font(.caption.weight(.semibold))
+                .foregroundStyle(GridTheme.liveCyan)
+                .frame(minHeight: 44)
+            }
         }
     }
 
@@ -207,6 +274,15 @@ struct PlanView: View {
                     ForEach(LocalActivityPreset.allCases) { activity in
                         Button {
                             activityRawValue = activity.rawValue
+                            lastPlannedActivityRawValue = activity.rawValue
+                            Task {
+                                await model.loadLocalWindows(
+                                    postcode: postcode,
+                                    durationMinutes: activity.durationMinutes(
+                                        customDurationMinutes: customDurationMinutes
+                                    )
+                                )
+                            }
                         } label: {
                             Label(activity.title, systemImage: activity.systemImage)
                         }
@@ -249,9 +325,53 @@ struct PlanView: View {
     private func recommendationLead(_ response: LocalWindowsResponse) -> String {
         if response.plan.comparison?.isMeaningful == true,
            let percent = response.plan.comparison?.percentLowerThanStartNow {
-            return "\(percent.formatted(.number.precision(.fractionLength(0))))% cleaner than starting now"
+            return "\(percent.formatted(.number.precision(.fractionLength(0))))% lower forecast carbon intensity"
         }
         return LocalPlannerCopy.resultTitle(for: response)
+    }
+
+    private var planConfidenceLabel: String {
+        if model.isRefreshingLocalWindows { return "Checking the saved result…" }
+        if model.localWindowsError != nil { return "Saved result · refresh failed" }
+        if model.localWindowsIsFromCache { return "Saved result · checking for an update" }
+        return "Forecast checked"
+    }
+
+    private var planConfidenceAccessibilityLabel: String {
+        guard let error = model.localWindowsError else { return planConfidenceLabel }
+        return "\(planConfidenceLabel). \(error)"
+    }
+
+    private func regionalStateLabel(_ context: RegionalGridContext, at now: Date) -> String {
+        if model.regionError != nil { return "SAVED · \(context.name.uppercased())" }
+        if regionalIsDelayed(context, at: now) { return "DELAYED · \(context.name.uppercased())" }
+        return "CURRENT · \(context.name.uppercased())"
+    }
+
+    private func regionalIsDelayed(_ context: RegionalGridContext, at now: Date) -> Bool {
+        context.regionalIsDelayed == true
+            || context.regionalPeriodEnd.map { $0 <= now } == true
+    }
+
+    private func refreshPlan() {
+        Task {
+            lastPlannedActivityRawValue = selectedActivity.rawValue
+            await model.loadLocalWindows(
+                postcode: postcode,
+                durationMinutes: selectedDurationMinutes
+            )
+        }
+    }
+
+    @MainActor
+    private func loadInitialContextIfNeeded() async {
+        await model.loadRegion(postcode: postcode)
+        guard model.localWindowsRequest == nil else { return }
+        lastPlannedActivityRawValue = selectedActivity.rawValue
+        await model.loadLocalWindows(
+            postcode: postcode,
+            durationMinutes: selectedDurationMinutes
+        )
     }
 
     private func comparisonValue(_ response: LocalWindowsResponse) -> String {

@@ -1,11 +1,17 @@
 import SwiftUI
 
+private enum GridDetailsDestination {
+    case events
+    case sites
+}
+
 struct LiveView: View {
     @EnvironmentObject private var model: AppModel
     @State private var sharePayload: GridShareCardPayload?
     @State private var askInitialQuestion: String?
     @State private var isDataDetailsPresented = false
     @State private var isGridDetailsPresented = false
+    @State private var pendingGridDetailsDestination: GridDetailsDestination?
     @State private var isEventListPresented = false
     @State private var selectedMapAsset: LiveMapAsset?
     @State private var evidenceMapAsset: LiveMapAsset?
@@ -43,7 +49,9 @@ struct LiveView: View {
             }
         }
         .gridPageBackground()
-        .sheet(isPresented: $model.isAskPresented) {
+        .sheet(isPresented: $model.isAskPresented, onDismiss: {
+            askInitialQuestion = nil
+        }) {
             if let snapshot = model.presentedSnapshot {
                 AskGridInspector(snapshot: snapshot, initialQuestion: askInitialQuestion)
                     .presentationDetents([.medium, .large])
@@ -71,7 +79,7 @@ struct LiveView: View {
                     .presentationBackground(GridTheme.background)
             }
         }
-        .sheet(isPresented: $isGridDetailsPresented) {
+        .sheet(isPresented: $isGridDetailsPresented, onDismiss: openPendingGridDetailsDestination) {
             if let snapshot = model.presentedSnapshot {
                 GridStateDetailsSheet(
                     snapshot: snapshot,
@@ -82,8 +90,8 @@ struct LiveView: View {
                     assetMapError: model.timelineModeLabel == "LIVE" ? assetMapError : nil,
                     eventCount: model.events.count,
                     eventsUnavailable: model.eventsError != nil,
-                    onBrowseSites: { isGeneratorExplorerPresented = true },
-                    onBrowseEvents: { isEventListPresented = true },
+                    onBrowseSites: { routeFromGridDetails(to: .sites) },
+                    onBrowseEvents: { routeFromGridDetails(to: .events) },
                     onRetryAssets: { Task { await loadAssetMap(force: true) } }
                 )
                 .presentationDetents([.medium, .large])
@@ -116,8 +124,8 @@ struct LiveView: View {
         }
         .sheet(isPresented: $isGeneratorExplorerPresented) {
             GeneratorExplorerSheet(
-                title: "Energy sites",
-                assets: liveMapAssets,
+                title: model.selectedFuel.map { "\($0.displayName) sites" } ?? "Energy sites",
+                assets: mapAssets(for: model.selectedFuel),
                 assetClient: assetClient,
                 onSelect: focusOnMap
             )
@@ -129,10 +137,23 @@ struct LiveView: View {
             guard model.timelineModeLabel == "LIVE" else { return }
             await loadAssetMap()
         }
+        .onChange(of: model.selectedFuel) { _, _ in
+            selectedMapAsset = nil
+            selectedMapCluster = nil
+        }
+        .onChange(of: model.timelineModeLabel) { _, mode in
+            guard mode != "LIVE" else { return }
+            selectedMapAsset = nil
+            evidenceMapAsset = nil
+            selectedMapCluster = nil
+            isGeneratorExplorerPresented = false
+            isEventListPresented = false
+        }
     }
 
     private func loadedContent(snapshot: GridSnapshot, model: AppModel) -> some View {
         let isForecast = model.selectedSample?.factClass == .forecast
+        let isLiveMode = model.timelineModeLabel == "LIVE"
         let mapOpacity = snapshot.freshness == .offline ? 0.62 : (snapshot.freshness == .stale ? 0.82 : 1)
 
         return ZStack {
@@ -140,10 +161,13 @@ struct LiveView: View {
                 snapshot: snapshot,
                 selectedFuel: model.selectedFuel,
                 isForecast: isForecast,
-                assets: model.timelineModeLabel == "LIVE" ? liveMapAssets : [],
-                focusedAsset: selectedMapAsset,
-                onAssetTap: { selectedMapAsset = $0 },
-                onClusterInspect: { selectedMapCluster = $0 }
+                assets: isLiveMode ? mapAssets(for: model.selectedFuel) : [],
+                focusedAsset: isLiveMode ? selectedMapAsset : nil,
+                topContentInset: 52,
+                bottomContentInset: refreshIssueMessage == nil ? 258 : 300,
+                onMapTap: isLiveMode ? { selectedMapAsset = nil } : nil,
+                onAssetTap: isLiveMode ? { selectedMapAsset = $0 } : nil,
+                onClusterInspect: isLiveMode ? { selectedMapCluster = $0 } : nil
             )
             .opacity(mapOpacity)
             .ignoresSafeArea(edges: .top)
@@ -163,16 +187,26 @@ struct LiveView: View {
                     mode: model.timelineModeLabel,
                     selectedFuel: $model.selectedFuel,
                     availableFuels: snapshot.generation.map(\.fuel),
-                    hasSites: !liveMapAssets.isEmpty,
+                    showsLiveLayers: isLiveMode,
+                    hasSites: isLiveMode && !mapAssets(for: model.selectedFuel).isEmpty,
+                    hasRefreshIssue: refreshIssueMessage != nil,
                     onStatusTap: { isDataDetailsPresented = true },
                     onSearch: { isGeneratorExplorerPresented = true },
                     onShare: { sharePayload = .current(snapshot) },
                     onEvents: { isEventListPresented = true }
                 )
 
+                if let refreshIssueMessage {
+                    GridRefreshNotice(
+                        message: refreshIssueMessage,
+                        isRefreshing: model.isRefreshing,
+                        retry: { Task { await model.refresh() } }
+                    )
+                }
+
                 Spacer(minLength: 0)
 
-                if let selectedMapAsset {
+                if isLiveMode, let selectedMapAsset {
                     GridSelectedSiteDock(
                         asset: selectedMapAsset,
                         onClose: { self.selectedMapAsset = nil },
@@ -183,8 +217,8 @@ struct LiveView: View {
                     GridNowDock(
                         snapshot: snapshot,
                         mode: model.timelineModeLabel,
-                        eventCount: model.events.count,
-                        hasEventError: model.eventsError != nil,
+                        eventCount: isLiveMode ? model.events.count : 0,
+                        hasEventError: isLiveMode && model.eventsError != nil,
                         onExplain: {
                             askInitialQuestion = GridPrimaryInsight.make(snapshot: snapshot).contextualQuestion
                             model.isAskPresented = true
@@ -224,9 +258,37 @@ struct LiveView: View {
         assetMapResponse?.validLocatedAssets.map(LiveMapAsset.init(item:)) ?? []
     }
 
+    private func mapAssets(for fuel: FuelKind?) -> [LiveMapAsset] {
+        guard let fuel else { return liveMapAssets }
+        return liveMapAssets.filter { $0.fuel == fuel }
+    }
+
     private func focusOnMap(_ asset: LiveMapAsset) {
+        guard model.timelineModeLabel == "LIVE" else { return }
         selectedMapCluster = nil
         selectedMapAsset = asset
+    }
+
+    private var refreshIssueMessage: String? {
+        model.lastRefreshError ?? model.timelineRefreshError
+    }
+
+    private func routeFromGridDetails(to destination: GridDetailsDestination) {
+        pendingGridDetailsDestination = destination
+        isGridDetailsPresented = false
+    }
+
+    private func openPendingGridDetailsDestination() {
+        guard let destination = pendingGridDetailsDestination else { return }
+        pendingGridDetailsDestination = nil
+        switch destination {
+        case .events:
+            guard model.timelineModeLabel == "LIVE" else { return }
+            isEventListPresented = true
+        case .sites:
+            guard model.timelineModeLabel == "LIVE" else { return }
+            isGeneratorExplorerPresented = true
+        }
     }
 
     @MainActor
@@ -258,7 +320,9 @@ private struct GridCanvasHeader: View {
     let mode: String
     @Binding var selectedFuel: FuelKind?
     let availableFuels: [FuelKind]
+    let showsLiveLayers: Bool
     let hasSites: Bool
+    let hasRefreshIssue: Bool
     let onStatusTap: () -> Void
     let onSearch: () -> Void
     let onShare: () -> Void
@@ -297,16 +361,19 @@ private struct GridCanvasHeader: View {
 
                 Spacer(minLength: 4)
 
-                Button(action: onSearch) {
-                    Image(systemName: "magnifyingglass")
-                        .font(.subheadline.weight(.semibold))
-                        .foregroundStyle(hasSites ? GridTheme.textPrimary : GridTheme.textTertiary)
-                        .frame(width: 44, height: 44)
-                        .contentShape(Circle())
+                if showsLiveLayers {
+                    Button(action: onSearch) {
+                        Image(systemName: "magnifyingglass")
+                            .font(.subheadline.weight(.semibold))
+                            .foregroundStyle(hasSites ? GridTheme.textPrimary : GridTheme.textTertiary)
+                            .frame(width: 44, height: 44)
+                            .contentShape(Circle())
+                    }
+                    .buttonStyle(.plain)
+                    .disabled(!hasSites)
+                    .accessibilityLabel("Find an energy site")
+                    .accessibilityHint("Opens the complete accessible list of publisher-located sites")
                 }
-                .buttonStyle(.plain)
-                .disabled(!hasSites)
-                .accessibilityLabel("Find an energy site")
 
                 Menu {
                     Button {
@@ -323,10 +390,12 @@ private struct GridCanvasHeader: View {
                         }
                     }
 
-                    Divider()
+                    if showsLiveLayers {
+                        Divider()
 
-                    Button(action: onEvents) {
-                        Label("Reported events", systemImage: "exclamationmark.bubble")
+                        Button(action: onEvents) {
+                            Label("Reported events", systemImage: "exclamationmark.bubble")
+                        }
                     }
                     Button(action: onShare) {
                         Label("Share grid state", systemImage: "square.and.arrow.up")
@@ -362,16 +431,62 @@ private struct GridCanvasHeader: View {
             return "Replay \(snapshot.timestamp.formatted(.dateTime.hour().minute()))"
         default:
             let state = LiveFreshnessPresentation.make(snapshot: snapshot, at: date)
-            return state.hasConcern ? "Delayed" : "Live"
+            switch snapshot.freshness {
+            case .offline:
+                return "Offline · saved"
+            case .stale:
+                return "Stale"
+            case .critical:
+                return hasRefreshIssue ? "Event · update issue" : "Live · event"
+            case .live:
+                if hasRefreshIssue { return "Live · update issue" }
+                if state.unavailableCount > 0 { return "Partial" }
+                if state.staleCount > 0 { return "Stale inputs" }
+                if state.delayedCount > 0 { return "Delayed inputs" }
+                return "Live"
+            }
         }
     }
 
     private func statusColor(at date: Date) -> Color {
         if mode == "FORECAST" { return GridTheme.forecastViolet }
         if mode == "REPLAY" { return GridTheme.liveCyan.opacity(0.75) }
+        if snapshot.freshness == .critical { return GridTheme.warning }
+        if hasRefreshIssue || snapshot.freshness == .offline || snapshot.freshness == .stale {
+            return GridTheme.staleAmber
+        }
         return LiveFreshnessPresentation.make(snapshot: snapshot, at: date).hasConcern
             ? GridTheme.staleAmber
             : GridTheme.liveCyan
+    }
+}
+
+private struct GridRefreshNotice: View {
+    let message: String
+    let isRefreshing: Bool
+    let retry: () -> Void
+
+    var body: some View {
+        HStack(spacing: 9) {
+            Image(systemName: "arrow.triangle.2.circlepath.circle")
+                .foregroundStyle(GridTheme.staleAmber)
+                .accessibilityHidden(true)
+            Text("Update incomplete · showing confirmed data")
+                .font(.caption2.weight(.medium))
+                .foregroundStyle(GridTheme.textSecondary)
+                .lineLimit(1)
+            Spacer(minLength: 4)
+            Button(isRefreshing ? "Retrying…" : "Retry", action: retry)
+                .font(.caption2.weight(.semibold))
+                .foregroundStyle(GridTheme.staleAmber)
+                .frame(minHeight: 44)
+                .disabled(isRefreshing)
+        }
+        .padding(.horizontal, GridTheme.horizontalPadding)
+        .background(GridTheme.background.opacity(0.88))
+        .overlay(alignment: .bottom) { Hairline() }
+        .accessibilityElement(children: .combine)
+        .accessibilityLabel("Update incomplete. Showing confirmed data. \(message)")
     }
 }
 
@@ -395,51 +510,55 @@ private struct GridNowDock: View {
                     .tracking(-0.65)
                     .foregroundStyle(GridTheme.textPrimary)
                     .lineLimit(2)
+                    .minimumScaleFactor(0.84)
+                    .layoutPriority(1)
                 Spacer(minLength: 4)
                 Button(action: onExplain) {
                     Label("Why?", systemImage: "sparkles")
                         .font(.caption.weight(.semibold))
                         .foregroundStyle(insight.accent.color)
                         .frame(minHeight: 44)
+                        .fixedSize(horizontal: true, vertical: false)
                 }
                 .buttonStyle(.plain)
+                .layoutPriority(2)
                 .accessibilityLabel(insight.contextualQuestion)
                 .accessibilityHint("Explains this selected grid state using supplied evidence")
             }
 
-            Text(insight.detail)
-                .font(.subheadline)
+            Text(compactInsightDetail)
+                .font(.caption)
                 .foregroundStyle(GridTheme.textSecondary)
-                .lineLimit(2)
+                .lineLimit(1)
                 .fixedSize(horizontal: false, vertical: true)
+                .accessibilityLabel(insight.detail)
 
             HStack(spacing: 0) {
                 metric(
                     label: "Frequency",
                     value: snapshot.frequency?.value.formatted(.number.precision(.fractionLength(2))) ?? "—",
-                    unit: snapshot.frequency == nil ? "" : "Hz"
+                    unit: snapshot.frequency == nil ? "" : "Hz",
+                    factClass: snapshot.frequency?.factClass
                 )
                 divider
                 metric(
                     label: "Demand",
                     value: (snapshot.demand.value / 1_000).formatted(.number.precision(.fractionLength(1))),
-                    unit: "GW"
+                    unit: "GW",
+                    factClass: snapshot.demand.factClass
                 )
                 divider
                 metric(
                     label: "Carbon",
                     value: snapshot.carbonIntensity.formatted(),
-                    unit: "g/kWh"
+                    unit: "gCO₂/kWh",
+                    factClass: snapshot.carbonIntensity.factClass
                 )
             }
 
             Button(action: onOpenDetails) {
                 HStack(spacing: 8) {
-                    Text(mode == "LIVE" ? "Explore the grid" : "Inspect this frame")
-                    if mode == "LIVE", eventCount > 0 {
-                        Text("· \(eventCount) event\(eventCount == 1 ? "" : "s")")
-                            .foregroundStyle(hasEventError ? GridTheme.staleAmber : GridTheme.textTertiary)
-                    }
+                    Text(mode == "LIVE" ? "Explore" : "Inspect frame")
                     Spacer(minLength: 4)
                     Image(systemName: "chevron.up")
                         .font(.caption2.weight(.bold))
@@ -450,6 +569,7 @@ private struct GridNowDock: View {
                 .contentShape(Rectangle())
             }
             .buttonStyle(.plain)
+            .accessibilityLabel(exploreAccessibilityLabel)
             .accessibilityHint("Opens generation mix, events, flows and source details")
         }
         .padding(.horizontal, GridTheme.horizontalPadding)
@@ -459,12 +579,14 @@ private struct GridNowDock: View {
         .overlay(alignment: .top) { Hairline() }
     }
 
-    private func metric(label: String, value: String, unit: String) -> some View {
+    private func metric(label: String, value: String, unit: String, factClass: FactClass?) -> some View {
         VStack(alignment: .leading, spacing: 3) {
-            Text(label.uppercased())
+            Text("\(label.uppercased()) · \(factClass?.rawValue.uppercased() ?? "UNAVAILABLE")")
                 .font(.system(size: 8, weight: .semibold, design: .monospaced))
                 .tracking(0.7)
                 .foregroundStyle(GridTheme.textTertiary)
+                .lineLimit(1)
+                .minimumScaleFactor(0.62)
             HStack(alignment: .firstTextBaseline, spacing: 3) {
                 Text(value)
                     .font(.system(.subheadline, design: .monospaced, weight: .semibold))
@@ -477,7 +599,39 @@ private struct GridNowDock: View {
         }
         .frame(maxWidth: .infinity, alignment: .leading)
         .accessibilityElement(children: .combine)
-        .accessibilityLabel("\(label), \(value) \(unit)")
+        .accessibilityLabel("\(label), \(value) \(unit), \(factClass?.rawValue ?? "unavailable")")
+    }
+
+    private var compactInsightDetail: String {
+        let timing = snapshotTimingPrefix
+        switch insight.kind {
+        case .reportedEvent:
+            return "\(timing)publisher report"
+        case .frequency:
+            return "\(timing)observed reading · cause not identified"
+        case .crossBorderFlow:
+            return "\(timing)observed connector readings · partial view"
+        case .carbon:
+            return "\(timing)\(snapshot.carbonIntensity.factClass.rawValue) GB carbon intensity"
+        case .visibleSupply:
+            return "\(timing)partial transmission-visible supply"
+        case .limitedData:
+            return "\(timing)open details for available evidence"
+        }
+    }
+
+    private var snapshotTimingPrefix: String {
+        guard insight.detail.hasPrefix("Snapshot "),
+              let timing = insight.detail.split(separator: "·", maxSplits: 1).first else {
+            return ""
+        }
+        return "\(timing.trimmingCharacters(in: .whitespacesAndNewlines)) · "
+    }
+
+    private var exploreAccessibilityLabel: String {
+        guard mode == "LIVE" else { return "Inspect this timeline frame" }
+        let availability = hasEventError ? "saved event list" : "current event list"
+        return "Explore the grid. \(eventCount) reported events in the \(availability)."
     }
 
     private var divider: some View {
@@ -675,6 +829,7 @@ private struct GridStateDetailsSheet: View {
         }
         .preferredColorScheme(.dark)
     }
+
 }
 
 private struct LivePersistentHeader: View {

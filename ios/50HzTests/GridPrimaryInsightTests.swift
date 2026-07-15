@@ -28,6 +28,30 @@ final class GridPrimaryInsightTests: XCTestCase {
         XCTAssertEqual(insight.contextualQuestion, "What has the publisher reported?")
     }
 
+    func testTechnicalBMUnitHeadlineUsesPublisherFuelInsteadOfRawIdentifier() {
+        var snapshot = makeSnapshot()
+        snapshot.activeEvent = GridEvent(
+            id: "event-technical-unit",
+            title: "T_KEAD-1 unavailable · 680 MW",
+            summary: "T_KEAD-1 has a reported unavailability of 680 MW.",
+            severity: "material",
+            evidenceClass: "reported",
+            startedAt: .distantPast,
+            sourceIDs: ["remit"],
+            isAuthoritativelyReported: true,
+            assetID: "T_KEAD-1",
+            assetName: "T_KEAD-1",
+            fuelType: "Fossil Gas",
+            unavailableMW: 680
+        )
+
+        let insight = GridPrimaryInsight.make(snapshot: snapshot)
+
+        XCTAssertEqual(insight.title, "Reported: Gas unit unavailable · 680 MW")
+        XCTAssertFalse(insight.title.contains("T_KEAD-1"))
+        XCTAssertTrue(insight.detail.contains("T_KEAD-1"))
+    }
+
     func testUnverifiedOrNonMaterialEventCannotDisplaceAbnormalFrequency() {
         for event in [
             event(severity: "material", authoritative: false),
@@ -132,6 +156,83 @@ final class GridPrimaryInsightTests: XCTestCase {
         XCTAssertEqual(empty.accent, .neutral)
     }
 
+    func testStaleAndOfflineSnapshotsUseLastConfirmedPastTenseWithoutChangingPriority() {
+        for freshness in [FreshnessState.stale, .offline] {
+            var snapshot = makeSnapshot(
+                frequency: metric(49.7, factClass: .observed, sourceID: "frequency"),
+                flows: [flow("ifa", megawatts: 4_000)]
+            )
+            snapshot.freshness = freshness
+
+            let insight = GridPrimaryInsight.make(snapshot: snapshot)
+            let expectedTime = snapshot.timestamp.formatted(.dateTime.hour().minute())
+
+            XCTAssertEqual(insight.kind, .frequency)
+            XCTAssertEqual(insight.title, "Last confirmed frequency was below its usual band")
+            XCTAssertTrue(insight.detail.hasPrefix("Snapshot \(expectedTime) · "))
+            XCTAssertFalse(insight.title.contains("frequency is below"))
+            XCTAssertTrue(insight.contextualQuestion.contains("last confirmed"))
+        }
+    }
+
+    func testOfflineReportedEventKeepsClaimPrimaryAndMovesSnapshotTimeToDetail() {
+        var snapshot = makeSnapshot(
+            frequency: metric(49.7, factClass: .observed, sourceID: "frequency")
+        )
+        snapshot.freshness = .offline
+        snapshot.activeEvent = event(severity: "material", authoritative: true)
+
+        let insight = GridPrimaryInsight.make(snapshot: snapshot)
+        let expectedTime = snapshot.timestamp.formatted(.dateTime.hour().minute())
+
+        XCTAssertEqual(insight.kind, .reportedEvent)
+        XCTAssertEqual(insight.title, "Last confirmed report: Publisher notice")
+        XCTAssertTrue(insight.detail.hasPrefix("Snapshot \(expectedTime) · Publisher report"))
+    }
+
+    func testDelayedSummaryQualifiesSnapshotEvenWhenEnvelopeSaysLive() {
+        var snapshot = makeSnapshot(
+            flows: [
+                flow("ifa", megawatts: 1_600),
+                flow("nsl", megawatts: 1_200)
+            ]
+        )
+        snapshot.freshnessSummary = freshnessSummary(
+            state: .delayed,
+            current: 2,
+            delayed: 1
+        )
+
+        let insight = GridPrimaryInsight.make(snapshot: snapshot)
+
+        XCTAssertEqual(insight.kind, .crossBorderFlow)
+        XCTAssertEqual(insight.title, "Last confirmed connectors were net importing")
+        XCTAssertTrue(insight.detail.hasPrefix("Snapshot "))
+        XCTAssertFalse(insight.title.contains("connectors are net importing"))
+    }
+
+    func testFullyCurrentMixedAndCriticalSummariesKeepCurrentLanguage() {
+        for freshnessAndSummary in [
+            (FreshnessState.live, FreshnessSummaryState.mixed),
+            (.critical, .critical)
+        ] {
+            var snapshot = makeSnapshot(
+                frequency: metric(50.23, factClass: .observed, sourceID: "frequency")
+            )
+            snapshot.freshness = freshnessAndSummary.0
+            snapshot.freshnessSummary = freshnessSummary(
+                state: freshnessAndSummary.1,
+                current: 3
+            )
+
+            let insight = GridPrimaryInsight.make(snapshot: snapshot)
+
+            XCTAssertEqual(insight.kind, .frequency)
+            XCTAssertEqual(insight.title, "Frequency is above its usual band")
+            XCTAssertFalse(insight.title.contains("Last confirmed"))
+        }
+    }
+
     private func makeSnapshot(
         frequency: GridMetric? = GridMetric(
             value: 50,
@@ -219,6 +320,30 @@ final class GridPrimaryInsightTests: XCTestCase {
             startedAt: .distantPast,
             sourceIDs: ["source"],
             isAuthoritativelyReported: authoritative
+        )
+    }
+
+    private func freshnessSummary(
+        state: FreshnessSummaryState,
+        current: Int,
+        delayed: Int = 0,
+        stale: Int = 0,
+        unavailable: Int = 0
+    ) -> FreshnessSummary {
+        FreshnessSummary(
+            state: state,
+            label: "Test freshness",
+            detail: "Test freshness detail.",
+            evaluatedAt: Date(timeIntervalSince1970: 1_800_000_010),
+            requiredFamilyCount: current + delayed + stale + unavailable,
+            currentFamilyCount: current,
+            delayedFamilyCount: delayed,
+            staleFamilyCount: stale,
+            unavailableFamilyCount: unavailable,
+            oldestRequiredObservedAt: Date(timeIntervalSince1970: 1_800_000_000),
+            newestRequiredObservedAt: Date(timeIntervalSince1970: 1_800_000_000),
+            observationSpreadSeconds: 0,
+            representsSingleInstant: false
         )
     }
 }

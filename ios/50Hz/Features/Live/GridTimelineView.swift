@@ -117,17 +117,25 @@ struct GridTimelineView: View {
             .frame(height: 34)
             .sensoryFeedback(.selection, trigger: feedbackTick)
 
-            HStack {
-                Text(axisLabel(for: firstDate))
-                Spacer()
-                if hasForecastRange {
+            GeometryReader { proxy in
+                ZStack {
+                    Text(axisLabel(for: firstDate))
+                        .frame(maxWidth: .infinity, alignment: .leading)
+
                     Text("NOW")
-                    Spacer()
-                    Text(axisLabel(for: lastDate))
-                } else {
-                    Text("NOW")
+                        .position(
+                            x: proxy.size.width * nowRatio,
+                            y: proxy.size.height / 2
+                        )
+                        .accessibilityLabel("Now")
+
+                    if hasForecastRange {
+                        Text(axisLabel(for: lastDate))
+                            .frame(maxWidth: .infinity, alignment: .trailing)
+                    }
                 }
             }
+            .frame(height: 10)
             .font(.system(size: 8, weight: .medium, design: .monospaced))
             .foregroundStyle(GridTheme.textTertiary)
         }

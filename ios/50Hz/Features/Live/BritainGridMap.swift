@@ -242,11 +242,14 @@ enum LiveAssetClustering {
 
 enum LiveAssetMapProjection {
     static func mapRect(in viewportSize: CGSize) -> CGRect {
-        CGRect(
-            x: viewportSize.width * 0.14,
-            y: 8,
-            width: viewportSize.width * 0.72,
-            height: max(viewportSize.height - 18, 0)
+        let width = viewportSize.width * 0.82
+        let height = min(max(viewportSize.height - 16, 0), width * 1.52)
+        let spareHeight = max(viewportSize.height - height, 0)
+        return CGRect(
+            x: (viewportSize.width - width) / 2,
+            y: min(max(spareHeight * 0.35, 8), 56),
+            width: width,
+            height: height
         )
     }
 
@@ -332,7 +335,7 @@ private struct LiveAssetOverlay: View {
                 )
                 let labelledAssetIDs = labelledAssetIDs(in: selection.clusters)
 
-                ForEach(selection.clusters) { cluster in
+                ForEach(Array(selection.clusters.enumerated()), id: \.element.id) { index, cluster in
                     let point = LiveAssetMapProjection.position(
                         latitude: cluster.latitude,
                         longitude: cluster.longitude,
@@ -368,6 +371,7 @@ private struct LiveAssetOverlay: View {
                     .position(point)
                     .accessibilityLabel(accessibilityLabel(cluster))
                     .accessibilityHint(accessibilityHint(cluster))
+                    .accessibilityHidden(index >= 20)
                 }
             }
         }
@@ -570,6 +574,9 @@ struct BritainGridMap: View {
     let isForecast: Bool
     let assets: [LiveMapAsset]
     let focusedAsset: LiveMapAsset?
+    let topContentInset: CGFloat
+    let bottomContentInset: CGFloat
+    let onMapTap: (() -> Void)?
     let onAssetTap: ((LiveMapAsset) -> Void)?
     let onClusterInspect: ((LiveMapAssetCluster) -> Void)?
 
@@ -578,6 +585,7 @@ struct BritainGridMap: View {
     @State private var committedScale: CGFloat = 1
     @State private var committedOffset: CGSize = .zero
     @State private var viewportSize = CGSize(width: 390, height: 340)
+    @State private var semanticFeedback = 0
     @GestureState private var gestureScale: CGFloat = 1
     @GestureState private var gestureOffset: CGSize = .zero
 
@@ -587,6 +595,9 @@ struct BritainGridMap: View {
         isForecast: Bool,
         assets: [LiveMapAsset] = [],
         focusedAsset: LiveMapAsset? = nil,
+        topContentInset: CGFloat = 0,
+        bottomContentInset: CGFloat = 0,
+        onMapTap: (() -> Void)? = nil,
         onAssetTap: ((LiveMapAsset) -> Void)? = nil,
         onClusterInspect: ((LiveMapAssetCluster) -> Void)? = nil
     ) {
@@ -595,78 +606,96 @@ struct BritainGridMap: View {
         self.isForecast = isForecast
         self.assets = assets
         self.focusedAsset = focusedAsset
+        self.topContentInset = max(topContentInset, 0)
+        self.bottomContentInset = max(bottomContentInset, 0)
+        self.onMapTap = onMapTap
         self.onAssetTap = onAssetTap
         self.onClusterInspect = onClusterInspect
     }
 
     var body: some View {
-        ZStack {
-            TimelineView(.animation(minimumInterval: reduceMotion ? 1 : 1 / 20, paused: reduceMotion)) { timeline in
-                Canvas(rendersAsynchronously: true) { context, size in
-                    drawScene(context: &context, size: size, date: timeline.date)
-                }
-            }
+        GeometryReader { proxy in
+            let availableSize = availableViewportSize(for: proxy.size)
 
-            if !authoritativeAssets.isEmpty {
-                LiveAssetOverlay(
-                    assets: authoritativeAssets,
-                    zoomScale: effectiveScale,
-                    offset: effectiveOffset,
-                    semanticLevel: semanticLevel,
-                    onAssetTap: onAssetTap,
-                    onClusterTap: handleClusterTap
-                )
-                .opacity(semanticLevel == .national ? 0 : 1)
-                .allowsHitTesting(semanticLevel != .national)
-                .animation(reduceMotion ? nil : .easeInOut(duration: 0.22), value: semanticLevel)
-            }
-        }
-        .scaleEffect(effectiveScale)
-        .offset(effectiveOffset)
-        .gesture(zoomGesture)
-        .simultaneousGesture(panGesture)
-        .clipped()
-        .overlay(alignment: .bottomLeading) {
-            Text(mapGestureLabel)
-                .font(.system(size: 8, weight: .semibold, design: .monospaced))
-                .tracking(0.6)
-                .foregroundStyle(GridTheme.textTertiary)
-                .padding(.leading, 10)
-                .padding(.bottom, 10)
-                .accessibilityHidden(true)
-        }
-        .overlay(alignment: .bottomTrailing) {
-            if effectiveScale > 1.01 {
-                Button("Reset") {
-                    withAnimation(reduceMotion ? nil : .snappy(duration: 0.24)) {
-                        committedScale = 1
-                        committedOffset = .zero
+            ZStack(alignment: .top) {
+                ZStack {
+                    TimelineView(.animation(minimumInterval: reduceMotion ? 1 : 1 / 20, paused: reduceMotion)) { timeline in
+                        Canvas(rendersAsynchronously: true) { context, size in
+                            drawScene(context: &context, size: size, date: timeline.date)
+                        }
+                    }
+                    .contentShape(Rectangle())
+                    .onTapGesture { onMapTap?() }
+
+                    if !authoritativeAssets.isEmpty {
+                        LiveAssetOverlay(
+                            assets: authoritativeAssets,
+                            zoomScale: effectiveScale,
+                            offset: effectiveOffset,
+                            semanticLevel: semanticLevel,
+                            onAssetTap: onAssetTap,
+                            onClusterTap: handleClusterTap
+                        )
+                        .opacity(semanticLevel == .national ? 0 : 1)
+                        .allowsHitTesting(semanticLevel != .national)
+                        .animation(reduceMotion ? nil : .easeInOut(duration: 0.22), value: semanticLevel)
                     }
                 }
-                .font(.caption2.weight(.semibold))
-                .foregroundStyle(GridTheme.liveCyan)
-                .frame(minWidth: 44, minHeight: 44)
-                .padding(.trailing, 4)
-                .padding(.bottom, 1)
-                .accessibilityLabel("Reset map zoom")
+                .scaleEffect(effectiveScale)
+                .offset(effectiveOffset)
             }
-        }
-        .background(
-            RadialGradient(
-                colors: [
-                    (isForecast ? GridTheme.forecastViolet : GridTheme.liveCyan).opacity(0.08),
-                    Color.clear
-                ],
-                center: .center,
-                startRadius: 10,
-                endRadius: 210
+            .frame(width: availableSize.width, height: availableSize.height)
+            .clipped()
+            .gesture(zoomGesture)
+            .simultaneousGesture(panGesture)
+            .simultaneousGesture(doubleTapGesture)
+            .overlay(alignment: .bottomLeading) {
+                Text(mapGestureLabel)
+                    .font(.system(size: 8, weight: .semibold, design: .monospaced))
+                    .tracking(0.6)
+                    .foregroundStyle(GridTheme.textTertiary)
+                    .padding(.leading, 10)
+                    .padding(.bottom, 10)
+                    .accessibilityHidden(true)
+            }
+            .overlay(alignment: .bottomTrailing) {
+                if effectiveScale > 1.01 {
+                    Button("Reset") {
+                        withAnimation(reduceMotion ? nil : .snappy(duration: 0.24)) {
+                            committedScale = 1
+                            committedOffset = .zero
+                        }
+                    }
+                    .font(.caption2.weight(.semibold))
+                    .foregroundStyle(GridTheme.liveCyan)
+                    .frame(minWidth: 44, minHeight: 44)
+                    .padding(.trailing, 4)
+                    .padding(.bottom, 1)
+                    .accessibilityLabel("Reset map zoom")
+                }
+            }
+            .background(
+                RadialGradient(
+                    colors: [
+                        (isForecast ? GridTheme.forecastViolet : GridTheme.liveCyan).opacity(0.08),
+                        Color.clear
+                    ],
+                    center: .center,
+                    startRadius: 10,
+                    endRadius: 210
+                )
             )
-        )
-        .background {
-            GeometryReader { proxy in
-                Color.clear
-                    .onAppear { viewportSize = proxy.size }
-                    .onChange(of: proxy.size) { _, newSize in viewportSize = newSize }
+            .padding(.top, topContentInset)
+            .frame(maxWidth: .infinity, maxHeight: .infinity, alignment: .top)
+            .onAppear { viewportSize = availableSize }
+            .onChange(of: proxy.size) { _, newSize in
+                viewportSize = availableViewportSize(for: newSize)
+            }
+            .onChange(of: bottomContentInset) { _, _ in
+                viewportSize = availableSize
+            }
+            .onChange(of: topContentInset) { _, _ in
+                viewportSize = availableSize
             }
         }
         .contentShape(Rectangle())
@@ -687,6 +716,17 @@ struct BritainGridMap: View {
         .onChange(of: focusedAsset?.id) { _, _ in
             focusSelectedAsset()
         }
+        .onChange(of: semanticLevel) { oldLevel, newLevel in
+            if oldLevel != newLevel { semanticFeedback += 1 }
+        }
+        .sensoryFeedback(.selection, trigger: semanticFeedback)
+    }
+
+    private func availableViewportSize(for fullSize: CGSize) -> CGSize {
+        CGSize(
+            width: fullSize.width,
+            height: max(fullSize.height - topContentInset - bottomContentInset, 180)
+        )
     }
 
     private var authoritativeAssets: [LiveMapAsset] {
@@ -724,9 +764,9 @@ struct BritainGridMap: View {
     private var mapDisclosure: String {
         if authoritativeAssets.isEmpty { return LiveTruthCopy.mapDisclosure }
         if semanticLevel == .national {
-            return "National currents and interconnector paths are schematic. Pinch to reveal publisher-backed generator geography."
+            return "National currents and interconnector paths are schematic. Pinch to reveal publisher-backed generator geography. Use Find an energy site for the complete accessible list."
         }
-        return "Capacity wells and site marks use publisher-backed coordinates. They show registered sites and evidence availability, not live generator output. Interconnector paths remain schematic."
+        return "Capacity wells and site marks use publisher-backed coordinates. They show registered sites and evidence availability, not live generator output. Interconnector paths remain schematic. Use Find an energy site for the complete accessible list."
     }
 
     private var zoomGesture: some Gesture {
@@ -762,6 +802,38 @@ struct BritainGridMap: View {
                     for: committedScale,
                     viewportSize: viewportSize
                 )
+            }
+    }
+
+    private var doubleTapGesture: some Gesture {
+        SpatialTapGesture(count: 2)
+            .onEnded { value in
+                let targetScale: CGFloat
+                switch semanticLevel {
+                case .national: targetScale = 2.1
+                case .regional: targetScale = 4.1
+                case .sites: targetScale = 6.2
+                case .evidence: targetScale = 8
+                }
+
+                let centre = CGPoint(x: viewportSize.width / 2, y: viewportSize.height / 2)
+                let basePoint = CGPoint(
+                    x: ((value.location.x - centre.x - effectiveOffset.width) / effectiveScale) + centre.x,
+                    y: ((value.location.y - centre.y - effectiveOffset.height) / effectiveScale) + centre.y
+                )
+                let centeredOffset = LiveAssetMapProjection.centeredOffset(
+                    for: basePoint,
+                    viewportSize: viewportSize,
+                    zoomScale: targetScale
+                )
+                withAnimation(reduceMotion ? nil : .snappy(duration: 0.32)) {
+                    committedScale = targetScale
+                    committedOffset = bounded(
+                        centeredOffset,
+                        for: targetScale,
+                        viewportSize: viewportSize
+                    )
+                }
             }
     }
 
@@ -842,7 +914,7 @@ struct BritainGridMap: View {
     }
 
     private func drawScene(context: inout GraphicsContext, size: CGSize, date: Date) {
-        let mapRect = CGRect(x: size.width * 0.14, y: 8, width: size.width * 0.72, height: size.height - 18)
+        let mapRect = LiveAssetMapProjection.mapRect(in: size)
         let shape = BritainShape().path(in: mapRect)
         let accent = mapAccent
         let emphasis = semanticLevel.fieldEmphasis

@@ -206,15 +206,13 @@ enum MissionCompletionPolicy {
 
 enum MissionNavigationTarget: Hashable, Sendable {
     case live
-    case today
     case local
     case event(String)
 
     var label: String {
         switch self {
         case .live: "Open Live"
-        case .today: "Open Today"
-        case .local: "Open Local"
+        case .local: "Open Plan"
         case .event: "Open evidence"
         }
     }
@@ -231,7 +229,7 @@ enum MissionNavigationTarget: Hashable, Sendable {
                 .compactMap { mission.completionPayload[$0]?.stringValue }
                 .first { !$0.isEmpty }
             if let eventID = explicitID ?? events.first?.id { return .event(eventID) }
-            return .today
+            return nil
         case .other:
             return nil
         }

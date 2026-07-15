@@ -488,17 +488,26 @@ final class NotebookPersistenceTests: XCTestCase {
         XCTAssertEqual(try target(kind: "find_clean_window"), .local)
         XCTAssertEqual(try target(kind: "identify_largest_source"), .live)
         XCTAssertEqual(try target(kind: "inspect_interconnector"), .live)
-        XCTAssertEqual(try target(kind: "open_event_evidence"), .today)
+        XCTAssertNil(try target(kind: "open_event_evidence"))
         XCTAssertNil(try target(kind: "future_mission"))
+    }
+
+    func testEventEvidenceMissionUsesItsRealEvidenceIdentifier() throws {
+        let mission = try makeMission(
+            kind: "open_event_evidence",
+            completionPayload: #"{"event_id":"event-42"}"#
+        )
+
+        XCTAssertEqual(MissionNavigationTarget.resolve(mission, events: []), .event("event-42"))
     }
 
     private func target(kind: String) throws -> MissionNavigationTarget? {
         MissionNavigationTarget.resolve(try makeMission(kind: kind), events: [])
     }
 
-    private func makeMission(kind: String) throws -> GameMission {
+    private func makeMission(kind: String, completionPayload: String = "{}") throws -> GameMission {
         let json = """
-        {"mission_id":"mission-1","kind":"\(kind)","title":"Inspect evidence","available":true,"completion_payload":{}}
+        {"mission_id":"mission-1","kind":"\(kind)","title":"Inspect evidence","available":true,"completion_payload":\(completionPayload)}
         """
         return try GridJSON.decoder.decode(GameMission.self, from: Data(json.utf8))
     }
